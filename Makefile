@@ -22,5 +22,5 @@ run:
 	@echo -e "-> starting backend..."
 	@go build -o bin/backend cmd/backend/main.go && \
 		./bin/backend \
-		&& (echo -e "==> $(BLUE)Successfully shutdown backend")
-		|| (echo -f "==> $(RED)Backend failed to start! $(NC)" && exit 1)
+		&& (echo -e "==> $(BLUE)Successfully shutdown backend$(NC)") \
+		|| (echo -e "==> $(RED)Backend failed to start! $(NC)" && exit 1)
