@@ -14,7 +14,7 @@ gen:
 build: gen
 	@echo -e ":: $(GREEN)Building backend...$(NC)"
 	@echo -e "  -> Building backend binary..."
-	@go build -o bin/backend cmd/backend/main.go && echo -e "==> $(BLUE)Build complete successfully! $(NC)" || (echo -f "==> $(RED)Build failed! $(NC)" && exit 1)
+	@go build -o bin/backend cmd/backend/main.go && echo -e "==> $(BLUE)Build complete successfully! $(NC)" || (echo -e "==> $(RED)Build failed! $(NC)" && exit 1)
 
 run:
 	@echo -e ":: $(GRENN)Starting backend...$(NC)"
@@ -22,5 +22,5 @@ run:
 	@echo -e "-> starting backend..."
 	@go build -o bin/backend cmd/backend/main.go && \
 		./bin/backend \
-		&& (echo -e "==> $(BLUE)Successfully shutdown backend")
-		|| (echo -f "==> $(RED)Backend failed to start! $(NC)" && exit 1)
+		&& (echo -e "==> $(BLUE)Successfully shutdown backend$(NC)") \
+		|| (echo -e "==> $(RED)Backend failed to start! $(NC)" && exit 1)
