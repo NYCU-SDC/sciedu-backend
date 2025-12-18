@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net/http"
 
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	"go.uber.org/zap"
@@ -14,6 +15,23 @@ func main() {
 	}
 
 	logger.Info("Hello, World!")
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write([]byte("ok"))
+		if err != nil {
+			panic(err)
+		}
+	})
+
+	logger.Info("Start listening on port: 8080")
+
+	err = http.ListenAndServe(":8080", mux)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func initLogger() (*zap.Logger, error) {
