@@ -33,15 +33,10 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Configure Git for private modules
-        run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
-
       - name: Setup go
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-        env:
-          GOPRIVATE: github.com/NYCU-SDC/*
 
       - name: Setup Sqlc
         uses: sqlc-dev/setup-sqlc@v4
@@ -71,15 +66,10 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Configure Git for private modules
-        run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
-
       - name: Setup go
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-        env:
-          GOPRIVATE: github.com/NYCU-SDC/*
 
       - name: Setup Sqlc
         uses: sqlc-dev/setup-sqlc@v4
@@ -102,15 +92,10 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Configure Git for private modules
-        run: git config --global url."https://${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
-
       - name: Setup go
         uses: actions/setup-go@v5
         with:
           go-version: '1.24'
-        env:
-          GOPRIVATE: github.com/NYCU-SDC/*
 
       - name: Setup Sqlc
         uses: sqlc-dev/setup-sqlc@v4
