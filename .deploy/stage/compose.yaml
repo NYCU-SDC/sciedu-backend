@@ -17,16 +17,8 @@ services:
       - NYCU_OAUTH_CLIENT_ID=${NYCU_OAUTH_CLIENT_ID}
       - NYCU_OAUTH_CLIENT_SECRET=${NYCU_OAUTH_CLIENT_SECRET}
       - SECRET=${SECRET}
-      - DATABASE_URL=postgres://postgres:password@postgres:5432/sciedu?sslmode=disable
-      - BASE_URL=https://api.stage.sciedu.sdc.nycu.club
       - SLURM_TOKEN_HELPER_URL=${SLURM_TOKEN_HELPER_URL}
       - SLURM_RESTFUL_BASE_URL=${SLURM_RESTFUL_BASE_URL}
-      - SLURM_RESTFUL_VERSION=v0.0.43
-      - MIGRATION_SOURCE=file:///app/migrations
-      - CASBIN_POLICY_SOURCE=policy.csv
-      - CASBIN_MODEL_SOURCE=model.conf
-      - ALLOW_ORIGINS=*
-      - OTEL_COLLECTOR_URL=10.140.0.3:4317
     labels:
       - "vector.enable=true"
       - "traefik.enable=true"
