@@ -12,21 +12,9 @@ services:
     environment:
       - ENV=stage
       - HOST=0.0.0.0
-      - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID}
-      - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET}
-      - NYCU_OAUTH_CLIENT_ID=${NYCU_OAUTH_CLIENT_ID}
-      - NYCU_OAUTH_CLIENT_SECRET=${NYCU_OAUTH_CLIENT_SECRET}
-      - SECRET=${SECRET}
-      - SLURM_TOKEN_HELPER_URL=${SLURM_TOKEN_HELPER_URL}
-      - SLURM_RESTFUL_BASE_URL=${SLURM_RESTFUL_BASE_URL}
+      - BASE_URL=https://api.dev.sciedu.sdc.nycu.club
+      - DATABASE_URL=postgres://postgres:password@postgres:5432/sciedu?sslmode=disable
     labels:
-      - "vector.enable=true"
-      - "traefik.enable=true"
-      - "traefik.http.routers.sciedu-backend-stage.rule=Host(`api.stage.sciedu.sdc.nycu.club`)"
-      - "traefik.http.routers.sciedu-backend-stage.entrypoints=websecure"
-      - "traefik.http.routers.sciedu-backend-stage.tls=true"
-      - "traefik.http.routers.sciedu-backend-stage.tls.certresolver=cloudflare"
-      - "traefik.http.services.sciedu-backend-stage.loadbalancer.server.port=8080"
 
   postgres:
     image: postgres:latest
