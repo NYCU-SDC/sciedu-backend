@@ -2,21 +2,21 @@ package chat
 
 type ChatCompletionChunk struct {
 	Delta      string `json:"delta"`
-	IsFinished bool   `json:"IsFinished"`
+	IsFinished bool   `json:"isFinished"`
 }
 
 type ChatRole struct {
-	User      string
-	Assistant string
-	System    string
+	User      string `json:"user"`
+	Assistant string `json:"assistant"`
+	System    string `json:"system"`
 }
 
 type ChatMessage struct {
-	Role    ChatRole
-	Content string
+	Role    ChatRole `json:"role"`
+	Content string   `json:"content"`
 }
 
 type CreateChatCompletionRequest struct {
-	Messages []ChatMessage
-	Stream   bool
+	Messages []ChatMessage `json:"messages"`
+	Stream   bool          `json:"stream"`
 }
