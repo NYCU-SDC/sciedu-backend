@@ -65,3 +65,7 @@ func (s *Service) Create(ctx context.Context, arg CreateParam) (Question, error)
 
 	return res, nil
 }
+
+func (s *Service) List(ctx context.Context) ([]Question, error) {
+	return testQuestionList, nil
+}
