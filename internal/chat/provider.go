@@ -11,8 +11,9 @@ import (
 	"strings"
 )
 
+//go:generate mockery --name LLMProvider
 type LLMProvider interface {
-	StreamChat(ctx context.Context) (<-chan string, <-chan error)
+	StreamChat(ctx context.Context, req CreateChatCompletionRequest) (<-chan ChatCompletionChunk, <-chan error)
 }
 
 type Provider struct {
