@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"net/http"
+	"sciedu-backend/internal"
+	"sciedu-backend/internal/questions"
 
 	// databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
@@ -17,15 +19,14 @@ func main() {
 
 	logger.Info("Hello, World!")
 
-	mux := http.NewServeMux()
+	validator := internal.NewValidator()
 
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("ok"))
-		if err != nil {
-			panic(err)
-		}
-	})
+	questionService := questions.NewService(logger)
+
+	questionsHandler := questions.NewHandler(logger, validator, questionService)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/questions", questionsHandler.Create)
 
 	logger.Info("Start listening on port: 8080")
 
