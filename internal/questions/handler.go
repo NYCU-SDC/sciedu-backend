@@ -35,6 +35,7 @@ type Response struct {
 
 type Store interface {
 	Create(ctx context.Context, arg CreateParam) (Question, error)
+	List(ctx context.Context) ([]Question, error)
 }
 
 type Handler struct {
@@ -86,11 +87,40 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		Options: newQuestion.Options,
 	}
 
-	err = h.WriteResponse(w, "application/json", &resp)
+	err = h.WriteResponse(w, "application/json", resp)
 	if err != nil {
 		return
 	}
 }
+
+func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	getQuestions, err := h.store.List(ctx)
+	if err != nil {
+		h.logger.Error("failed to get questions", zap.Error(err))
+		http.Error(w, "failed to get questions", http.StatusInternalServerError)
+		return
+	}
+
+	resp := make([]Response, len(getQuestions))
+	for i, questions := range getQuestions {
+		resp[i] = Response{
+			ID:      questions.ID,
+			Type:    questions.Type,
+			Content: questions.Content,
+			Options: questions.Options,
+		}
+	}
+
+	err = h.WriteResponse(w, "application/json", resp)
+	if err != nil {
+		return
+	}
+
+}
+
+/**** Helper Functions ****/
 
 func (h *Handler) DecodeReqBody(w http.ResponseWriter, r *http.Request, req *Request) error {
 	err := json.NewDecoder(r.Body).Decode(&req)
@@ -110,7 +140,7 @@ func (h *Handler) ValidateCheck(w http.ResponseWriter, req *Request) error {
 	return err
 }
 
-func (h *Handler) WriteResponse(w http.ResponseWriter, contentType string, resp *Response) error {
+func (h *Handler) WriteResponse(w http.ResponseWriter, contentType string, resp any) error {
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(http.StatusCreated)
 
