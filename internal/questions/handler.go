@@ -34,8 +34,10 @@ type Response struct {
 }
 
 type Store interface {
-	Create(ctx context.Context, arg CreateParam) (Question, error)
+	Create(ctx context.Context, arg ReqParam) (Question, error)
 	List(ctx context.Context) ([]Question, error)
+	GetQuestion(ctx context.Context, ID string) (Question, error)
+	UpdateQuestion(ctx context.Context, ID string, qrg ReqParam) (Question, error)
 }
 
 type Handler struct {
@@ -66,7 +68,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newQuestion, err := h.store.Create(ctx, CreateParam{
+	newQuestion, err := h.store.Create(ctx, ReqParam{
 		Type:       req.Type,
 		Content:    req.Content,
 		ReqOptions: req.Options,
@@ -93,6 +95,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// List - Get all questions
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -118,6 +121,78 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+}
+
+// GetQuestion - Get single question
+func (h *Handler) GetQuestion(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	questionID := r.PathValue("id")
+
+	// UUID check logic
+	// struct we used here is mock, thus we skip this part
+	// MUST handle this properly after connected to the database
+
+	getQuestion, err := h.store.GetQuestion(ctx, questionID)
+	if err != nil {
+		h.logger.Error("failed to get question", zap.Error(err))
+		http.Error(w, "failed to get question", http.StatusInternalServerError)
+		return
+	}
+
+	resp := Response{
+		ID:      getQuestion.ID,
+		Type:    getQuestion.Type,
+		Content: getQuestion.Content,
+		Options: getQuestion.Options,
+	}
+
+	err = h.WriteResponse(w, "application/json", resp)
+	if err != nil {
+		return
+	}
+}
+
+func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	questionID := r.PathValue("id")
+
+	var req Request
+	err := h.DecodeReqBody(w, r, &req)
+	if err != nil {
+		return
+	}
+
+	err = h.ValidateCheck(w, &req)
+	if err != nil {
+		return
+	}
+
+	// UUID check logic
+
+	updateQuestion, err := h.store.UpdateQuestion(ctx, questionID, ReqParam{
+		Type:       req.Type,
+		Content:    req.Content,
+		ReqOptions: req.Options,
+	})
+	if err != nil {
+		h.logger.Error("failed to update question", zap.Error(err))
+		http.Error(w, "failed to update question", http.StatusInternalServerError)
+		return
+	}
+
+	resp := Response{
+		ID:      updateQuestion.ID,
+		Type:    updateQuestion.Type,
+		Content: updateQuestion.Content,
+		Options: updateQuestion.Options,
+	}
+
+	err = h.WriteResponse(w, "application/json", resp)
+	if err != nil {
+		return
+	}
 }
 
 /**** Helper Functions ****/
