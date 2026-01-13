@@ -1,13 +1,21 @@
 package chat
 
-import "context"
+import (
+	"context"
+
+	"go.uber.org/zap"
+)
 
 type ChatService struct {
 	provider LLMProvider
+	logger   *zap.Logger
 }
 
-func NewChatService(provider LLMProvider) *ChatService {
-	return &ChatService{provider: provider}
+func NewService(provider LLMProvider, logger *zap.Logger) *ChatService {
+	return &ChatService{
+		provider: provider,
+		logger:   logger,
+	}
 }
 
 func (s *ChatService) StreamChat(ctx context.Context, req CreateChatCompletionRequest) (<-chan ChatCompletionChunk, <-chan error) {

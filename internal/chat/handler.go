@@ -20,7 +20,7 @@ type Handler struct {
 	store  Store
 }
 
-func NewHandler(logger *zap.Logger, store Store) *Handler {
+func NewHandler(store Store, logger *zap.Logger) *Handler {
 	return &Handler{
 		logger: logger,
 		store:  store,
@@ -28,11 +28,12 @@ func NewHandler(logger *zap.Logger, store Store) *Handler {
 }
 
 type RFC9457 struct {
-	Type     string `json:"type,omitempty"`
-	Title    string `json:"title,omitempty"`
-	Status   int    `json:"status,omitempty"`
-	Detail   string `json:"detail,omitempty"`
-	Instance string `json:"instance,omitempty"`
+	Type     string            `json:"type,omitempty"`
+	Title    string            `json:"title,omitempty"`
+	Status   int               `json:"status,omitempty"`
+	Detail   string            `json:"detail,omitempty"`
+	Instance string            `json:"instance,omitempty"`
+	Errors   map[string]string `json:"errors,omitempty"`
 }
 
 type validationError struct {
@@ -196,17 +197,14 @@ func decodeAndValidateRequest(r *http.Request) (CreateChatCompletionRequest, *va
 	}
 
 	if len(fieldErrs) > 0 {
-		var details string
-		for field, msg := range fieldErrs {
-			details = details + field + ": " + msg + "\n"
-		}
 		return CreateChatCompletionRequest{}, &validationError{
 			status: http.StatusBadRequest,
 			problem: RFC9457{
 				Type:   "https://example.com/problems/validation-error",
 				Title:  "Validation Error",
 				Status: http.StatusBadRequest,
-				Detail: details,
+				Detail: "Request validation failed. See 'errors' field for details.",
+				Errors: fieldErrs,
 			},
 		}
 	}

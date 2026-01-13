@@ -25,7 +25,7 @@ func TestHandler_InvalidJSON_ReturnsRFC9457(t *testing.T) {
 		chunks: make(chan chat.ChatCompletionChunk),
 		errs:   make(chan error, 1),
 	}
-	h := chat.NewHandler(nil, svc)
+	h := chat.NewHandler(svc, nil)
 
 	r := httptest.NewRequest(http.MethodPost, "/v1/chat/stream", strings.NewReader(`{bad json`))
 	r.Header.Set("Content-Type", "application/json")
@@ -47,7 +47,7 @@ func TestHandler_ValidationError_ReturnsRFC9457WithErrors(t *testing.T) {
 		chunks: make(chan chat.ChatCompletionChunk),
 		errs:   make(chan error, 1),
 	}
-	h := chat.NewHandler(nil, svc)
+	h := chat.NewHandler(svc, nil)
 
 	body := `{"messages":[],"stream":true}`
 	r := httptest.NewRequest(http.MethodPost, "/v1/chat/stream", strings.NewReader(body))
@@ -69,7 +69,7 @@ func TestHandler_StreamsSSE(t *testing.T) {
 	chunks := make(chan chat.ChatCompletionChunk)
 	errs := make(chan error, 1)
 	svc := &fakeSvc{chunks: chunks, errs: errs}
-	h := chat.NewHandler(nil, svc)
+	h := chat.NewHandler(svc, nil)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/chat/stream", h.StreamChat)

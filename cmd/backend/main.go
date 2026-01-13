@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"net/http"
+	"sciedu-backend/internal/chat"
+	"sciedu-backend/internal/chat/mockLLM"
 
 	// databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
@@ -18,6 +20,17 @@ func main() {
 	logger.Info("Hello, World!")
 
 	mux := http.NewServeMux()
+
+	//----------------Mock LLM Endpoint----------------
+	mockLLMServer := mockLLM.NewMockLLM()
+	mux.HandleFunc("POST /mock-llm", mockLLMServer.Handle)
+	//-------------------------------------------------
+
+	chatProvider := chat.NewProvider(mockLLMServer.URL(), &http.Client{}, nil)
+	chatService := chat.NewService(chatProvider, logger)
+	chatHandler := chat.NewHandler(chatService, logger)
+
+	mux.HandleFunc("/chat/stream", chatHandler.StreamChat)
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
