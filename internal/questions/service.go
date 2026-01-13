@@ -42,6 +42,8 @@ func NewService(logger *zap.Logger) *Service {
 	}
 }
 
+var IDCounter int
+
 func (s *Service) Create(ctx context.Context, arg ReqParam) (Question, error) {
 	// handle mock ID for each ReqOption, temporary...
 	var options []Option
@@ -54,11 +56,14 @@ func (s *Service) Create(ctx context.Context, arg ReqParam) (Question, error) {
 	}
 
 	question := Question{
-		ID:      strconv.Itoa(len(testQuestionList)),
+		ID:      strconv.Itoa(IDCounter),
 		Type:    arg.Type,
 		Content: arg.Content,
 		Options: options,
 	}
+
+	// temporary...
+	IDCounter++
 
 	testQuestionList = append(testQuestionList, question)
 
@@ -74,35 +79,18 @@ func (s *Service) List(ctx context.Context) ([]Question, error) {
 func (s *Service) GetQuestion(ctx context.Context, ID string) (Question, error) {
 	// parse UUID logic, skip now...
 
-	// temporary string convert logic
-	questionID, err := strconv.Atoi(ID)
-	if err != nil {
-		s.logger.Error("failed to convert ID from string to int", zap.Error(err))
-		return Question{}, err
+	for _, question := range testQuestionList {
+		if question.ID == ID {
+			return question, nil
+		}
 	}
 
-	if questionID >= len(testQuestionList) {
-		s.logger.Error("id is not exists")
-		return Question{}, errors.New("id is not exists")
-	}
-
-	return testQuestionList[questionID], nil
+	s.logger.Error("invalid ID")
+	return Question{}, errors.New("invalid ID")
 }
 
 func (s *Service) UpdateQuestion(ctx context.Context, ID string, arg ReqParam) (Question, error) {
 	// parse UUID logic, skip now...
-
-	// temporary string convert logic
-	questionID, err := strconv.Atoi(ID)
-	if err != nil {
-		s.logger.Error("failed to convert ID from string to int", zap.Error(err))
-		return Question{}, err
-	}
-
-	if questionID >= len(testQuestionList) {
-		s.logger.Error("id is not exists")
-		return Question{}, errors.New("id is not exists")
-	}
 
 	// handle mock ID for each ReqOption, temporary...
 	var options []Option
@@ -114,13 +102,35 @@ func (s *Service) UpdateQuestion(ctx context.Context, ID string, arg ReqParam) (
 		})
 	}
 
-	question := Question{
-		ID:      strconv.Itoa(questionID),
+	updateQuestion := Question{
+		ID:      ID,
 		Type:    arg.Type,
 		Content: arg.Content,
 		Options: options,
 	}
 
-	testQuestionList[questionID] = question
-	return testQuestionList[questionID], err
+	for i, question := range testQuestionList {
+		if question.ID == ID {
+			testQuestionList[i] = updateQuestion
+			return testQuestionList[i], nil
+		}
+	}
+
+	s.logger.Error("invalid ID")
+	return Question{}, errors.New("invalid ID")
+}
+
+func (s *Service) DelQuestion(ctx context.Context, ID string) error {
+	// temporary del logic
+
+	for i, question := range testQuestionList {
+		if question.ID == ID {
+			testQuestionList[i] = testQuestionList[len(testQuestionList)-1]
+			testQuestionList = testQuestionList[:len(testQuestionList)-1]
+			return nil
+		}
+	}
+
+	s.logger.Error("invalid ID")
+	return errors.New("invalid ID")
 }

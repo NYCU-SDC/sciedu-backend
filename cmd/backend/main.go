@@ -30,6 +30,7 @@ func main() {
 	mux.HandleFunc("GET /api/questions", questionsHandler.List)
 	mux.HandleFunc("GET /api/questions/{id}", questionsHandler.GetQuestion)
 	mux.HandleFunc("PUT /api/questions/{id}", questionsHandler.UpdateQuestion)
+	mux.HandleFunc("DELETE /api/questions/{id}", questionsHandler.DelQuestion)
 
 	logger.Info("Start listening on port: 8080")
 
