@@ -28,6 +28,8 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/questions", questionsHandler.Create)
 	mux.HandleFunc("GET /api/questions", questionsHandler.List)
+	mux.HandleFunc("GET /api/questions/{id}", questionsHandler.GetQuestion)
+	mux.HandleFunc("PUT /api/questions/{id}", questionsHandler.UpdateQuestion)
 
 	logger.Info("Start listening on port: 8080")
 
