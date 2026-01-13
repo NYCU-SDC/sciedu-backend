@@ -38,6 +38,7 @@ type Store interface {
 	List(ctx context.Context) ([]Question, error)
 	GetQuestion(ctx context.Context, ID string) (Question, error)
 	UpdateQuestion(ctx context.Context, ID string, qrg ReqParam) (Question, error)
+	DelQuestion(ctx context.Context, ID string) error
 }
 
 type Handler struct {
@@ -89,7 +90,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		Options: newQuestion.Options,
 	}
 
-	err = h.WriteResponse(w, "application/json", resp)
+	err = h.WriteResponse(w, "application/json", http.StatusCreated, resp)
 	if err != nil {
 		return
 	}
@@ -116,7 +117,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	err = h.WriteResponse(w, "application/json", resp)
+	err = h.WriteResponse(w, "application/json", http.StatusOK, resp)
 	if err != nil {
 		return
 	}
@@ -147,7 +148,7 @@ func (h *Handler) GetQuestion(w http.ResponseWriter, r *http.Request) {
 		Options: getQuestion.Options,
 	}
 
-	err = h.WriteResponse(w, "application/json", resp)
+	err = h.WriteResponse(w, "application/json", http.StatusOK, resp)
 	if err != nil {
 		return
 	}
@@ -189,7 +190,29 @@ func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 		Options: updateQuestion.Options,
 	}
 
-	err = h.WriteResponse(w, "application/json", resp)
+	err = h.WriteResponse(w, "application/json", http.StatusOK, resp)
+	if err != nil {
+		return
+	}
+}
+
+func (h *Handler) DelQuestion(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	questionID := r.PathValue("id")
+
+	// UUID check logic
+	// struct we used here is mock, thus we skip this part
+	// MUST handle this properly after connected to the database
+
+	err := h.store.DelQuestion(ctx, questionID)
+	if err != nil {
+		h.logger.Error("failed to delete question", zap.Error(err))
+		http.Error(w, "failed to delete question", http.StatusInternalServerError)
+		return
+	}
+
+	err = h.WriteResponse(w, "application/json", http.StatusNoContent, nil)
 	if err != nil {
 		return
 	}
@@ -215,9 +238,9 @@ func (h *Handler) ValidateCheck(w http.ResponseWriter, req *Request) error {
 	return err
 }
 
-func (h *Handler) WriteResponse(w http.ResponseWriter, contentType string, resp any) error {
+func (h *Handler) WriteResponse(w http.ResponseWriter, contentType string, statusCode int, resp any) error {
 	w.Header().Set("Content-Type", contentType)
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(statusCode)
 
 	err := json.NewEncoder(w).Encode(&resp)
 	if err != nil {
