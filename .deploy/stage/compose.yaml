@@ -16,11 +16,11 @@ services:
       - DATABASE_URL=postgres://postgres:password@postgres:5432/sciedu?sslmode=disable
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.clustron-backend-stage.rule=Host(`api.stage.clustron.sdc.nycu.club`)"
-      - "traefik.http.routers.clustron-backend-stage.entrypoints=websecure"
-      - "traefik.http.routers.clustron-backend-stage.tls=true"
-      - "traefik.http.routers.clustron-backend-stage.tls.certresolver=cloudflare"
-      - "traefik.http.services.clustron-backend-stage.loadbalancer.server.port=8080"
+      - "traefik.http.routers.sciedu-backend-stage.rule=Host(`api.stage.sciedu.sdc.nycu.club`)"
+      - "traefik.http.routers.sciedu-backend-stage.entrypoints=websecure"
+      - "traefik.http.routers.sciedu-backend-stage.tls=true"
+      - "traefik.http.routers.sciedu-backend-stage.tls.certresolver=cloudflare"
+      - "traefik.http.services.sciedu-backend-stage.loadbalancer.server.port=8080"
 
   postgres:
     image: postgres:18.1
