@@ -5,24 +5,21 @@ NC = \033[0m
 
 .PHONY: all prepare run build test gen
 
+all: build
+
 prepare:
 	@echo -e ":: $(GREEN) Preparing environment...$(NC)"
 	@echo -e "-> Downloading go dependencies..."
 	@go mod download \
 		|| (echo -e "-> $(RED) Failed to download go dependencies$(NC)" && exit 1)
-	@echo -e "-> Deploying depending services..."
-	@cd ./.deploy/local \
-    	&& ./deploy.sh \
-    	|| (echo -e "  -> $(RED)Depending services deploy failed$(NC)" && exit 1)
 	@echo -e "==> $(BLUE)Environment preparation completed$(NC)"
 
 gen:
 	@echo -e ":: $(GREEN)Generating schema and code...$(NC)"
-	# we do not have a sql file yet
-	# @echo -e "  -> Running schema creation script..."
-	# @./scripts/create_sqlc_full_schema.sh || (echo -e "  -> $(RED)Schema creation failed$(NC)" && exit 1)
-	# @echo -e "  -> Generating SQLC code..."
-	# @sqlc generate || (echo -e "  -> $(RED)SQLC generation failed$(NC)" && exit 1)
+	@echo -e "  -> Running schema creation script..."
+	@./scripts/create_sqlc_full_schema.sh || (echo -e "  -> $(RED)Schema creation failed$(NC)" && exit 1)
+	@echo -e "  -> Generating SQLC code..."
+	@sqlc generate || (echo -e "  -> $(RED)SQLC generation failed$(NC)" && exit 1)
 	@echo -e "  -> Running go generate..."
 	@go generate ./... || (echo -e "  -> $(RED)Go generate failed!$(RED)" && exit 1)
 	@echo -e "==> $(BLUE)Generation completed$(NC)"

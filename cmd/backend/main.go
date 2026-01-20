@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"sciedu-backend/databaseutil"
 	"sciedu-backend/internal"
 	"sciedu-backend/internal/questions"
 
-	// databaseutil "github.com/NYCU-SDC/summer/pkg/database"
+	// databaseutil "github.com/NYCU-SDC/summer/pkg/databaseutil"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
@@ -19,9 +22,24 @@ func main() {
 
 	logger.Info("Hello, World!")
 
+	err = databaseutil.MigrationUp("file://internal/database/migrations", "postgresql://postgres:SciEdu@localhost:5432/postgres?sslmode=disable", logger)
+	if err != nil {
+		logger.Fatal("failed to run database migration", zap.Error(err))
+	}
+
 	validator := internal.NewValidator()
 
-	questionService := questions.NewService(logger)
+	poolConfig, err := pgxpool.ParseConfig("postgresql://postgres:SciEdu@localhost:5432/postgres?sslmode=disable")
+	if err != nil {
+		logger.Fatal("Failed to parse database URL", zap.Error(err))
+	}
+	dbPool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
+	if err != nil {
+		logger.Fatal("Failed to create database connection pool", zap.Error(err))
+	}
+	defer dbPool.Close()
+
+	questionService := questions.NewService(logger, dbPool)
 
 	questionsHandler := questions.NewHandler(logger, validator, questionService)
 
@@ -31,8 +49,8 @@ func main() {
 	mux.HandleFunc("GET /api/questions/{id}", questionsHandler.GetQuestion)
 	mux.HandleFunc("PUT /api/questions/{id}", questionsHandler.UpdateQuestion)
 	mux.HandleFunc("DELETE /api/questions/{id}", questionsHandler.DelQuestion)
-	mux.HandleFunc("POST /api/questions/{id}/answer", questionsHandler.CreateAnswer)
-	mux.HandleFunc("GET /api/questions/{id}/answer", questionsHandler.GetAnswer)
+	mux.HandleFunc("POST /api/questions/{id}/answers", questionsHandler.SubmitAnswer)
+	mux.HandleFunc("GET /api/questions/{id}/answers", questionsHandler.ListAnswers)
 
 	logger.Info("Start listening on port: 8080")
 

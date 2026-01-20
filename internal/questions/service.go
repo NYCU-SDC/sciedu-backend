@@ -2,54 +2,36 @@ package questions
 
 import (
 	"context"
-	"errors"
-	"strconv"
-	"time"
+	"sciedu-backend/internal/database"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
-type Question struct {
-	ID      string
-	Type    string
-	Content string
-	Options []Option
-}
+type Querier interface {
+	CreateQuestion(ctx context.Context, arg CreateQuestionParams) (Question, error)
+	CreateCorrespondOption(ctx context.Context, arg CreateCorrespondOptionParams) (Option, error)
+	ListQuestion(ctx context.Context) ([]Question, error)
+	GetQuestion(ctx context.Context, id uuid.UUID) (Question, error)
+	ListCorrespondOption(ctx context.Context, questionID uuid.UUID) ([]Option, error)
+	UpdateQuestion(ctx context.Context, arg UpdateQuestionParams) (Question, error)
+	UpdateCorrespondingOption(ctx context.Context, arg UpdateCorrespondingOptionParams) (Option, error)
+	DeleteQuestion(ctx context.Context, id uuid.UUID) error
+	DeleteCorrespondingOption(ctx context.Context, questionID uuid.UUID) error
 
-type ReqQuestion struct {
-	Type       string
-	Content    string
-	ReqOptions []ReqOption
+	SubmitAnswer(ctx context.Context, arg SubmitAnswerParams) (Answer, error)
+	ListAnswer(ctx context.Context, questionID uuid.UUID) ([]Answer, error)
 }
-
-type Answer struct {
-	ID               string
-	QuestionID       string
-	SelectedOptionID int
-	TextAnswer       string
-	CreateAt         string
-}
-
-type ReqAnswer struct {
-	SelectedOptionID int
-	TextAnswer       string
-}
-
-/* type Querier interface {
-	Create(ctx context.Context, arg ReqQuestion) (Question, error)
-} */
 
 type Service struct {
-	logger *zap.Logger
-	// we don't need queries now
-	// queries Querier
+	logger  *zap.Logger
+	queries Querier
 }
 
-// func NewService(logger *zap.Logger, queries Queries) *Service
-func NewService(logger *zap.Logger) *Service {
+func NewService(logger *zap.Logger, db DBTX) *Service {
 	return &Service{
-		logger: logger,
-		// queries: queries,
+		logger:  logger,
+		queries: New(db),
 	}
 }
 
@@ -59,124 +41,167 @@ var testQuestionList []Question
 var answerIDCounter int
 var testAnswerList []Answer
 
-func (s *Service) CreateQuestion(ctx context.Context, arg ReqQuestion) (Question, error) {
-	// handle mock ID for each ReqOption, temporary...
-	var options []Option
-	for i, option := range arg.ReqOptions {
-		options = append(options, Option{
-			ID:      strconv.Itoa(i),
-			Label:   option.Label,
-			Content: option.Content,
-		})
-	}
-
-	question := Question{
-		ID:      strconv.Itoa(questionIDCounter),
+func (s *Service) CreateQuestion(ctx context.Context, arg QuestionRequest) (BoundQuestion, error) {
+	question, err := s.queries.CreateQuestion(ctx, CreateQuestionParams{
 		Type:    arg.Type,
 		Content: arg.Content,
-		Options: options,
+	})
+	if err != nil {
+		err = database.WrapDBError(err, s.logger, "failed to create question")
+		return BoundQuestion{}, err
 	}
 
-	// temporary...
-	questionIDCounter++
-
-	testQuestionList = append(testQuestionList, question)
-
-	// here should have some error handle after connected the database...
-
-	return question, nil
-}
-
-func (s *Service) ListQuestion(ctx context.Context) ([]Question, error) {
-	return testQuestionList, nil
-}
-
-func (s *Service) GetQuestion(ctx context.Context, ID string) (Question, error) {
-	// parse UUID logic, skip now...
-
-	for _, question := range testQuestionList {
-		if question.ID == ID {
-			return question, nil
-		}
-	}
-
-	s.logger.Error("invalid ID")
-	return Question{}, errors.New("invalid ID")
-}
-
-func (s *Service) UpdateQuestion(ctx context.Context, ID string, arg ReqQuestion) (Question, error) {
-	// parse UUID logic, skip now...
-
-	// handle mock ID for each ReqOption, temporary...
 	var options []Option
-	for i, option := range arg.ReqOptions {
-		options = append(options, Option{
-			ID:      strconv.Itoa(i),
-			Label:   option.Label,
-			Content: option.Content,
+	for _, optionReq := range arg.Options {
+		option, err := s.queries.CreateCorrespondOption(ctx, CreateCorrespondOptionParams{
+			QuestionID: question.ID,
+			Label:      optionReq.Label,
+			Content:    optionReq.Content,
+		})
+		if err != nil {
+			err = database.WrapDBError(err, s.logger, "failed to create corresponding options")
+			return BoundQuestion{}, err
+		}
+		options = append(options, option)
+	}
+
+	res := BoundQuestion{
+		Question: question,
+		Options:  options,
+	}
+
+	return res, nil
+}
+
+func (s *Service) ListQuestion(ctx context.Context) ([]BoundQuestion, error) {
+	questions, err := s.queries.ListQuestion(ctx)
+	if err != nil {
+		err = database.WrapDBError(err, s.logger, "failed to get questions")
+		return []BoundQuestion{}, err
+	}
+
+	var res []BoundQuestion
+	for _, question := range questions {
+		options, err := s.queries.ListCorrespondOption(ctx, question.ID)
+		if err != nil {
+			err = database.WrapDBError(err, s.logger, "failed to get corresponding options")
+			return []BoundQuestion{}, err
+		}
+		res = append(res, BoundQuestion{
+			Question: question,
+			Options:  options,
 		})
 	}
 
-	updateQuestion := Question{
+	return res, nil
+}
+
+func (s *Service) GetQuestion(ctx context.Context, ID uuid.UUID) (BoundQuestion, error) {
+	question, err := s.queries.GetQuestion(ctx, ID)
+	if err != nil {
+		err = database.WrapDBError(err, s.logger, "failed to get question")
+		return BoundQuestion{}, err
+	}
+
+	options, err := s.queries.ListCorrespondOption(ctx, question.ID)
+	if err != nil {
+		err = database.WrapDBError(err, s.logger, "failed to get corresponding options")
+		return BoundQuestion{}, err
+	}
+
+	return BoundQuestion{
+		Question: question,
+		Options:  options,
+	}, nil
+}
+
+func (s *Service) UpdateQuestion(ctx context.Context, ID uuid.UUID, arg QuestionRequest) (BoundQuestion, error) {
+	question, err := s.queries.UpdateQuestion(ctx, UpdateQuestionParams{
 		ID:      ID,
 		Type:    arg.Type,
 		Content: arg.Content,
-		Options: options,
+	})
+	if err != nil {
+		err = database.WrapDBError(err, s.logger, "failed to update question")
+		return BoundQuestion{}, err
 	}
 
-	for i, question := range testQuestionList {
-		if question.ID == ID {
-			testQuestionList[i] = updateQuestion
-			return testQuestionList[i], nil
+	// option process, a little bit complex
+	typeCheckOp, err := s.queries.ListCorrespondOption(ctx, question.ID)
+	if err != nil {
+		err = database.WrapDBError(err, s.logger, "failed to get corresponding options when updating question")
+		return BoundQuestion{}, err
+	}
+
+	var options []Option
+	if len(typeCheckOp) == 0 { // create options for it
+		// create options from arg
+		for _, optionReq := range arg.Options {
+			option, err := s.queries.CreateCorrespondOption(ctx, CreateCorrespondOptionParams{
+				QuestionID: question.ID,
+				Label:      optionReq.Label,
+				Content:    optionReq.Content,
+			})
+			if err != nil {
+				err = database.WrapDBError(err, s.logger, "failed to create corresponding options")
+				return BoundQuestion{}, err
+			}
+			options = append(options, option)
+		}
+	} else if len(arg.Options) == 0 { // delete options for it
+		err = s.queries.DeleteCorrespondingOption(ctx, question.ID)
+		if err != nil {
+			err = database.WrapDBError(err, s.logger, "failed to delete corresponding options when updating question")
+			return BoundQuestion{}, err
+		}
+	} else { // type remains unchanged
+		for i := 0; i < len(arg.Options); i++ {
+			option, err := s.queries.UpdateCorrespondingOption(ctx, UpdateCorrespondingOptionParams{
+				QuestionID: question.ID,
+				Label:      arg.Options[i].Label,
+				Content:    arg.Options[i].Content,
+			})
+			if err != nil {
+				err = database.WrapDBError(err, s.logger, "failed to update corresponding options")
+				return BoundQuestion{}, err
+			}
+			options = append(options, option)
 		}
 	}
 
-	s.logger.Error("invalid ID")
-	return Question{}, errors.New("invalid ID")
+	return BoundQuestion{
+		Question: question,
+		Options:  options,
+	}, nil
 }
 
-func (s *Service) DelQuestion(ctx context.Context, ID string) error {
-	// temporary del logic
-
-	for i, question := range testQuestionList {
-		if question.ID == ID {
-			testQuestionList[i] = testQuestionList[len(testQuestionList)-1]
-			testQuestionList = testQuestionList[:len(testQuestionList)-1]
-			return nil
-		}
-	}
-
-	s.logger.Error("invalid ID")
-	return errors.New("invalid ID")
+func (s *Service) DelQuestion(ctx context.Context, ID uuid.UUID) error {
+	err := s.queries.DeleteQuestion(ctx, ID)
+	return err
 }
 
-func (s *Service) CreateAnswer(ctx context.Context, questionID string, arg ReqAnswer) (Answer, error) {
-	answer := Answer{
-		ID:               strconv.Itoa(answerIDCounter),
-		QuestionID:       questionID,
+/* Answer */
+
+func (s *Service) SubmitAnswer(ctx context.Context, arg SubmitAnswerParams) (Answer, error) {
+	answer, err := s.queries.SubmitAnswer(ctx, SubmitAnswerParams{
+		QuestionID:       arg.QuestionID,
 		SelectedOptionID: arg.SelectedOptionID,
 		TextAnswer:       arg.TextAnswer,
-		CreateAt:         time.Now().String(),
+	})
+	if err != nil {
+		err = database.WrapDBError(err, s.logger, "failed to submit answer")
+		return Answer{}, err
 	}
-
-	answerIDCounter++
-
-	testAnswerList = append(testAnswerList, answer)
-
-	// here should have some error handle after connected the database...
 
 	return answer, nil
 }
 
-func (s *Service) GetAnswer(ctx context.Context, questionID string) (Answer, error) {
-	// parse UUID logic, skip now...
-
-	for _, answer := range testAnswerList {
-		if answer.QuestionID == questionID {
-			return answer, nil
-		}
+func (s *Service) ListAnswer(ctx context.Context, questionID uuid.UUID) ([]Answer, error) {
+	answers, err := s.queries.ListAnswer(ctx, questionID)
+	if err != nil {
+		err = database.WrapDBError(err, s.logger, "failed to list answers")
+		return []Answer{}, err
 	}
 
-	s.logger.Error("invalid ID")
-	return Answer{}, errors.New("invalid ID")
+	return answers, nil
 }

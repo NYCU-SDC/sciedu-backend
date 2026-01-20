@@ -81,5 +81,14 @@ find ./internal -type f -name "queries.sql" | while read -r QUERY_FILE; do
             go_type:
               import: "github.com/google/uuid"
               type: "UUID"
+          - db_type: "uuid"
+            nullable: true
+            go_type:
+              import: "github.com/google/uuid"
+              type: "UUID"
+              pointer: true
+          - db_type: "text"
+            nullable: true
+            go_type: "string"
 EOF
 done
