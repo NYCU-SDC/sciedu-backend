@@ -3,31 +3,30 @@ package questions
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
-type ReqOption struct {
+type OptionRequest struct {
 	Label   string `json:"label" validate:"required"`
 	Content string `json:"content" validate:"required"`
 }
 
-type Option struct {
-	ID      string
-	Label   string
-	Content string
-}
-
 type QuestionRequest struct {
-	Type    string      `json:"type" validate:"required,oneof=CHOICE TEXT"`
-	Content string      `json:"content" validate:"required,min=1,max=2000"`
-	Options []ReqOption `json:"options" validate:"required_if=Type CHOICE,dive,required"`
+	Type    string          `json:"type" validate:"required,oneof=CHOICE TEXT"`
+	Content string          `json:"content" validate:"required,min=1,max=2000"`
+	Options []OptionRequest `json:"options" validate:"required_if=Type CHOICE,dive,required"`
 }
 
-// after connected to the database, Question struct in service will be modified
-// hence, I left a similar struct here in order to simplify our work later
+type BoundQuestion struct {
+	Question Question
+	Options  []Option
+}
+
 type QuestionResponse struct {
 	ID      string   `json:"id"`
 	Type    string   `json:"type"`
@@ -36,27 +35,27 @@ type QuestionResponse struct {
 }
 
 type AnswerRequest struct {
-	SelectedOptionID int    `json:"selectedOptionID"`
+	SelectedOptionID string `json:"selectedOptionID"`
 	TextAnswer       string `json:"textAnswer"`
 }
 
 type AnswerResponse struct {
 	ID               string `json:"id"`
 	QuestionID       string `json:"questionID"`
-	SelectedOptionID int    `json:"selectedOptionID"`
+	SelectedOptionID string `json:"selectedOptionID"`
 	TextAnswer       string `json:"textAnswer"`
 	CreateAt         string `json:"createAt"`
 }
 
 type Store interface {
-	CreateQuestion(ctx context.Context, arg ReqQuestion) (Question, error)
-	ListQuestion(ctx context.Context) ([]Question, error)
-	GetQuestion(ctx context.Context, ID string) (Question, error)
-	UpdateQuestion(ctx context.Context, ID string, arg ReqQuestion) (Question, error)
-	DelQuestion(ctx context.Context, ID string) error
+	CreateQuestion(ctx context.Context, arg QuestionRequest) (BoundQuestion, error)
+	ListQuestion(ctx context.Context) ([]BoundQuestion, error)
+	GetQuestion(ctx context.Context, ID uuid.UUID) (BoundQuestion, error)
+	UpdateQuestion(ctx context.Context, ID uuid.UUID, arg QuestionRequest) (BoundQuestion, error)
+	DelQuestion(ctx context.Context, ID uuid.UUID) error
 
-	CreateAnswer(ctx context.Context, questionID string, arg ReqAnswer) (Answer, error)
-	GetAnswer(ctx context.Context, questionID string) (Answer, error)
+	SubmitAnswer(ctx context.Context, arg SubmitAnswerParams) (Answer, error)
+	ListAnswer(ctx context.Context, questionID uuid.UUID) ([]Answer, error)
 }
 
 type Handler struct {
@@ -89,10 +88,10 @@ func (h *Handler) CreateQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newQuestion, err := h.store.CreateQuestion(ctx, ReqQuestion{
-		Type:       req.Type,
-		Content:    req.Content,
-		ReqOptions: req.Options,
+	newQuestion, err := h.store.CreateQuestion(ctx, QuestionRequest{
+		Type:    req.Type,
+		Content: req.Content,
+		Options: req.Options,
 	})
 	if err != nil {
 		h.logger.Error("failed to create question", zap.Error(err))
@@ -100,13 +99,10 @@ func (h *Handler) CreateQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// modified type after connected to the database,
-	// since for mock data, I choose string type instead of pgtype.UUID type
-	// ex: ewQuestion.ID => newQuestion.ID.String()
 	resp := QuestionResponse{
-		ID:      newQuestion.ID,
-		Type:    newQuestion.Type,
-		Content: newQuestion.Content,
+		ID:      newQuestion.Question.ID.String(),
+		Type:    newQuestion.Question.Type,
+		Content: newQuestion.Question.Content,
 		Options: newQuestion.Options,
 	}
 
@@ -116,23 +112,23 @@ func (h *Handler) CreateQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ListQuestion - Get all questions
+// ListQuestion - Get all questions.sql
 func (h *Handler) ListQuestion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	getQuestions, err := h.store.ListQuestion(ctx)
 	if err != nil {
-		h.logger.Error("failed to get questions", zap.Error(err))
-		http.Error(w, "failed to get questions", http.StatusInternalServerError)
+		h.logger.Error("failed to get questions.sql", zap.Error(err))
+		http.Error(w, "failed to get questions.sql", http.StatusInternalServerError)
 		return
 	}
 
 	resp := make([]QuestionResponse, len(getQuestions))
 	for i, questions := range getQuestions {
 		resp[i] = QuestionResponse{
-			ID:      questions.ID,
-			Type:    questions.Type,
-			Content: questions.Content,
+			ID:      questions.Question.ID.String(),
+			Type:    questions.Question.Type,
+			Content: questions.Question.Content,
 			Options: questions.Options,
 		}
 	}
@@ -147,13 +143,14 @@ func (h *Handler) ListQuestion(w http.ResponseWriter, r *http.Request) {
 // GetQuestion - Get single question
 func (h *Handler) GetQuestion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
 	questionID := r.PathValue("id")
+	id, err := ParseUUID(questionID)
+	if err != nil {
+		return
+	}
 
-	// UUID check logic
-	// struct we used here is mock, thus we skip this part
-	// MUST handle this properly after connected to the database
-
-	getQuestion, err := h.store.GetQuestion(ctx, questionID)
+	getQuestion, err := h.store.GetQuestion(ctx, id)
 	if err != nil {
 		h.logger.Error("failed to get question", zap.Error(err))
 		http.Error(w, "failed to get question", http.StatusInternalServerError)
@@ -161,9 +158,9 @@ func (h *Handler) GetQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := QuestionResponse{
-		ID:      getQuestion.ID,
-		Type:    getQuestion.Type,
-		Content: getQuestion.Content,
+		ID:      getQuestion.Question.ID.String(),
+		Type:    getQuestion.Question.Type,
+		Content: getQuestion.Question.Content,
 		Options: getQuestion.Options,
 	}
 
@@ -176,9 +173,13 @@ func (h *Handler) GetQuestion(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	questionID := r.PathValue("id")
+	id, err := ParseUUID(questionID)
+	if err != nil {
+		return
+	}
 
 	var req QuestionRequest
-	err := h.DecodeReqBody(w, r, &req)
+	err = h.DecodeReqBody(w, r, &req)
 	if err != nil {
 		return
 	}
@@ -188,12 +189,10 @@ func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// UUID check logic
-
-	updateQuestion, err := h.store.UpdateQuestion(ctx, questionID, ReqQuestion{
-		Type:       req.Type,
-		Content:    req.Content,
-		ReqOptions: req.Options,
+	updateQuestion, err := h.store.UpdateQuestion(ctx, id, QuestionRequest{
+		Type:    req.Type,
+		Content: req.Content,
+		Options: req.Options,
 	})
 	if err != nil {
 		h.logger.Error("failed to update question", zap.Error(err))
@@ -202,9 +201,9 @@ func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := QuestionResponse{
-		ID:      updateQuestion.ID,
-		Type:    updateQuestion.Type,
-		Content: updateQuestion.Content,
+		ID:      updateQuestion.Question.ID.String(),
+		Type:    updateQuestion.Question.Type,
+		Content: updateQuestion.Question.Content,
 		Options: updateQuestion.Options,
 	}
 
@@ -218,12 +217,12 @@ func (h *Handler) DelQuestion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	questionID := r.PathValue("id")
+	id, err := ParseUUID(questionID)
+	if err != nil {
+		return
+	}
 
-	// UUID check logic
-	// struct we used here is mock, thus we skip this part
-	// MUST handle this properly after connected to the database
-
-	err := h.store.DelQuestion(ctx, questionID)
+	err = h.store.DelQuestion(ctx, id)
 	if err != nil {
 		h.logger.Error("failed to delete question", zap.Error(err))
 		http.Error(w, "failed to delete question", http.StatusInternalServerError)
@@ -238,12 +237,17 @@ func (h *Handler) DelQuestion(w http.ResponseWriter, r *http.Request) {
 
 /**** Answers ****/
 
-func (h *Handler) CreateAnswer(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) SubmitAnswer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
 	questionID := r.PathValue("id")
+	id, err := ParseUUID(questionID)
+	if err != nil {
+		return
+	}
 
 	var req AnswerRequest
-	err := h.DecodeReqBody(w, r, &req)
+	err = h.DecodeReqBody(w, r, &req)
 	if err != nil {
 		return
 	}
@@ -253,8 +257,19 @@ func (h *Handler) CreateAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	newAnswer, err := h.store.CreateAnswer(ctx, questionID, ReqAnswer{
-		SelectedOptionID: req.SelectedOptionID,
+	// default to nil
+	var selOptionID *uuid.UUID
+	if req.SelectedOptionID != "" {
+		parseSelOptionID, err := ParseUUID(req.SelectedOptionID)
+		if err != nil {
+			return
+		}
+		selOptionID = &parseSelOptionID
+	}
+
+	newAnswer, err := h.store.SubmitAnswer(ctx, SubmitAnswerParams{
+		QuestionID:       id,
+		SelectedOptionID: selOptionID,
 		TextAnswer:       req.TextAnswer,
 	})
 	if err != nil {
@@ -264,11 +279,11 @@ func (h *Handler) CreateAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := AnswerResponse{
-		ID:               newAnswer.ID,
-		QuestionID:       newAnswer.QuestionID,
-		SelectedOptionID: newAnswer.SelectedOptionID,
+		ID:               newAnswer.ID.String(),
+		QuestionID:       newAnswer.QuestionID.String(),
+		SelectedOptionID: req.SelectedOptionID, // trick to avoid dereference of null pointer
 		TextAnswer:       newAnswer.TextAnswer,
-		CreateAt:         newAnswer.CreateAt,
+		CreateAt:         newAnswer.CreatedAt.Time.String(),
 	}
 
 	err = h.WriteResponse(w, "application/json", http.StatusCreated, resp)
@@ -277,27 +292,37 @@ func (h *Handler) CreateAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) GetAnswer(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ListAnswers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	questionID := r.PathValue("id")
+	id, err := ParseUUID(questionID)
+	if err != nil {
+		return
+	}
 
-	// UUID check logic
-	// struct we used here is mock, thus we skip this part
-	// MUST handle this properly after connected to the database
-
-	getAnswer, err := h.store.GetAnswer(ctx, questionID)
+	getAnswer, err := h.store.ListAnswer(ctx, id)
 	if err != nil {
 		h.logger.Error("failed to get answer", zap.Error(err))
 		http.Error(w, "failed to get answer", http.StatusInternalServerError)
 		return
 	}
 
-	resp := AnswerResponse{
-		ID:               getAnswer.ID,
-		QuestionID:       getAnswer.QuestionID,
-		SelectedOptionID: getAnswer.SelectedOptionID,
-		TextAnswer:       getAnswer.TextAnswer,
-		CreateAt:         getAnswer.CreateAt,
+	// handle the SelectedOptionID carefully, it's a pointer
+	var selOptionID string
+	resp := make([]AnswerResponse, len(getAnswer))
+	for i, answer := range getAnswer {
+		if answer.SelectedOptionID == nil {
+			selOptionID = ""
+		} else {
+			selOptionID = answer.SelectedOptionID.String()
+		}
+		resp[i] = AnswerResponse{
+			ID:               answer.ID.String(),
+			QuestionID:       answer.QuestionID.String(),
+			SelectedOptionID: selOptionID,
+			TextAnswer:       answer.TextAnswer,
+			CreateAt:         answer.CreatedAt.Time.String(),
+		}
 	}
 
 	err = h.WriteResponse(w, "application/json", http.StatusOK, resp)
@@ -330,10 +355,22 @@ func (h *Handler) WriteResponse(w http.ResponseWriter, contentType string, statu
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(statusCode)
 
+	if resp == nil {
+		return nil
+	}
+
 	err := json.NewEncoder(w).Encode(&resp)
 	if err != nil {
 		h.logger.Error("failed to encode response", zap.Error(err))
 		http.Error(w, "failed to encode response", http.StatusInternalServerError)
 	}
 	return err
+}
+
+func ParseUUID(value string) (uuid.UUID, error) {
+	parsedUUID, err := uuid.Parse(value)
+	if err != nil {
+		return parsedUUID, fmt.Errorf("failed to parse UUID: %w", err)
+	}
+	return parsedUUID, nil
 }

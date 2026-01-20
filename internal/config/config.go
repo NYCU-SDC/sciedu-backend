@@ -62,7 +62,7 @@ func Load() (Config, *LogBuffer) {
 		Port:            "8080",
 		Secret:          DefaultSecret,
 		DatabaseURL:     "",
-		MigrationSource: "file://internal/database/migrations",
+		MigrationSource: "file://internal/databaseutil/migrations",
 	}
 
 	var err error
@@ -132,7 +132,7 @@ func FromFlags(config *Config) (*Config, error) {
 	flag.StringVar(&flagConfig.Host, "host", "", "host")
 	flag.StringVar(&flagConfig.Port, "port", "", "port")
 	flag.StringVar(&flagConfig.Secret, "secret", "", "secret")
-	flag.StringVar(&flagConfig.DatabaseURL, "database_url", "", "database url")
+	flag.StringVar(&flagConfig.DatabaseURL, "database_url", "", "databaseutil url")
 	flag.StringVar(&flagConfig.MigrationSource, "migration_source", "", "migration source")
 
 	flag.Parse()
