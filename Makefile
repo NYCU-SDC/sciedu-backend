@@ -37,3 +37,7 @@ run:
 		./bin/backend \
 		&& (echo -e "==> $(BLUE)Successfully shutdown backend! $(NC)") \
 		|| (echo -e "==> $(RED)Backend failed to start! $(NC)" && exit 1)
+
+test: gen
+	@echo -e ":: $(GREEN)Running tests...$(NC)"
+	@go test -cover ./... && echo -e "==> $(BLUE)All tests passed$(NC)" || echo -e "==> $(RED)Tests failed$(NC)"

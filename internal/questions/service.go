@@ -8,6 +8,7 @@ import (
 	"go.uber.org/zap"
 )
 
+//go:generate mockery --name=Querier
 type Querier interface {
 	CreateQuestion(ctx context.Context, arg CreateQuestionParams) (Question, error)
 	CreateCorrespondOption(ctx context.Context, arg CreateCorrespondOptionParams) (Option, error)
@@ -32,6 +33,13 @@ func NewService(logger *zap.Logger, db DBTX) *Service {
 	return &Service{
 		logger:  logger,
 		queries: New(db),
+	}
+}
+
+func NewServiceWithQuerier(logger *zap.Logger, querier Querier) *Service {
+	return &Service{
+		logger:  logger,
+		queries: querier,
 	}
 }
 
@@ -126,47 +134,24 @@ func (s *Service) UpdateQuestion(ctx context.Context, ID uuid.UUID, arg Question
 		return BoundQuestion{}, err
 	}
 
-	// option process, a little bit complex
-	typeCheckOp, err := s.queries.ListCorrespondOption(ctx, question.ID)
+	err = s.queries.DeleteCorrespondingOption(ctx, question.ID)
 	if err != nil {
-		err = database.WrapDBError(err, s.logger, "failed to get corresponding options when updating question")
+		err = database.WrapDBError(err, s.logger, "failed to delete corresponding options when updating question")
 		return BoundQuestion{}, err
 	}
 
 	var options []Option
-	if len(typeCheckOp) == 0 { // create options for it
-		// create options from arg
-		for _, optionReq := range arg.Options {
-			option, err := s.queries.CreateCorrespondOption(ctx, CreateCorrespondOptionParams{
-				QuestionID: question.ID,
-				Label:      optionReq.Label,
-				Content:    optionReq.Content,
-			})
-			if err != nil {
-				err = database.WrapDBError(err, s.logger, "failed to create corresponding options")
-				return BoundQuestion{}, err
-			}
-			options = append(options, option)
-		}
-	} else if len(arg.Options) == 0 { // delete options for it
-		err = s.queries.DeleteCorrespondingOption(ctx, question.ID)
+	for _, optionReq := range arg.Options {
+		option, err := s.queries.CreateCorrespondOption(ctx, CreateCorrespondOptionParams{
+			QuestionID: question.ID,
+			Label:      optionReq.Label,
+			Content:    optionReq.Content,
+		})
 		if err != nil {
-			err = database.WrapDBError(err, s.logger, "failed to delete corresponding options when updating question")
+			err = database.WrapDBError(err, s.logger, "failed to create corresponding options when updating question")
 			return BoundQuestion{}, err
 		}
-	} else { // type remains unchanged
-		for i := 0; i < len(arg.Options); i++ {
-			option, err := s.queries.UpdateCorrespondingOption(ctx, UpdateCorrespondingOptionParams{
-				QuestionID: question.ID,
-				Label:      arg.Options[i].Label,
-				Content:    arg.Options[i].Content,
-			})
-			if err != nil {
-				err = database.WrapDBError(err, s.logger, "failed to update corresponding options")
-				return BoundQuestion{}, err
-			}
-			options = append(options, option)
-		}
+		options = append(options, option)
 	}
 
 	return BoundQuestion{
