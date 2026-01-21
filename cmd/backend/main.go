@@ -6,16 +6,16 @@ import (
 	"net/http"
 	"sciedu-backend/databaseutil"
 	"sciedu-backend/internal"
+	logutil "sciedu-backend/internal/error"
 	"sciedu-backend/internal/questions"
 
 	// databaseutil "github.com/NYCU-SDC/summer/pkg/databaseutil"
-	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
 
 func main() {
-	logger, err := initLogger()
+	logger, err := logutil.InitLogger()
 	if err != nil {
 		log.Fatalf("Failed to initalize logger: %v, exiting...", err)
 	}
@@ -58,22 +58,4 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-}
-
-func initLogger() (*zap.Logger, error) {
-	var logger *zap.Logger
-
-	logger, err := logutil.ZapDevelopmentConfig().Build()
-	if err != nil {
-		return nil, err
-	}
-
-	defer func() {
-		err := logger.Sync()
-		if err != nil {
-			zap.S().Errorw("Failed to sync logger", zap.Error(err))
-		}
-	}()
-
-	return logger, nil
 }
