@@ -47,6 +47,7 @@ type AnswerResponse struct {
 	CreateAt         string `json:"createAt"`
 }
 
+//go:generate mockery --name=Store
 type Store interface {
 	CreateQuestion(ctx context.Context, arg QuestionRequest) (BoundQuestion, error)
 	ListQuestion(ctx context.Context) ([]BoundQuestion, error)
