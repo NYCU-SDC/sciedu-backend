@@ -27,7 +27,7 @@ func TestHandler_InvalidJSON_ReturnsRFC9457(t *testing.T) {
 	}
 	h := chat.NewHandler(svc, nil)
 
-	r := httptest.NewRequest(http.MethodPost, "/v1/chat/stream", strings.NewReader(`{bad json`))
+	r := httptest.NewRequest(http.MethodPost, "/chat/stream", strings.NewReader(`{bad json`))
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -50,7 +50,7 @@ func TestHandler_ValidationError_ReturnsRFC9457WithErrors(t *testing.T) {
 	h := chat.NewHandler(svc, nil)
 
 	body := `{"messages":[],"stream":true}`
-	r := httptest.NewRequest(http.MethodPost, "/v1/chat/stream", strings.NewReader(body))
+	r := httptest.NewRequest(http.MethodPost, "/chat/stream", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
@@ -86,7 +86,7 @@ func TestHandler_StreamsSSE(t *testing.T) {
 		close(errs)
 	}()
 
-	reqBody := `{"messages":[{"role":{"user":"user","assistant":"assistant","system":"system"},"content":"hi"}],"stream":true}`
+	reqBody := `{"messages":[{"role":"user","content":"hi"}],"stream":true}`
 	resp, err := http.Post(srv.URL+"/v1/chat/stream", "application/json", strings.NewReader(reqBody))
 	if err != nil {
 		t.Fatal(err)

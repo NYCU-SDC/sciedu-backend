@@ -26,7 +26,7 @@ func TestChatService_ForwardsChunksAndCompletes(t *testing.T) {
 
 	ctx := context.Background()
 	req := chat.CreateChatCompletionRequest{
-		Messages: []chat.ChatMessage{{Role: chat.ChatRole{User: "u", Assistant: "a", System: "s"}, Content: "hi"}},
+		Messages: []chat.ChatMessage{{Role: chat.ChatRoleUser, Content: "hi"}},
 		Stream:   false, // service should force true
 	}
 
@@ -81,7 +81,7 @@ func TestChatService_PropagatesContextCancellation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	req := chat.CreateChatCompletionRequest{
-		Messages: []chat.ChatMessage{{Role: chat.ChatRole{User: "u", Assistant: "a", System: "s"}, Content: "hi"}},
+		Messages: []chat.ChatMessage{{Role: chat.ChatRoleUser, Content: "hi"}},
 		Stream:   true,
 	}
 

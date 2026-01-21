@@ -22,6 +22,8 @@ type Provider struct {
 	headers  http.Header
 }
 
+
+
 func NewProvider(endpoint string, client *http.Client, headers http.Header) *Provider {
 	if client == nil {
 		client = &http.Client{}

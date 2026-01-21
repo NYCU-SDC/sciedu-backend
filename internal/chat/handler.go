@@ -183,6 +183,11 @@ func decodeAndValidateRequest(r *http.Request) (CreateChatCompletionRequest, *va
 	// TSP-like validation: messages required, each message role/content required
 	fieldErrs := map[string]string{}
 
+	// Validate stream parameter
+	if !req.Stream {
+		fieldErrs["stream"] = "stream must be true. Non-streaming mode is not supported."
+	}
+
 	if len(req.Messages) == 0 {
 		fieldErrs["messages"] = "messages is required and must be a non-empty array."
 	} else {
@@ -190,7 +195,7 @@ func decodeAndValidateRequest(r *http.Request) (CreateChatCompletionRequest, *va
 			if strings.TrimSpace(m.Content) == "" {
 				fieldErrs[msgField(i, "content")] = "content is required."
 			}
-			if strings.TrimSpace(m.Role.User) == "" || strings.TrimSpace(m.Role.Assistant) == "" || strings.TrimSpace(m.Role.System) == "" {
+			if m.Role != ChatRoleUser && m.Role != ChatRoleAssistant && m.Role != ChatRoleSystem {
 				fieldErrs[msgField(i, "role")] = "role must specify one of 'user', 'assistant', or 'system'."
 			}
 		}
