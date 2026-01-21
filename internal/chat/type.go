@@ -5,11 +5,13 @@ type ChatCompletionChunk struct {
 	IsFinished bool   `json:"isFinished"`
 }
 
-type ChatRole struct {
-	User      string `json:"user"`
-	Assistant string `json:"assistant"`
-	System    string `json:"system"`
-}
+type ChatRole string
+
+const (
+	ChatRoleUser      ChatRole = "user"
+	ChatRoleAssistant ChatRole = "assistant"
+	ChatRoleSystem    ChatRole = "system"
+)
 
 type ChatMessage struct {
 	Role    ChatRole `json:"role"`
@@ -20,3 +22,6 @@ type CreateChatCompletionRequest struct {
 	Messages []ChatMessage `json:"messages"`
 	Stream   bool          `json:"stream"`
 }
+
+
+

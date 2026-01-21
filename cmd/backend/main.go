@@ -4,7 +4,6 @@ import (
 	"log"
 	"net/http"
 	"sciedu-backend/internal/chat"
-	"sciedu-backend/internal/chat/mockLLM"
 
 	// databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
@@ -21,12 +20,7 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	//----------------Mock LLM Endpoint----------------
-	mockLLMServer := mockLLM.NewMockLLM()
-	mux.HandleFunc("POST /mock-llm", mockLLMServer.Handle)
-	//-------------------------------------------------
-
-	chatProvider := chat.NewProvider(mockLLMServer.URL(), &http.Client{}, nil)
+	chatProvider := chat.NewProvider("https://llm.pr-3.sciedu.sdc.nycu.club/chat", &http.Client{}, nil)
 	chatService := chat.NewService(chatProvider, logger)
 	chatHandler := chat.NewHandler(chatService, logger)
 
