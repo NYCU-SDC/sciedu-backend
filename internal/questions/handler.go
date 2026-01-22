@@ -44,7 +44,7 @@ type AnswerResponse struct {
 	QuestionID       string `json:"questionID"`
 	SelectedOptionID string `json:"selectedOptionID"`
 	TextAnswer       string `json:"textAnswer"`
-	CreateAt         string `json:"createAt"`
+	CreatedAt        string `json:"createdAt"`
 }
 
 //go:generate mockery --name=Store
@@ -284,7 +284,7 @@ func (h *Handler) SubmitAnswer(w http.ResponseWriter, r *http.Request) {
 		QuestionID:       newAnswer.QuestionID.String(),
 		SelectedOptionID: req.SelectedOptionID, // trick to avoid dereference of null pointer
 		TextAnswer:       newAnswer.TextAnswer,
-		CreateAt:         newAnswer.CreatedAt.Time.String(),
+		CreatedAt:        newAnswer.CreatedAt.Time.String(),
 	}
 
 	err = h.WriteResponse(w, "application/json", http.StatusCreated, resp)
@@ -322,7 +322,7 @@ func (h *Handler) ListAnswers(w http.ResponseWriter, r *http.Request) {
 			QuestionID:       answer.QuestionID.String(),
 			SelectedOptionID: selOptionID,
 			TextAnswer:       answer.TextAnswer,
-			CreateAt:         answer.CreatedAt.Time.String(),
+			CreatedAt:        answer.CreatedAt.Time.String(),
 		}
 	}
 
