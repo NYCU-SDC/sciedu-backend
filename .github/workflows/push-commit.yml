@@ -43,10 +43,8 @@ jobs:
         with:
           sqlc-version: '1.28.0'
 
-      - name: Setup mockery
-        uses: brokeyourbike/go-mockery-action@v0
-        with:
-          mockery-version: '2.53.3'
+      - name: Install mockery
+        run: go install github.com/vektra/mockery/v2@v2.53.3
 
       - name: Build
         run: |
@@ -76,10 +74,8 @@ jobs:
         with:
           sqlc-version: '1.28.0'
 
-      - name: Setup mockery
-        uses: brokeyourbike/go-mockery-action@v0
-        with:
-          mockery-version: '2.53.3'
+      - name: Install mockery
+        run: go install github.com/vektra/mockery/v2@v2.53.3
 
       #- name: Test
       #  run: make test
@@ -102,10 +98,8 @@ jobs:
         with:
           sqlc-version: '1.25.0'
 
-      - name: Setup mockery
-        uses: brokeyourbike/go-mockery-action@v0
-        with:
-          mockery-version: '2.53.3'
+      - name: Install mockery
+        run: go install github.com/vektra/mockery/v2@v2.53.3
 
       - name: Build
         run: |
