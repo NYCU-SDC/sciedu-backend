@@ -170,13 +170,6 @@ jobs:
                 environment: "snapshot",
                 component: "backend"
               },
-              setup: {
-                inject_secret: {
-                  enable: true,
-                  project: "sciedu",
-                  environment: "snapshot"
-                }
-              },
               post: {
                 notify_discord: {
                   enable: true,
