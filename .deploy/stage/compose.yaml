@@ -2,7 +2,7 @@ name: sciedu-stage
 
 services:
   backend:
-    image: nycusdc/sciedu-backend:stage
+    image: "ghcr.io/nycu-sdc/sciedu-backend:stage"
     networks:
       - internal
       - traefik
