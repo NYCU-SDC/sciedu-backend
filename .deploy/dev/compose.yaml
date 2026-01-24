@@ -1,0 +1,44 @@
+name: sciedu-dev
+
+services:
+  backend:
+    image: nycusdc/sciedu-backend:dev
+    networks:
+      - internal
+      - traefik
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - ENV=dev
+      - HOST=0.0.0.0
+      - BASE_URL=https://api.dev.sciedu.sdc.nycu.club
+      - DATABASE_URL=postgres://postgres:password@postgres:5432/sciedu?sslmode=disable
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sciedu-backend-dev.rule=Host(`api.dev.sciedu.sdc.nycu.club`)"
+      - "traefik.http.routers.sciedu-backend-dev.entrypoints=websecure"
+      - "traefik.http.routers.sciedu-backend-dev.tls=true"
+      - "traefik.http.routers.sciedu-backend-dev.tls.certresolver=cloudflare"
+      - "traefik.http.services.sciedu-backend-dev.loadbalancer.server.port=8080"
+
+
+  postgres:
+    image: postgres:18.1
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: sciedu
+    networks:
+      - internal
+
+
+networks:
+  internal:
+  traefik:
+    external: true
