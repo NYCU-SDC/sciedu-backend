@@ -137,13 +137,6 @@ jobs:
               "environment": "stage",
               "component": "backend"
             },
-            "setup": {
-              "inject_secret": {
-                "enable": true,
-                "project": "sciedu",
-                "environment": "staging"
-              }
-            },
             "post": {
               "notify_discord": {
                 "enable": true,
