@@ -9,8 +9,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      ldap:
-        condition: service_healthy
     environment:
       - ENV=snapshot
       - HOST=0.0.0.0
@@ -23,7 +21,6 @@ services:
       - "traefik.http.routers.sciedu-backend-${VERSION}.tls=true"
       - "traefik.http.routers.sciedu-backend-${VERSION}.tls.certresolver=cloudflare"
       - "traefik.http.services.sciedu-backend-${VERSION}.loadbalancer.server.port=8080"
-
 
   postgres:
     image: postgres:18.1
@@ -38,8 +35,6 @@ services:
       POSTGRES_DB: sciedu
     networks:
       - internal
-
-
 
 networks:
   internal:
