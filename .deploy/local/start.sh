@@ -9,10 +9,3 @@ if ! docker compose ps ${DB_NAME} | grep -q "running"; then
 else
     echo "Database already running."
 fi
-
-if ! docker compose ps ${LDAP_NAME} | grep -q "running"; then
-    echo "LDAP not running. Starting..."
-    docker start ${LDAP_NAME}
-else
-    echo "LDAP already running."
-fi
