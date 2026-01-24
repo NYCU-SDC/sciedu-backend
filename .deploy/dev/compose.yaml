@@ -2,7 +2,7 @@ name: sciedu-dev
 
 services:
   backend:
-    image: nycusdc/sciedu-backend:dev
+    image: "ghcr.io/nycu-sdc/sciedu-backend:dev"
     networks:
       - internal
       - traefik

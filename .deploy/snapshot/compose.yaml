@@ -2,14 +2,12 @@ name: sciedu-$VERSION
 
 services:
   backend:
-    image: "nycusdc/sciedu-backend:$VERSION"
+    image: "ghcr.io/nycu-sdc/sciedu-backend:$VERSION"
     networks:
       - internal
       - traefik
     depends_on:
       postgres:
-        condition: service_healthy
-      ldap:
         condition: service_healthy
     environment:
       - ENV=snapshot
@@ -24,7 +22,6 @@ services:
       - "traefik.http.routers.sciedu-backend-${VERSION}.tls.certresolver=cloudflare"
       - "traefik.http.services.sciedu-backend-${VERSION}.loadbalancer.server.port=8080"
 
-
   postgres:
     image: postgres:18.1
     healthcheck:
@@ -38,8 +35,6 @@ services:
       POSTGRES_DB: sciedu
     networks:
       - internal
-
-
 
 networks:
   internal:

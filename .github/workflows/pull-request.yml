@@ -29,7 +29,7 @@ jobs:
       - name: Setup mockery
         uses: brokeyourbike/go-mockery-action@v0
         with:
-          mockery-version: '2.53.3'
+          mockery-version: '2.53.5'
 
       - name: Build
         run: |
@@ -60,7 +60,7 @@ jobs:
       - name: Setup mockery
         uses: brokeyourbike/go-mockery-action@v0
         with:
-          mockery-version: '2.53.3'
+          mockery-version: '2.53.5'
 
       #- name: Test
       #  run: make test
@@ -80,12 +80,12 @@ jobs:
       - name: Setup Sqlc
         uses: sqlc-dev/setup-sqlc@v4
         with:
-          sqlc-version: '1.25.0'
+          sqlc-version: '1.28.0'
 
       - name: Setup mockery
         uses: brokeyourbike/go-mockery-action@v0
         with:
-          mockery-version: '2.53.3'
+          mockery-version: '2.53.5'
 
       - name: Build
         run: |
@@ -170,13 +170,6 @@ jobs:
                 environment: "snapshot",
                 component: "backend"
               },
-              setup: {
-                inject_secret: {
-                  enable: true,
-                  project: "sciedu",
-                  environment: "snapshot"
-                }
-              },
               post: {
                 notify_discord: {
                   enable: true,
@@ -195,6 +188,7 @@ jobs:
           echo "$json"
           
           curl --location --request POST 'https://webhook.sdc.nycu.club/webhook/deploy' \
+            --fail-with-body \
             --header 'Content-Type: application/json' \
             --header 'x-deploy-token: ${{ secrets.N8N_DEPLOY_TOKEN }}' \
             --data "$json"
