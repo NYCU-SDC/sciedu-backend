@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - test/ci-feat-integration
 
 permissions:
   contents: read
