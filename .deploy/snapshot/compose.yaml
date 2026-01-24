@@ -2,7 +2,7 @@ name: sciedu-$VERSION
 
 services:
   backend:
-    image: "nycusdc/sciedu-backend:$VERSION"
+    image: "ghcr.io/nycu-sdc/sciedu-backend:$VERSION"
     networks:
       - internal
       - traefik
