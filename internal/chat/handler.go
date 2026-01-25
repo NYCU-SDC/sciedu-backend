@@ -98,7 +98,7 @@ func (h *Handler) StreamChat(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case <-ctx.Done():
-			h.logger.Info("stream cancelled: %v", zap.Error(ctx.Err()))
+			h.logger.Info("stream cancelled:", zap.Error(ctx.Err()))
 			return
 
 		case err, ok := <-errs:

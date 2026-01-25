@@ -111,7 +111,7 @@ func TestHTTPProvider_VerifyContextPropagation_CancelUpstreamOnClientDisconnect(
 			t.Fatalf("upstream does not support flushing")
 		}
 
-		w.Header().Set("Content-Type", "text/event-Stream")
+		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
 		close(upstreamStarted)
 
