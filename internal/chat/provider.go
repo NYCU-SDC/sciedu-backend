@@ -22,8 +22,6 @@ type Provider struct {
 	headers  http.Header
 }
 
-
-
 func NewProvider(endpoint string, client *http.Client, headers http.Header) *Provider {
 	if client == nil {
 		client = &http.Client{}
@@ -121,7 +119,14 @@ func (p *Provider) StreamChat(ctx context.Context, req CreateChatCompletionReque
 			errs <- err
 			return
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				select {
+				case errs <- fmt.Errorf("failed to close response body: %w", closeErr):
+				default:
+				}
+			}
+		}()
 
 		if resp.StatusCode != http.StatusOK {
 			b, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
