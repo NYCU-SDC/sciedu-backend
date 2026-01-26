@@ -8,6 +8,7 @@ import (
 	"sciedu-backend/internal/healthz/mocks"
 	"testing"
 
+	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -29,6 +30,7 @@ func TestHandler_Healthz(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := mocks.NewStore(t)
+			problemWriter := problemutil.New()
 			tt.setupMock(store)
 
 			logger, err := logutil.InitLogger()
@@ -37,7 +39,7 @@ func TestHandler_Healthz(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, "/Healthz", nil)
 			w := httptest.NewRecorder()
 
-			handler := healthz.NewHandler(logger, store)
+			handler := healthz.NewHandler(logger, problemWriter, store)
 			handler.Healthz(w, r)
 
 			assert.Equal(t, tt.wantStatus, w.Code)

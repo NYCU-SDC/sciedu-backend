@@ -3,6 +3,7 @@ package healthz
 import (
 	"net/http"
 
+	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
 	"go.uber.org/zap"
 )
 
@@ -12,14 +13,16 @@ type Store interface {
 }
 
 type Handler struct {
-	logger *zap.Logger
-	store  Store
+	logger        *zap.Logger
+	problemWriter *problemutil.HttpWriter
+	store         Store
 }
 
-func NewHandler(logger *zap.Logger, store Store) Handler {
+func NewHandler(logger *zap.Logger, problemWriter *problemutil.HttpWriter, store Store) Handler {
 	return Handler{
-		logger: logger,
-		store:  store,
+		logger:        logger,
+		problemWriter: problemWriter,
+		store:         store,
 	}
 }
 
@@ -28,6 +31,7 @@ func (h Handler) Healthz(w http.ResponseWriter, r *http.Request) {
 	if err != nil || !healthz {
 		h.logger.Error("healthz check error", zap.Error(err))
 		w.WriteHeader(http.StatusServiceUnavailable)
+		h.problemWriter.WriteError(nil, w, err, h.logger)
 		return
 	}
 
