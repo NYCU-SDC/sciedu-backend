@@ -10,6 +10,7 @@ import (
 	"sciedu-backend/internal/questions"
 
 	// databaseutil "github.com/NYCU-SDC/summer/pkg/databaseutil"
+	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -39,9 +40,11 @@ func main() {
 	}
 	defer dbPool.Close()
 
+	problemWriter := problemutil.New()
+
 	questionService := questions.NewService(logger, dbPool)
 
-	questionsHandler := questions.NewHandler(logger, validator, questionService)
+	questionsHandler := questions.NewHandler(logger, problemWriter, validator, questionService)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/questions", questionsHandler.CreateQuestion)

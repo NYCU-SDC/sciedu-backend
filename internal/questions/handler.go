@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -60,16 +61,18 @@ type Store interface {
 }
 
 type Handler struct {
-	logger    *zap.Logger
-	validator *validator.Validate
-	store     Store
+	logger        *zap.Logger
+	problemWriter *problemutil.HttpWriter
+	validator     *validator.Validate
+	store         Store
 }
 
-func NewHandler(logger *zap.Logger, validator *validator.Validate, store Store) *Handler {
+func NewHandler(logger *zap.Logger, problemWriter *problemutil.HttpWriter, validator *validator.Validate, store Store) *Handler {
 	return &Handler{
-		logger:    logger,
-		validator: validator,
-		store:     store,
+		logger:        logger,
+		problemWriter: problemWriter,
+		validator:     validator,
+		store:         store,
 	}
 }
 
@@ -84,7 +87,7 @@ func (h *Handler) CreateQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.ValidateCheck(w, &req)
+	err = h.ValidateCheck(w, r, &req)
 	if err != nil {
 		return
 	}
@@ -96,7 +99,7 @@ func (h *Handler) CreateQuestion(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.logger.Error("failed to create question", zap.Error(err))
-		http.Error(w, "server failed to create question", http.StatusInternalServerError)
+		h.problemWriter.WriteError(r.Context(), w, err, h.logger)
 		return
 	}
 
@@ -107,7 +110,7 @@ func (h *Handler) CreateQuestion(w http.ResponseWriter, r *http.Request) {
 		Options: newQuestion.Options,
 	}
 
-	err = h.WriteResponse(w, "application/json", http.StatusCreated, resp)
+	err = h.WriteResponse(w, r, "application/json", http.StatusCreated, resp)
 	if err != nil {
 		return
 	}
@@ -120,7 +123,7 @@ func (h *Handler) ListQuestion(w http.ResponseWriter, r *http.Request) {
 	getQuestions, err := h.store.ListQuestion(ctx)
 	if err != nil {
 		h.logger.Error("failed to get questions.sql", zap.Error(err))
-		http.Error(w, "failed to get questions.sql", http.StatusInternalServerError)
+		h.problemWriter.WriteError(r.Context(), w, err, h.logger)
 		return
 	}
 
@@ -134,7 +137,7 @@ func (h *Handler) ListQuestion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	err = h.WriteResponse(w, "application/json", http.StatusOK, resp)
+	err = h.WriteResponse(w, r, "application/json", http.StatusOK, resp)
 	if err != nil {
 		return
 	}
@@ -154,7 +157,7 @@ func (h *Handler) GetQuestion(w http.ResponseWriter, r *http.Request) {
 	getQuestion, err := h.store.GetQuestion(ctx, id)
 	if err != nil {
 		h.logger.Error("failed to get question", zap.Error(err))
-		http.Error(w, "failed to get question", http.StatusInternalServerError)
+		h.problemWriter.WriteError(r.Context(), w, err, h.logger)
 		return
 	}
 
@@ -165,7 +168,7 @@ func (h *Handler) GetQuestion(w http.ResponseWriter, r *http.Request) {
 		Options: getQuestion.Options,
 	}
 
-	err = h.WriteResponse(w, "application/json", http.StatusOK, resp)
+	err = h.WriteResponse(w, r, "application/json", http.StatusOK, resp)
 	if err != nil {
 		return
 	}
@@ -185,7 +188,7 @@ func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.ValidateCheck(w, &req)
+	err = h.ValidateCheck(w, r, &req)
 	if err != nil {
 		return
 	}
@@ -197,7 +200,7 @@ func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.logger.Error("failed to update question", zap.Error(err))
-		http.Error(w, "failed to update question", http.StatusInternalServerError)
+		h.problemWriter.WriteError(r.Context(), w, err, h.logger)
 		return
 	}
 
@@ -208,7 +211,7 @@ func (h *Handler) UpdateQuestion(w http.ResponseWriter, r *http.Request) {
 		Options: updateQuestion.Options,
 	}
 
-	err = h.WriteResponse(w, "application/json", http.StatusOK, resp)
+	err = h.WriteResponse(w, r, "application/json", http.StatusOK, resp)
 	if err != nil {
 		return
 	}
@@ -226,11 +229,11 @@ func (h *Handler) DelQuestion(w http.ResponseWriter, r *http.Request) {
 	err = h.store.DelQuestion(ctx, id)
 	if err != nil {
 		h.logger.Error("failed to delete question", zap.Error(err))
-		http.Error(w, "failed to delete question", http.StatusInternalServerError)
+		h.problemWriter.WriteError(r.Context(), w, err, h.logger)
 		return
 	}
 
-	err = h.WriteResponse(w, "application/json", http.StatusNoContent, nil)
+	err = h.WriteResponse(w, r, "application/json", http.StatusNoContent, nil)
 	if err != nil {
 		return
 	}
@@ -253,7 +256,7 @@ func (h *Handler) SubmitAnswer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.ValidateCheck(w, &req)
+	err = h.ValidateCheck(w, r, &req)
 	if err != nil {
 		return
 	}
@@ -275,7 +278,7 @@ func (h *Handler) SubmitAnswer(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.logger.Error("failed to create answer", zap.Error(err))
-		http.Error(w, "failed to create answer", http.StatusInternalServerError)
+		h.problemWriter.WriteError(r.Context(), w, err, h.logger)
 		return
 	}
 
@@ -287,7 +290,7 @@ func (h *Handler) SubmitAnswer(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:        newAnswer.CreatedAt.Time.String(),
 	}
 
-	err = h.WriteResponse(w, "application/json", http.StatusCreated, resp)
+	err = h.WriteResponse(w, r, "application/json", http.StatusCreated, resp)
 	if err != nil {
 		return
 	}
@@ -304,7 +307,7 @@ func (h *Handler) ListAnswers(w http.ResponseWriter, r *http.Request) {
 	getAnswer, err := h.store.ListAnswer(ctx, id)
 	if err != nil {
 		h.logger.Error("failed to get answer", zap.Error(err))
-		http.Error(w, "failed to get answer", http.StatusInternalServerError)
+		h.problemWriter.WriteError(r.Context(), w, err, h.logger)
 		return
 	}
 
@@ -326,7 +329,7 @@ func (h *Handler) ListAnswers(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	err = h.WriteResponse(w, "application/json", http.StatusOK, resp)
+	err = h.WriteResponse(w, r, "application/json", http.StatusOK, resp)
 	if err != nil {
 		return
 	}
@@ -338,21 +341,21 @@ func (h *Handler) DecodeReqBody(w http.ResponseWriter, r *http.Request, req inte
 	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		h.logger.Error("failed to decode request body", zap.Error(err))
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		h.problemWriter.WriteError(r.Context(), w, err, h.logger)
 	}
 	return err
 }
 
-func (h *Handler) ValidateCheck(w http.ResponseWriter, req interface{}) error {
+func (h *Handler) ValidateCheck(w http.ResponseWriter, r *http.Request, req interface{}) error {
 	err := h.validator.Struct(req)
 	if err != nil {
 		h.logger.Error("request validation check failed", zap.Error(err))
-		http.Error(w, "request validation check failed", http.StatusBadRequest)
+		h.problemWriter.WriteError(r.Context(), w, err, h.logger)
 	}
 	return err
 }
 
-func (h *Handler) WriteResponse(w http.ResponseWriter, contentType string, statusCode int, resp any) error {
+func (h *Handler) WriteResponse(w http.ResponseWriter, r *http.Request, contentType string, statusCode int, resp any) error {
 	w.Header().Set("Content-Type", contentType)
 	w.WriteHeader(statusCode)
 
@@ -363,7 +366,7 @@ func (h *Handler) WriteResponse(w http.ResponseWriter, contentType string, statu
 	err := json.NewEncoder(w).Encode(&resp)
 	if err != nil {
 		h.logger.Error("failed to encode response", zap.Error(err))
-		http.Error(w, "failed to encode response", http.StatusInternalServerError)
+		h.problemWriter.WriteError(r.Context(), w, err, h.logger)
 	}
 	return err
 }
