@@ -10,6 +10,7 @@ import (
 	"sciedu-backend/internal/questions/mocks"
 	"testing"
 
+	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -27,7 +28,7 @@ func TestHandler_CreateQuestion(t *testing.T) {
 		name       string
 		arg        arg
 		setupMock  func(m *mocks.Store)
-		wantResult questions.QuestionResponse
+		wantResult any
 		wantStatus int
 	}{
 		{
@@ -157,7 +158,7 @@ func TestHandler_CreateQuestion(t *testing.T) {
 			setupMock: func(m *mocks.Store) {
 				m.AssertNotCalled(t, "CreateQuestion")
 			},
-			wantResult: questions.QuestionResponse{},
+			wantResult: problemutil.NewValidateProblem("Key: 'QuestionRequest.Options' Error:Field validation for 'Options' failed on the 'required_if' tag"),
 			wantStatus: http.StatusBadRequest,
 		},
 		{
@@ -170,7 +171,7 @@ func TestHandler_CreateQuestion(t *testing.T) {
 			setupMock: func(m *mocks.Store) {
 				m.AssertNotCalled(t, "CreateQuestion")
 			},
-			wantResult: questions.QuestionResponse{},
+			wantResult: problemutil.NewValidateProblem("Key: 'QuestionRequest.Content' Error:Field validation for 'Content' failed on the 'required' tag"),
 			wantStatus: http.StatusBadRequest,
 		},
 		{
@@ -183,7 +184,7 @@ func TestHandler_CreateQuestion(t *testing.T) {
 			setupMock: func(m *mocks.Store) {
 				m.AssertNotCalled(t, "CreateQuestion")
 			},
-			wantResult: questions.QuestionResponse{},
+			wantResult: problemutil.NewValidateProblem("Key: 'QuestionRequest.Content' Error:Field validation for 'Content' failed on the 'max' tag"),
 			wantStatus: http.StatusBadRequest,
 		},
 	}
@@ -191,6 +192,7 @@ func TestHandler_CreateQuestion(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := mocks.NewStore(t)
+			problemWriter := problemutil.New()
 			tt.setupMock(store)
 
 			logger, err := logutil.InitLogger()
@@ -204,22 +206,27 @@ func TestHandler_CreateQuestion(t *testing.T) {
 			r := httptest.NewRequest(http.MethodPost, "/api/questions", bytes.NewReader(requestBody))
 			w := httptest.NewRecorder()
 
-			handler := questions.NewHandler(logger, validator.New(), store)
+			handler := questions.NewHandler(logger, problemWriter, validator.New(), store)
 			handler.CreateQuestion(w, r)
 
 			assert.Equal(t, tt.wantStatus, w.Code)
 
-			if tt.wantStatus == http.StatusBadRequest {
-				assert.Contains(t, w.Body.String(), "request validation check failed")
-			} else {
-				var actualResp questions.QuestionResponse
-				err := json.Unmarshal(w.Body.Bytes(), &actualResp)
-				assert.NoError(t, err, "Failed to unmarshal actual response body")
-				assert.NoError(t, err, "Failed to unmarshal expect response body")
+			var data interface{} = tt.wantResult
 
-				assert.Equal(t, tt.wantResult, actualResp)
+			var questionResp questions.QuestionResponse
+			var problemResp problemutil.Problem
+
+			if _, ok := data.(questions.QuestionResponse); ok {
+				err = json.Unmarshal(w.Body.Bytes(), &questionResp)
+				assert.NoError(t, err, "Failed to unmarshal actual response body")
+				assert.Equal(t, tt.wantResult, questionResp)
+
+			} else {
+				err = json.Unmarshal(w.Body.Bytes(), &problemResp)
+				assert.NoError(t, err, "Failed to unmarshal expect response body")
+				assert.Equal(t, tt.wantResult, problemResp)
+
 			}
 		})
 	}
-
 }
