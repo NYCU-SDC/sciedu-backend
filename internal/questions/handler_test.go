@@ -211,12 +211,10 @@ func TestHandler_CreateQuestion(t *testing.T) {
 
 			assert.Equal(t, tt.wantStatus, w.Code)
 
-			var data interface{} = tt.wantResult
-
 			var questionResp questions.QuestionResponse
 			var problemResp problemutil.Problem
 
-			if _, ok := data.(questions.QuestionResponse); ok {
+			if _, ok := tt.wantResult.(questions.QuestionResponse); ok {
 				err = json.Unmarshal(w.Body.Bytes(), &questionResp)
 				assert.NoError(t, err, "Failed to unmarshal actual response body")
 				assert.Equal(t, tt.wantResult, questionResp)
