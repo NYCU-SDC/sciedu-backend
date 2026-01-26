@@ -1,6 +1,7 @@
 package healthz
 
 import (
+	"context"
 	"net/http"
 
 	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
@@ -31,7 +32,7 @@ func (h Handler) Healthz(w http.ResponseWriter, r *http.Request) {
 	if err != nil || !healthz {
 		h.logger.Error("healthz check error", zap.Error(err))
 		w.WriteHeader(http.StatusServiceUnavailable)
-		h.problemWriter.WriteError(nil, w, err, h.logger)
+		h.problemWriter.WriteError(context.TODO(), w, err, h.logger)
 		return
 	}
 
