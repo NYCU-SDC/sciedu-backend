@@ -43,12 +43,6 @@ func NewServiceWithQuerier(logger *zap.Logger, querier Querier) *Service {
 	}
 }
 
-// test only, should not appear on actual product
-var questionIDCounter int
-var testQuestionList []Question
-var answerIDCounter int
-var testAnswerList []Answer
-
 func (s *Service) CreateQuestion(ctx context.Context, arg QuestionRequest) (BoundQuestion, error) {
 	question, err := s.queries.CreateQuestion(ctx, CreateQuestionParams{
 		Type:    arg.Type,
