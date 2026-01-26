@@ -213,7 +213,7 @@ func TestHandler_CreateQuestion(t *testing.T) {
 				assert.Contains(t, w.Body.String(), "request validation check failed")
 			} else {
 				var actualResp questions.QuestionResponse
-				err := json.Unmarshal([]byte(w.Body.String()), &actualResp)
+				err := json.Unmarshal(w.Body.Bytes(), &actualResp)
 				assert.NoError(t, err, "Failed to unmarshal actual response body")
 				assert.NoError(t, err, "Failed to unmarshal expect response body")
 
