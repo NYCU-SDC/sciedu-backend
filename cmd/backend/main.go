@@ -7,6 +7,7 @@ import (
 
 	// databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
+	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
 	"go.uber.org/zap"
 )
 
@@ -18,9 +19,11 @@ func main() {
 
 	logger.Info("Hello, World!")
 
+	problemWriter := problemutil.New()
+
 	healthService := healthz.NewService(logger)
 
-	healthHandler := healthz.NewHandler(logger, healthService)
+	healthHandler := healthz.NewHandler(logger, problemWriter, healthService)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /Healthz", healthHandler.Healthz)
