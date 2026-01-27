@@ -19,6 +19,7 @@ type Config struct {
 	Secret          string `yaml:"secret"             envconfig:"SECRET"`
 	DatabaseURL     string `yaml:"database_url"       envconfig:"DATABASE_URL"`
 	MigrationSource string `yaml:"migration_source"   envconfig:"MIGRATION_SOURCE"`
+	LLMURL          string `yaml:"llm_url"            envconfig:"LLM_URL"`
 }
 
 type LogBuffer struct {
@@ -63,6 +64,7 @@ func Load() (Config, *LogBuffer) {
 		Secret:          DefaultSecret,
 		DatabaseURL:     "",
 		MigrationSource: "file://internal/database/migrations",
+		LLMURL:          "https://llm.pr-4.sciedu.sdc.nycu.club/chat",
 	}
 
 	var err error
@@ -120,6 +122,7 @@ func FromEnv(config *Config, logger *LogBuffer) (*Config, error) {
 		Secret:          os.Getenv("SECRET"),
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		MigrationSource: os.Getenv("MIGRATION_SOURCE"),
+		LLMURL:          os.Getenv("LLM_URL"),
 	}
 
 	return configutil.Merge[Config](config, envConfig)
@@ -134,6 +137,7 @@ func FromFlags(config *Config) (*Config, error) {
 	flag.StringVar(&flagConfig.Secret, "secret", "", "secret")
 	flag.StringVar(&flagConfig.DatabaseURL, "database_url", "", "database url")
 	flag.StringVar(&flagConfig.MigrationSource, "migration_source", "", "migration source")
+	flag.StringVar(&flagConfig.LLMURL, "llm_url", "", "LLM url")
 
 	flag.Parse()
 
