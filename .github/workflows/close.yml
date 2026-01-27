@@ -1,0 +1,23 @@
+name: Close Snapshot
+
+on:
+  pull_request:
+    types:
+      - closed
+
+jobs:
+  Close:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger n8n Snapshot Webhook
+        run: |
+          curl -X POST https://webhook.sdc.nycu.club/webhook/snapshot \
+            -H "Content-Type: application/json" \
+            --fail-with-body \
+            -d '{
+              "pr_number": "${{ github.event.number }}",
+              "pr_title": "${{ github.event.pull_request.title }}",
+              "repo": "${{ github.repository }}",
+              "branch": "${{ github.ref_name }}",
+              "method": "close"
+            }'
