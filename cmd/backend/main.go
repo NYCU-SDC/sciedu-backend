@@ -4,6 +4,9 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
 	"sciedu-backend/databaseutil"
 	"sciedu-backend/internal"
 	logutil "sciedu-backend/internal/error"
@@ -12,6 +15,7 @@ import (
 	// databaseutil "github.com/NYCU-SDC/summer/pkg/databaseutil"
 	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 )
 
@@ -23,14 +27,32 @@ func main() {
 
 	logger.Info("Hello, World!")
 
-	err = databaseutil.MigrationUp("file://internal/database/migrations", "postgresql://postgres:SciEdu@localhost:5432/postgres?sslmode=disable", logger)
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		log.Fatal("failed to get current file path", zap.Error(err))
+	}
+
+	envPath := filepath.Join(filepath.Dir(filename), "../../.env")
+	envPath, err = filepath.Abs(envPath)
+	if err != nil {
+		log.Fatal("failed to get absolute path", zap.Error(err))
+	}
+
+	err = godotenv.Load(envPath)
+	if err != nil {
+		logger.Fatal("failed to load .env file", zap.Error(err))
+	}
+
+	databaseUrl := os.Getenv("DATABASE_URL")
+
+	err = databaseutil.MigrationUp("file://internal/database/migrations", databaseUrl, logger)
 	if err != nil {
 		logger.Fatal("failed to run database migration", zap.Error(err))
 	}
 
 	validator := internal.NewValidator()
 
-	poolConfig, err := pgxpool.ParseConfig("postgresql://postgres:SciEdu@localhost:5432/postgres?sslmode=disable")
+	poolConfig, err := pgxpool.ParseConfig(databaseUrl)
 	if err != nil {
 		logger.Fatal("Failed to parse database URL", zap.Error(err))
 	}
