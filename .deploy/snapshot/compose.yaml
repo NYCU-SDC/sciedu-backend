@@ -13,7 +13,7 @@ services:
       - ENV=snapshot
       - HOST=0.0.0.0
       - BASE_URL=https://api.dev.sciedu.sdc.nycu.club
-      - DATABASE_URL=postgresql://postgres:password@localhost:5432/postgres?sslmode=disable
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/postgres?sslmode=disable
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.sciedu-backend-${VERSION}.rule=Host(`api.${VERSION}.sciedu.sdc.nycu.club`)"
