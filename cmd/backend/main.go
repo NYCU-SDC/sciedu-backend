@@ -46,8 +46,9 @@ func main() {
 	}
 
 	databaseUrl := os.Getenv("DATABASE_URL")
+	migrationSource := os.Getenv("MIGRATION_SOURCE")
 
-	err = databaseutil.MigrationUp("file://internal/database/migrations", databaseUrl, logger)
+	err = databaseutil.MigrationUp(migrationSource, databaseUrl, logger)
 	if err != nil {
 		logger.Fatal("failed to run database migration", zap.Error(err))
 	}
