@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"flag"
 	"os"
 
@@ -11,6 +12,8 @@ import (
 )
 
 const DefaultSecret = "default-secret"
+
+var ErrDatabaseURLRequired = errors.New("database_url is required")
 
 type Config struct {
 	Debug           bool   `yaml:"debug"              envconfig:"DEBUG"`
@@ -61,7 +64,7 @@ func Load() (Config, *LogBuffer) {
 		Host:            "localhost",
 		Port:            "8080",
 		Secret:          DefaultSecret,
-		DatabaseURL:     "",
+		DatabaseURL:     "postgresql://postgres:password@localhost:5432/postgres?sslmode=disable",
 		MigrationSource: "file://internal/databaseutil/migrations",
 	}
 

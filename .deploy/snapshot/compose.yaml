@@ -10,6 +10,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      - DEV=true
       - ENV=snapshot
       - HOST=0.0.0.0
       - BASE_URL=https://api.dev.sciedu.sdc.nycu.club
