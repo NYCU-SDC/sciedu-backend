@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	"log"
 	"net/http"
 	"os"
@@ -9,8 +10,9 @@ import (
 	"runtime"
 	"sciedu-backend/databaseutil"
 	"sciedu-backend/internal"
-	logutil "sciedu-backend/internal/error"
+	"sciedu-backend/internal/config"
 	"sciedu-backend/internal/questions"
+	"time"
 
 	// databaseutil "github.com/NYCU-SDC/summer/pkg/databaseutil"
 	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
@@ -19,11 +21,48 @@ import (
 	"go.uber.org/zap"
 )
 
+var AppName = "no-app-name"
+
+var Version = "no-version"
+
+var BuildTime = "no-build-time"
+
+var CommitHash = "no-commit-hash"
+
+var Environment = "no-env"
+
 func main() {
-	logger, err := logutil.InitLogger()
+	AppName = os.Getenv("APP_NAME")
+	if AppName == "" {
+		AppName = "sciedu-backend"
+	}
+
+	if BuildTime == "no-build-time" {
+		now := time.Now()
+		BuildTime = "not provided (now: " + now.Format(time.RFC3339) + ")"
+	}
+
+	Environment = os.Getenv("ENV")
+	if Environment == "" {
+		Environment = "no-env"
+	}
+
+	appMetadata := []zap.Field{
+		zap.String("app_name", AppName),
+		zap.String("version", Version),
+		zap.String("build_time", BuildTime),
+		zap.String("commit_hash", CommitHash),
+		zap.String("environment", Environment),
+	}
+
+	cfg, cfgLog := config.Load()
+
+	logger, err := initLogger(&cfg, appMetadata)
 	if err != nil {
 		log.Fatalf("Failed to initalize logger: %v, exiting...", err)
 	}
+
+	cfgLog.FlushToZap(logger)
 
 	logger.Info("Hello, World!")
 
@@ -86,4 +125,31 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func initLogger(cfg *config.Config, appMetadata []zap.Field) (*zap.Logger, error) {
+	var err error
+	var logger *zap.Logger
+	if cfg.Debug {
+		logger, err = logutil.ZapDevelopmentConfig().Build()
+		if err != nil {
+			return nil, err
+		}
+		logger.Info("Running in debug mode", appMetadata...)
+	} else {
+		logger, err = logutil.ZapProductionConfig().Build()
+		if err != nil {
+			return nil, err
+		}
+
+		logger = logger.With(appMetadata...)
+	}
+	defer func() {
+		err := logger.Sync()
+		if err != nil {
+			zap.S().Errorw("Failed to sync logger", zap.Error(err))
+		}
+	}()
+
+	return logger, nil
 }
