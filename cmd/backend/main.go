@@ -27,20 +27,22 @@ func main() {
 
 	logger.Info("Hello, World!")
 
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		log.Fatal("failed to get current file path", zap.Error(err))
-	}
+	if os.Getenv("ENV") != "snapshot" && os.Getenv("ENV") != "stage" {
+		// get absolute path to local .env file
+		_, filename, _, ok := runtime.Caller(0)
+		if !ok {
+			log.Fatal("failed to get current file path", zap.Error(err))
+		}
+		envPath := filepath.Join(filepath.Dir(filename), "../../.env")
+		envPath, err = filepath.Abs(envPath)
+		if err != nil {
+			log.Fatal("failed to get absolute path", zap.Error(err))
+		}
 
-	envPath := filepath.Join(filepath.Dir(filename), "../../.env")
-	envPath, err = filepath.Abs(envPath)
-	if err != nil {
-		log.Fatal("failed to get absolute path", zap.Error(err))
-	}
-
-	err = godotenv.Load(envPath)
-	if err != nil {
-		logger.Fatal("failed to load .env file", zap.Error(err))
+		err = godotenv.Load(envPath)
+		if err != nil {
+			logger.Fatal("failed to load .env file", zap.Error(err))
+		}
 	}
 
 	databaseUrl := os.Getenv("DATABASE_URL")
