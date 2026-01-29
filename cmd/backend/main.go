@@ -64,7 +64,7 @@ func main() {
 
 	cfgLog.FlushToZap(logger)
 
-	logger.Info("Hello, World!")
+	logger.Info("Starting application...")
 
 	if os.Getenv("ENV") != "snapshot" && os.Getenv("ENV") != "stage" {
 		// get absolute path to local .env file
