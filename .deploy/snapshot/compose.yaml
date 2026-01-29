@@ -10,10 +10,12 @@ services:
       postgres:
         condition: service_healthy
     environment:
+      - DEV=true
       - ENV=snapshot
       - HOST=0.0.0.0
       - BASE_URL=https://api.dev.sciedu.sdc.nycu.club
       - DATABASE_URL=postgres://postgres:password@postgres:5432/sciedu?sslmode=disable
+      - MIGRATION_SOURCE=file:///app/migrations
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.sciedu-backend-${VERSION}.rule=Host(`api.${VERSION}.sciedu.sdc.nycu.club`)"
@@ -21,6 +23,7 @@ services:
       - "traefik.http.routers.sciedu-backend-${VERSION}.tls=true"
       - "traefik.http.routers.sciedu-backend-${VERSION}.tls.certresolver=cloudflare"
       - "traefik.http.services.sciedu-backend-${VERSION}.loadbalancer.server.port=8080"
+      - "vector.enable=true"
 
   postgres:
     image: postgres:18.1

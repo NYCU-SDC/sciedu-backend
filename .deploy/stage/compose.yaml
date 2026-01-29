@@ -14,6 +14,7 @@ services:
       - HOST=0.0.0.0
       - BASE_URL=https://api.dev.sciedu.sdc.nycu.club
       - DATABASE_URL=postgres://postgres:password@postgres:5432/sciedu?sslmode=disable
+      - MIGRATION_SOURCE=file:///app/migrations
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.sciedu-backend-stage.rule=Host(`api.stage.sciedu.sdc.nycu.club`)"
@@ -21,6 +22,7 @@ services:
       - "traefik.http.routers.sciedu-backend-stage.tls=true"
       - "traefik.http.routers.sciedu-backend-stage.tls.certresolver=cloudflare"
       - "traefik.http.services.sciedu-backend-stage.loadbalancer.server.port=8080"
+      - "vector.enable=true"
 
   postgres:
     image: postgres:18.1
