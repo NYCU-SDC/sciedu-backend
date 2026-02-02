@@ -150,7 +150,7 @@ You must enforce a strict separation of concerns. **Dependency Direction**: Hand
 
 ## **Git & Collaboration**
 
-Reference: [How We Use Version Control for Collaboration (Chinese)](https://www.google.com/search?q=https://clustron.atlassian.net/wiki/x/FgAMB "null")
+Reference: [How We Use Version Control for Collaboration (Chinese)](https://clustron.atlassian.net/wiki/x/FgAMB "null")
 
 ### **Branch Convention**
 
