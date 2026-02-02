@@ -3,9 +3,11 @@ package main
 import (
 	"log"
 	"net/http"
+	"sciedu-backend/internal/healthz"
 
 	// databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
+	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
 	"go.uber.org/zap"
 )
 
@@ -17,15 +19,14 @@ func main() {
 
 	logger.Info("Hello, World!")
 
-	mux := http.NewServeMux()
+	problemWriter := problemutil.New()
 
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("ok"))
-		if err != nil {
-			panic(err)
-		}
-	})
+	healthService := healthz.NewService(logger)
+
+	healthHandler := healthz.NewHandler(logger, problemWriter, healthService)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /Healthz", healthHandler.Healthz)
 
 	logger.Info("Start listening on port: 8080")
 
