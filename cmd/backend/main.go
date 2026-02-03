@@ -3,6 +3,8 @@ package main
 import (
 	"log"
 	"net/http"
+	"sciedu-backend/internal/chat"
+	"sciedu-backend/internal/config"
 
 	// databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
@@ -17,7 +19,16 @@ func main() {
 
 	logger.Info("Hello, World!")
 
+	cfg, configLogger := config.Load()
+	configLogger.FlushToZap(logger)
+
 	mux := http.NewServeMux()
+
+	chatProvider := chat.NewProvider(cfg.LLMURL, &http.Client{}, nil)
+	chatService := chat.NewService(chatProvider, logger)
+	chatHandler := chat.NewHandler(chatService, logger)
+
+	mux.HandleFunc("/chat/stream", chatHandler.StreamChat)
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
