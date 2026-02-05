@@ -3,7 +3,8 @@ package main
 import (
 	"log"
 	"net/http"
-
+	"sciedu-backend/internal/chatPrototype"
+	"sciedu-backend/internal/chatPrototype/mockLLM"
 	// databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	"go.uber.org/zap"
@@ -27,9 +28,20 @@ func main() {
 		}
 	})
 
-	logger.Info("Start listening on port: 8080")
+	llm_mock := mockLLM.NewMockUpstream(logger)
+	mux.Handle("/mock-llm", llm_mock)
 
-	err = http.ListenAndServe(":8080", mux)
+	chatHttpClient := &http.Client{
+		Timeout: 0, // streaming: avoid short timeout; can use Transport timeouts instead later
+	}
+	chatClient := chatPrototype.NewHTTPSSEClient(logger, chatHttpClient, "http://localhost:8090/mock-llm")
+	chatService := chatPrototype.NewService(logger, chatClient)
+	chatHandler := chatPrototype.NewHandler(logger, chatService)
+	mux.HandleFunc("/chat/stream", chatHandler.Downstream)
+
+	logger.Info("Start listening on port: 8090")
+
+	err = http.ListenAndServe(":8090", mux)
 	if err != nil {
 		panic(err)
 	}
