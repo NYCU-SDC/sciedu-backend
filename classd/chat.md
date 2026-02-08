@@ -4,14 +4,14 @@ classDiagram
 	
 	class chat.Handler{
 			+Streamchat(w, r)
-			+logger *zap.logger
+			+logger zap.Logger
 			+store chat.Service
 	}
 	
 	class chat.Service{
 			+Streamchat(ctx, req)
 			+provider chat.Provider
-			+logger *zap.logger
+			+logger zap.Logger
 	}
 	
 	class chat.Provider{
