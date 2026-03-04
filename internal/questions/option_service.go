@@ -55,11 +55,7 @@ func (s *OptionService) ListByQuestion(ctx context.Context, questionID uuid.UUID
 }
 
 func (s *OptionService) Create(ctx context.Context, arg OptionRequest) (Option, error) {
-	option, err := s.querier.CreateOption(ctx, CreateOptionParams{
-		QuestionID: arg.QuestionID,
-		Label:      arg.Label,
-		Content:    arg.Content,
-	})
+	option, err := s.querier.CreateOption(ctx, CreateOptionParams(arg))
 	if err != nil {
 		return Option{}, databaseutil.WrapDBError(err, s.logger, "create option")
 	}
