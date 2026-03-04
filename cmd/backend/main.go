@@ -24,7 +24,7 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	chatProvider := chat.NewProvider(cfg.LLMURL, &http.Client{}, nil)
+	chatProvider := chat.NewProvider(cfg.LLMURL+"/chat", &http.Client{}, nil)
 	chatService := chat.NewService(chatProvider, logger)
 	chatHandler := chat.NewHandler(chatService, logger)
 
