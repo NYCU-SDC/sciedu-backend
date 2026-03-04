@@ -64,7 +64,7 @@ func Load() (Config, *LogBuffer) {
 		Secret:          DefaultSecret,
 		DatabaseURL:     "",
 		MigrationSource: "file://internal/database/migrations",
-		LLMURL:          "https://llm.pr-4.sciedu.sdc.nycu.club/chat",
+		LLMURL:          "https://llm.dev.sciedu.sdc.nycu.club",
 	}
 
 	var err error
