@@ -27,7 +27,7 @@ func main() {
 
 	err = godotenv.Load()
 	if err != nil {
-		log.Fatalf("Failed to read .env: %v, exiting...", err)
+		logger.Warn("No .env file loaded, using environment variables", zap.Error(err))
 	}
 
 	migrationSource := os.Getenv("MIGRATION_SOURCE")
