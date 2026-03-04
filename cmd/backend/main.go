@@ -1,12 +1,18 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
 
+	"sciedu-backend/internal/cors"
+	"sciedu-backend/internal/questions"
+
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
+	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 )
@@ -31,7 +37,29 @@ func main() {
 		logger.Fatal("Failed to run database migration", zap.Error(err))
 	}
 
+	pool, err := pgxpool.New(context.Background(), databaseURL)
+	if err != nil {
+		logger.Fatal("Failed to initialize database pool", zap.Error(err))
+	}
+	defer pool.Close()
+
+	if err = pool.Ping(context.Background()); err != nil {
+		logger.Fatal("Failed to connect to database", zap.Error(err))
+	}
+
+	queries := questions.New(pool)
+	questionService := questions.NewQuestionService(queries, logger)
+	optionService := questions.NewOptionService(queries, logger)
+	questionHandler := questions.NewHandler(questionService, optionService, logger)
+
 	mux := http.NewServeMux()
+
+	corsMiddleware := cors.NewMiddleware(logger, []string{"*"})
+	middlewareSet := middlewareutil.NewSet(
+		corsMiddleware.HandlerFunc,
+	)
+
+	questionHandler.RegisterRoutes(mux, middlewareSet)
 
 	logger.Info("Start listening on port: 8080")
 
