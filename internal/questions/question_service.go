@@ -54,10 +54,7 @@ func (s *QuestionService) Get(ctx context.Context, id uuid.UUID) (Question, erro
 }
 
 func (s *QuestionService) Create(ctx context.Context, arg QuestionRequest) (Question, error) {
-	question, err := s.querier.CreateQuestion(ctx, CreateQuestionParams{
-		Type:    arg.Type,
-		Content: arg.Content,
-	})
+	question, err := s.querier.CreateQuestion(ctx, CreateQuestionParams(arg))
 	if err != nil {
 		return Question{}, databaseutil.WrapDBError(err, s.logger, "create question")
 	}
