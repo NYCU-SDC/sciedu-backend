@@ -3,9 +3,11 @@ package main
 import (
 	"log"
 	"net/http"
+	"os"
 
-	// databaseutil "github.com/NYCU-SDC/summer/pkg/database"
+	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
+	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 )
 
@@ -17,15 +19,19 @@ func main() {
 
 	logger.Info("Hello, World!")
 
-	mux := http.NewServeMux()
+	err = godotenv.Load()
+	if err != nil {
+		log.Fatalf("Failed to read .env: %v, exiting...", err)
+	}
 
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("ok"))
-		if err != nil {
-			panic(err)
-		}
-	})
+	migrationSource := os.Getenv("MIGRATION_SOURCE")
+	databaseURL := os.Getenv("DATABASE_URL")
+	err = databaseutil.MigrationUp(migrationSource, databaseURL, logger)
+	if err != nil {
+		logger.Fatal("Failed to run database migration", zap.Error(err))
+	}
+
+	mux := http.NewServeMux()
 
 	logger.Info("Start listening on port: 8080")
 
