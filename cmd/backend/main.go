@@ -3,11 +3,9 @@ package main
 import (
 	"log"
 	"net/http"
-	"sciedu-backend/internal/healthz"
 
 	// databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
-	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
 	"go.uber.org/zap"
 )
 
@@ -19,14 +17,16 @@ func main() {
 
 	logger.Info("Hello, World!")
 
-	problemWriter := problemutil.New()
-
-	healthService := healthz.NewService(logger)
-
-	healthHandler := healthz.NewHandler(logger, problemWriter, healthService)
-
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /Healthz", healthHandler.Healthz)
+
+	// Health check route
+	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write([]byte("OK"))
+		if err != nil {
+			logger.Error("Failed to write response", zap.Error(err))
+		}
+	})
 
 	logger.Info("Start listening on port: 8080")
 
