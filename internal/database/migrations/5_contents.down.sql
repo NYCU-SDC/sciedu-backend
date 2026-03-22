@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS contents;
+DROP TYPE IF EXISTS content_type;

@@ -5,9 +5,8 @@ import (
 	"log"
 	"net/http"
 	"sciedu-backend/internal/chat"
-
 	"sciedu-backend/internal/config"
-
+	"sciedu-backend/internal/content"
 	"sciedu-backend/internal/cors"
 	"sciedu-backend/internal/question"
 
@@ -49,6 +48,10 @@ func main() {
 	questionService := question.NewQuestionService(questionStore, optionService, logger)
 	questionHandler := question.NewHandler(questionService, optionService, logger)
 
+	contentQueries := content.New(pool)
+	contentService := content.NewService(contentQueries, logger)
+	contentHandler := content.NewHandler(contentService, logger)
+
 	chatQueriers := chat.New(pool)
 	chatProvider := chat.NewProvider(cfg.LLMURL+"/chat", &http.Client{}, nil)
 	chatStreamHub := chat.NewStreamHub()
@@ -62,6 +65,8 @@ func main() {
 	)
 
 	questionHandler.RegisterRoutes(mux, middlewareSet)
+	contentHandler.RegisterRoutes(mux, middlewareSet)
+
 	// Health check route
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -100,4 +105,27 @@ func initLogger() (*zap.Logger, error) {
 	}()
 
 	return logger, nil
+}
+
+// initDatabasePool creates a new pgxpool.Pool with the given database URL in the config, it uses the default config
+// provided by pgxpool.ParseConfig:
+//
+//   - pool_max_conns: 4
+//   - pool_min_conns: 0
+//   - pool_max_conn_lifetime: 1 hour
+//   - pool_max_conn_idle_time: 30 minutes
+//   - pool_health_check_period: 1 minute
+//   - pool_max_conn_lifetime_jitter: 0
+func initDatabasePool(databaseURL string) (*pgxpool.Pool, error) {
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		log.Fatalf("Unable to parse config: %v", err)
+	}
+
+	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	return pool, nil
 }
