@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.30.0
 
-package questions
+package question
 
 import (
 	"github.com/google/uuid"

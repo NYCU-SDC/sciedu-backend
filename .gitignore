@@ -37,3 +37,6 @@ mocks/
 .DS_store
 
 bin
+
+# Local temp artifacts from media tests
+internal/content/var/

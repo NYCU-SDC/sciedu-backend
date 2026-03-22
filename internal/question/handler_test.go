@@ -1,4 +1,4 @@
-package questions
+package question
 
 import (
 	"context"
@@ -383,9 +383,9 @@ func TestHandlerUpdate_TableDriven(t *testing.T) {
 				getQuestionFn: func(context.Context, uuid.UUID) (Question, error) {
 					return Question{ID: qid, Type: "CHOICE", Content: "old"}, nil
 				},
-					updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
-						return Question(arg), nil
-					},
+				updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
+					return Question(arg), nil
+				},
 				listOptionsByQuestionFn: func(context.Context, uuid.UUID) ([]Option, error) {
 					return []Option{{ID: existingOpt1, QuestionID: qid}, {ID: existingOpt2, QuestionID: qid}}, nil
 				},
@@ -402,9 +402,9 @@ func TestHandlerUpdate_TableDriven(t *testing.T) {
 				getQuestionFn: func(context.Context, uuid.UUID) (Question, error) {
 					return Question{ID: qid, Type: "CHOICE", Content: "old"}, nil
 				},
-					updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
-						return Question(arg), nil
-					},
+				updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
+					return Question(arg), nil
+				},
 				listOptionsByQuestionFn: func(context.Context, uuid.UUID) ([]Option, error) {
 					return []Option{{ID: existingOpt1, QuestionID: qid}}, nil
 				},
@@ -421,9 +421,9 @@ func TestHandlerUpdate_TableDriven(t *testing.T) {
 				getQuestionFn: func(context.Context, uuid.UUID) (Question, error) {
 					return Question{ID: qid, Type: "CHOICE", Content: "old"}, nil
 				},
-					updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
-						return Question(arg), nil
-					},
+				updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
+					return Question(arg), nil
+				},
 				listOptionsByQuestionFn: func(context.Context, uuid.UUID) ([]Option, error) {
 					return nil, nil
 				},
