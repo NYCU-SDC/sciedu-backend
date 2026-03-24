@@ -51,7 +51,7 @@ func TestHTTPProvider_VerifyHTTPClientStreaming_LineByLine(t *testing.T) {
 		Stream:   true,
 	}
 
-	chunks, errs := p.StreamChat(ctx, req)
+	chunks, errs := p.Stream(ctx, req)
 
 	// Ensure first chunk has been flushed by upstream
 	select {
@@ -133,7 +133,7 @@ func TestHTTPProvider_VerifyContextPropagation_CancelUpstreamOnClientDisconnect(
 		Stream:   true,
 	}
 
-	chunks, errs := p.StreamChat(ctx, req)
+	chunks, errs := p.Stream(ctx, req)
 
 	// Ensure upstream started
 	select {

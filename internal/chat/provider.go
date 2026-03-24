@@ -79,7 +79,7 @@ func readSSEEventFromLines(lines []string) string {
 	return strings.TrimSpace(strings.Join(dataLines, "\n"))
 }
 
-func (p *Provider) StreamChat(ctx context.Context, req CreateChatCompletionRequest) (<-chan ChatCompletionChunk, <-chan error) {
+func (p *Provider) Stream(ctx context.Context, req CreateChatCompletionRequest) (<-chan ChatCompletionChunk, <-chan error) {
 	chunks := make(chan ChatCompletionChunk)
 	errs := make(chan error, 1)
 
