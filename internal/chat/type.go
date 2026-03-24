@@ -13,6 +13,14 @@ const (
 	ChatRoleSystem    ChatRole = "system"
 )
 
+type ChatStatus string
+
+const (
+	StatusPending   ChatStatus = "streaming"
+	StatusCompleted ChatStatus = "completed"
+	StatusFailed    ChatStatus = "failed"
+)
+
 type ChatMessage struct {
 	Role    ChatRole `json:"role"`
 	Content string   `json:"content"`
@@ -22,6 +30,3 @@ type CreateChatCompletionRequest struct {
 	Messages []ChatMessage `json:"messages"`
 	Stream   bool          `json:"stream"`
 }
-
-
-

@@ -17,9 +17,9 @@ func TestChatService_ForwardsChunksAndCompletes(t *testing.T) {
 	inChunks := make(chan chat.ChatCompletionChunk)
 	inErrs := make(chan error, 1)
 
-	// Arrange mock: provider.StreamChat returns our controlled channels
+	// Arrange mock: provider.Stream returns our controlled channels
 	provider.
-		On("StreamChat", mock.Anything, mock.AnythingOfType("chat.CreateChatCompletionRequest")).
+		On("Stream", mock.Anything, mock.AnythingOfType("chat.CreateChatCompletionRequest")).
 		Return((<-chan chat.ChatCompletionChunk)(inChunks), (<-chan error)(inErrs))
 
 	svc := chat.NewService(provider, nil)
@@ -71,7 +71,7 @@ func TestChatService_PropagatesContextCancellation(t *testing.T) {
 	var capturedCtx context.Context
 
 	provider.
-		On("StreamChat", mock.Anything, mock.Anything).
+		On("Stream", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
 			capturedCtx = args.Get(0).(context.Context)
 		}).
