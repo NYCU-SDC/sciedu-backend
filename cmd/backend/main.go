@@ -48,8 +48,8 @@ func main() {
 	}
 
 	queries := questions.New(pool)
-	questionService := questions.NewQuestionService(queries, logger)
 	optionService := questions.NewOptionService(queries, logger)
+	questionService := questions.NewQuestionService(queries, optionService, logger)
 	questionHandler := questions.NewHandler(questionService, optionService, logger)
 
 	mux := http.NewServeMux()

@@ -14,7 +14,7 @@ import (
 const createOption = `-- name: CreateOption :one
 INSERT INTO options (question_id, label, content)
 VALUES ($1, $2, $3)
-RETURNING id, question_id, label, content
+RETURNING id, question_id, content, label, created_at, updated_at
 `
 
 type CreateOptionParams struct {
@@ -29,8 +29,10 @@ func (q *Queries) CreateOption(ctx context.Context, arg CreateOptionParams) (Opt
 	err := row.Scan(
 		&i.ID,
 		&i.QuestionID,
-		&i.Label,
 		&i.Content,
+		&i.Label,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -46,7 +48,7 @@ func (q *Queries) DeleteOption(ctx context.Context, id uuid.UUID) error {
 }
 
 const getOption = `-- name: GetOption :one
-SELECT id, question_id, label, content
+SELECT id, question_id, content, label, created_at, updated_at
 FROM options
 WHERE id = $1
 `
@@ -57,14 +59,16 @@ func (q *Queries) GetOption(ctx context.Context, id uuid.UUID) (Option, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.QuestionID,
-		&i.Label,
 		&i.Content,
+		&i.Label,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const listOptionsByQuestion = `-- name: ListOptionsByQuestion :many
-SELECT id, question_id, label, content
+SELECT id, question_id, content, label, created_at, updated_at
 FROM options
 WHERE question_id = $1
 ORDER BY label
@@ -82,8 +86,10 @@ func (q *Queries) ListOptionsByQuestion(ctx context.Context, questionID uuid.UUI
 		if err := rows.Scan(
 			&i.ID,
 			&i.QuestionID,
-			&i.Label,
 			&i.Content,
+			&i.Label,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -100,7 +106,7 @@ UPDATE options
 SET label = $2,
     content = $3
 WHERE id = $1
-RETURNING id, question_id, label, content
+RETURNING id, question_id, content, label, created_at, updated_at
 `
 
 type UpdateOptionParams struct {
@@ -115,8 +121,10 @@ func (q *Queries) UpdateOption(ctx context.Context, arg UpdateOptionParams) (Opt
 	err := row.Scan(
 		&i.ID,
 		&i.QuestionID,
-		&i.Label,
 		&i.Content,
+		&i.Label,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

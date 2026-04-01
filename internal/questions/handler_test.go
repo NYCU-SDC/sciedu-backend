@@ -104,8 +104,8 @@ func (f *fakeQuerier) DeleteOption(ctx context.Context, id uuid.UUID) error {
 
 func newTestMux(q *fakeQuerier) *http.ServeMux {
 	logger := zap.NewNop()
-	questionService := NewQuestionService(q, logger)
 	optionService := NewOptionService(q, logger)
+	questionService := NewQuestionService(q, optionService, logger)
 	handler := NewHandler(questionService, optionService, logger)
 
 	mux := http.NewServeMux()
@@ -384,7 +384,11 @@ func TestHandlerUpdate_TableDriven(t *testing.T) {
 					return Question{ID: qid, Type: "CHOICE", Content: "old"}, nil
 				},
 					updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
-						return Question(arg), nil
+						return Question{
+							ID:      arg.ID,
+							Type:    arg.Type,
+							Content: arg.Content,
+						}, nil
 					},
 				listOptionsByQuestionFn: func(context.Context, uuid.UUID) ([]Option, error) {
 					return []Option{{ID: existingOpt1, QuestionID: qid}, {ID: existingOpt2, QuestionID: qid}}, nil
@@ -403,7 +407,11 @@ func TestHandlerUpdate_TableDriven(t *testing.T) {
 					return Question{ID: qid, Type: "CHOICE", Content: "old"}, nil
 				},
 					updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
-						return Question(arg), nil
+						return Question{
+							ID:      arg.ID,
+							Type:    arg.Type,
+							Content: arg.Content,
+						}, nil
 					},
 				listOptionsByQuestionFn: func(context.Context, uuid.UUID) ([]Option, error) {
 					return []Option{{ID: existingOpt1, QuestionID: qid}}, nil
@@ -422,7 +430,11 @@ func TestHandlerUpdate_TableDriven(t *testing.T) {
 					return Question{ID: qid, Type: "CHOICE", Content: "old"}, nil
 				},
 					updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
-						return Question(arg), nil
+						return Question{
+							ID:      arg.ID,
+							Type:    arg.Type,
+							Content: arg.Content,
+						}, nil
 					},
 				listOptionsByQuestionFn: func(context.Context, uuid.UUID) ([]Option, error) {
 					return nil, nil
