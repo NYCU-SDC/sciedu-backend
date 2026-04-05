@@ -47,7 +47,7 @@ func TestHTTPProvider_VerifyHTTPClientStreaming_LineByLine(t *testing.T) {
 	defer cancel()
 
 	req := chat.CreateChatCompletionRequest{
-		Messages: []chat.ChatMessage{{Role: chat.ChatRoleUser, Content: "hi"}},
+		Messages: []chat.ChatMessage{{Role: chat.MessageRoleUser, Content: "hi"}},
 		Stream:   true,
 	}
 
@@ -129,7 +129,7 @@ func TestHTTPProvider_VerifyContextPropagation_CancelUpstreamOnClientDisconnect(
 	ctx, cancel := context.WithCancel(context.Background())
 
 	req := chat.CreateChatCompletionRequest{
-		Messages: []chat.ChatMessage{{Role: chat.ChatRoleUser, Content: "hi"}},
+		Messages: []chat.ChatMessage{{Role: chat.MessageRoleUser, Content: "hi"}},
 		Stream:   true,
 	}
 
