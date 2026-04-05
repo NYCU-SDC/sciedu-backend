@@ -1,29 +1,28 @@
 package chat
 
-type ChatCompletionChunk struct {
+type StreamDelta struct {
 	Delta      string `json:"delta"`
 	IsFinished bool   `json:"isFinished"`
 }
 
-type ChatRole string
+type MessageRole string
 
 const (
-	ChatRoleUser      ChatRole = "user"
-	ChatRoleAssistant ChatRole = "assistant"
-	ChatRoleSystem    ChatRole = "system"
+	MessageRoleUser      MessageRole = "user"
+	MessageRoleAssistant MessageRole = "assistant"
 )
 
-type ChatStatus string
+type MessageStatus string
 
 const (
-	StatusPending   ChatStatus = "streaming"
-	StatusCompleted ChatStatus = "completed"
-	StatusFailed    ChatStatus = "failed"
+	MessageStatusStreaming MessageStatus = "streaming"
+	MessageStatusDone      MessageStatus = "done"
+	MessageStatusError     MessageStatus = "error"
 )
 
 type ChatMessage struct {
-	Role    ChatRole `json:"role"`
-	Content string   `json:"content"`
+	Role    MessageRole `json:"role"`
+	Content string      `json:"content"`
 }
 
 type CreateChatCompletionRequest struct {

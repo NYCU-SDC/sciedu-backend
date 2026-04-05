@@ -14,3 +14,8 @@ WHERE chat_id = $1;
 INSERT INTO messages (chat_id, previous_id, content, role, status)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
+-- name: UpdateMessage :one
+UPDATE messages
+SET content = $2, status = $3
+WHERE id = $1
+RETURNING *;

@@ -13,7 +13,7 @@ import (
 
 //go:generate mockery --name LLMProvider
 type LLMProvider interface {
-	StreamChat(ctx context.Context, req CreateChatCompletionRequest) (<-chan ChatCompletionChunk, <-chan error)
+	Stream(ctx context.Context, req CreateChatCompletionRequest) (<-chan StreamDelta, <-chan error)
 }
 
 type Provider struct {
@@ -39,27 +39,27 @@ func NewProvider(endpoint string, client *http.Client, headers http.Header) *Pro
 	}
 }
 
-func parseSSEEventData(payload string) (ChatCompletionChunk, bool, error) {
+func parseSSEEventData(payload string) (StreamDelta, bool, error) {
 	payload = strings.TrimSpace(payload)
 	if payload == "" {
-		return ChatCompletionChunk{}, false, nil
+		return StreamDelta{}, false, nil
 	}
 
 	if payload == "[DONE]" {
-		return ChatCompletionChunk{Delta: "", IsFinished: true}, true, nil
+		return StreamDelta{Delta: "", IsFinished: true}, true, nil
 	}
 
 	// JSON payload support
 	if strings.HasPrefix(payload, "{") {
-		var c ChatCompletionChunk
+		var c StreamDelta
 		if err := json.Unmarshal([]byte(payload), &c); err != nil {
-			return ChatCompletionChunk{}, false, fmt.Errorf("invalid json chunk payload: %w", err)
+			return StreamDelta{}, false, fmt.Errorf("invalid json chunk payload: %w", err)
 		}
 		return c, c.IsFinished, nil
 	}
 
 	// Plain text Delta
-	return ChatCompletionChunk{Delta: payload, IsFinished: false}, false, nil
+	return StreamDelta{Delta: payload, IsFinished: false}, false, nil
 }
 
 func readSSEEventFromLines(lines []string) string {
@@ -79,8 +79,8 @@ func readSSEEventFromLines(lines []string) string {
 	return strings.TrimSpace(strings.Join(dataLines, "\n"))
 }
 
-func (p *Provider) Stream(ctx context.Context, req CreateChatCompletionRequest) (<-chan ChatCompletionChunk, <-chan error) {
-	chunks := make(chan ChatCompletionChunk)
+func (p *Provider) Stream(ctx context.Context, req CreateChatCompletionRequest) (<-chan StreamDelta, <-chan error) {
+	chunks := make(chan StreamDelta)
 	errs := make(chan error, 1)
 
 	go func() {
