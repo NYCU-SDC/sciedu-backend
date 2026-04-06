@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"os"
 	"sciedu-backend/internal/chat"
-	"sciedu-backend/internal/config"
+
+	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	// databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
+	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 )
 
@@ -19,24 +24,49 @@ func main() {
 
 	logger.Info("Hello, World!")
 
-	cfg, configLogger := config.Load()
-	configLogger.FlushToZap(logger)
+	err = godotenv.Load()
+	if err != nil {
+		logger.Warn("No .env file loaded, using environment variables", zap.Error(err))
+	}
+
+	migrationSource := os.Getenv("MIGRATION_SOURCE")
+	databaseURL := os.Getenv("DATABASE_URL")
+	err = databaseutil.MigrationUp(migrationSource, databaseURL, logger)
+	if err != nil {
+		logger.Fatal("Failed to run database migration", zap.Error(err))
+	}
+
+	pool, err := pgxpool.New(context.Background(), databaseURL)
+	if err != nil {
+		logger.Fatal("Failed to initialize database pool", zap.Error(err))
+	}
+	defer pool.Close()
+
+	if err = pool.Ping(context.Background()); err != nil {
+		logger.Fatal("Failed to connect to database", zap.Error(err))
+	}
+
+	chatQueriers := chat.New(pool)
+	chatProvider := chat.NewProvider(os.Getenv("LLM_URL")+"/chat", &http.Client{}, nil)
+	chatStreamHub := chat.NewStreamHub()
+	chatService := chat.NewService(chatProvider, chatQueriers, chatStreamHub, logger)
+	chatHandler := chat.NewHandler(chatService, logger)
 
 	mux := http.NewServeMux()
 
-	chatProvider := chat.NewProvider(cfg.LLMURL+"/chat", &http.Client{}, nil)
-	chatService := chat.NewService(chatProvider, logger)
-	chatHandler := chat.NewHandler(chatService, logger)
-
-	mux.HandleFunc("/chat/stream", chatHandler.StreamChat)
-
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	// Health check route
+	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("ok"))
+		_, err := w.Write([]byte("OK"))
 		if err != nil {
-			panic(err)
+			logger.Error("Failed to write response", zap.Error(err))
 		}
 	})
+
+	mux.HandleFunc("POST /api/chat", chatHandler.CreateChat)
+	mux.HandleFunc("GET /api/chat/stream/{messageID}", chatHandler.Stream)
+	mux.HandleFunc("GET /api/chat/{chatID}/messages", chatHandler.GetChat)
+	mux.HandleFunc("POST /api/chat/{chatID}/messages", chatHandler.CreateMessage)
 
 	logger.Info("Start listening on port: 8080")
 
