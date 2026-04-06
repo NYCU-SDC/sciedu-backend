@@ -82,7 +82,7 @@ func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageR
 		ret := MessageReturn{
 			ID:        msg.ID,
 			Content:   msg.Content.String,
-			Role:      MessageRole(msg.Role.(string)),
+			Role:      MessageRole(msg.Role),
 			Status:    MessageStatus(msg.Status),
 			CreatedAt: msg.CreatedAt.Time,
 		}
@@ -162,7 +162,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 		Message: MessageReturn{
 			ID:        userMessage.ID,
 			Content:   userMessage.Content.String,
-			Role:      MessageRole(userMessage.Role.(string)),
+			Role:      MessageRole(userMessage.Role),
 			Status:    MessageStatus(userMessage.Status),
 			CreatedAt: userMessage.CreatedAt.Time,
 		},

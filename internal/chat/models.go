@@ -19,7 +19,7 @@ type Message struct {
 	ChatID     uuid.UUID
 	PreviousID pgtype.UUID
 	Content    pgtype.Text
-	Role       interface{}
+	Role       string
 	Status     string
 	CreatedAt  pgtype.Timestamptz
 }
