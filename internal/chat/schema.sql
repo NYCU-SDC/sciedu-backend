@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS messages (
     chat_id UUID NOT NULL REFERENCES chats(id),
     previous_id UUID REFERENCES messages(id),
     content TEXT,
-    role ENUM('user', 'assistant', 'system') NOT NULL,
+    role VARCHAR(20) NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
     status TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );

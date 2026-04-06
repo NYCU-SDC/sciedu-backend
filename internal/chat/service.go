@@ -25,7 +25,7 @@ type ChatQuerier interface {
 type ChatService struct {
 	provider  LLMProvider
 	querier   ChatQuerier
-	streamHub StreamHub
+	streamHub *StreamHub
 	logger    *zap.Logger
 }
 
@@ -43,11 +43,11 @@ type CreateMessageReturn struct {
 	ReplyMessageID uuid.UUID     `json:"replyMessageID"`
 }
 
-func NewService(provider LLMProvider, querier ChatQuerier, logger *zap.Logger) *ChatService {
+func NewService(provider LLMProvider, querier ChatQuerier, streamHub *StreamHub, logger *zap.Logger) *ChatService {
 	return &ChatService{
 		provider:  provider,
 		querier:   querier,
-		streamHub: NewStreamHub(),
+		streamHub: streamHub,
 		logger:    logger,
 	}
 }

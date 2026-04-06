@@ -11,8 +11,8 @@ type StreamHub struct {
 	streams map[uuid.UUID]*StreamEvent
 }
 
-func NewStreamHub() StreamHub {
-	return StreamHub{
+func NewStreamHub() *StreamHub {
+	return &StreamHub{
 		streams: make(map[uuid.UUID]*StreamEvent),
 	}
 }
