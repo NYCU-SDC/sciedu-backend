@@ -11,7 +11,6 @@ import (
 	"strings"
 )
 
-//go:generate mockery --name LLMProvider
 type LLMProvider interface {
 	Stream(ctx context.Context, req CreateChatCompletionRequest) (<-chan StreamDelta, <-chan error)
 }
