@@ -90,7 +90,7 @@ func (s *ChatService) fetchMessages(ctx context.Context, chatID uuid.UUID) ([]Me
 func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageReturn, error) {
 	chat, err := s.querier.GetChat(ctx, chatID)
 	if err != nil {
-		return nil, databaseutil.WrapDBError(err, s.logger, "get chat")
+		return nil, databaseutil.WrapDBErrorWithKeyValue(err, "chat", "chat_id", chatID.String(), s.logger, "get chat")
 	}
 	if chat.ID == uuid.Nil {
 		return nil, handlerutil.NewNotFoundError("chat", "chat_id", chatID.String(), "")
@@ -109,6 +109,14 @@ func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageR
 }
 
 func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error) {
+
+	chat, err := s.querier.GetChat(ctx, chatID)
+	if err != nil {
+		return CreateMessageReturn{}, databaseutil.WrapDBErrorWithKeyValue(err, "chat", "chat_id", chatID.String(), s.logger, "get chat")
+	}
+	if chat.ID == uuid.Nil {
+		return CreateMessageReturn{}, handlerutil.NewNotFoundError("chat", "chat_id", chatID.String(), "")
+	}
 
 	// Create message in DB
 	userMessage, err := s.querier.CreateMessage(ctx, CreateMessageParams{
@@ -158,7 +166,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 		Stream:   true,
 	}
 
-	go s.streamProcessor(ctx, llmMessage.ID, providerReq)
+	go s.streamProcessor(context.Background(), llmMessage.ID, providerReq)
 
 	return CreateMessageReturn{
 		Message: MessageReturn{
@@ -267,13 +275,19 @@ func createChatHistory(allMessages []MessageReturn) []ChatMessage {
 	history := make([]ChatMessage, 0, len(allMessages))
 	idNow := allMessages[len(allMessages)-1].ID
 
-	for msg, ok := allMessagesMap[idNow]; ok && msg.PreviousID != idNow; {
+	for {
+		msg, ok := allMessagesMap[idNow]
+		if !ok {
+			break
+		}
 		history = append(history, ChatMessage{
 			Role:    msg.Role,
 			Content: msg.Content,
 		})
+		if msg.PreviousID == uuid.Nil {
+			break
+		}
 		idNow = msg.PreviousID
-
 	}
 
 	result := make([]ChatMessage, 0, len(history))
