@@ -186,7 +186,7 @@ func (s *ChatService) streamProcessor(ctx context.Context, messageID uuid.UUID, 
 	streamEvent := s.streamHub.CreateStream(messageID)
 	llmCh, errCh := s.provider.Stream(ctx, providerReq)
 	endFlag := false
-	for endFlag != true && (llmCh != nil || errCh != nil) {
+	for !endFlag && (llmCh != nil || errCh != nil) {
 		select {
 		case <-ctx.Done():
 			streamEvent.Fail(ctx.Err())
@@ -199,7 +199,6 @@ func (s *ChatService) streamProcessor(ctx context.Context, messageID uuid.UUID, 
 			if err != nil {
 				streamEvent.Fail(err)
 				endFlag = true
-				break
 			}
 		case chunk, ok := <-llmCh:
 			if !ok {
@@ -290,4 +289,4 @@ func SSEError(err error, logger *zap.Logger) {
 }
 
 // temp
-var ErrStatus502 = errors.New("message has error status.")
+var ErrStatus502 = errors.New("message has error status")

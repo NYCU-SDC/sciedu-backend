@@ -25,11 +25,11 @@ type StreamEvent struct {
 	err         error
 }
 
-func (this *StreamHub) CreateStream(messageID uuid.UUID) *StreamEvent {
-	this.lock.Lock()
-	defer this.lock.Unlock()
-	if _, ok := this.streams[messageID]; ok {
-		return this.streams[messageID]
+func (s *StreamHub) CreateStream(messageID uuid.UUID) *StreamEvent {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	if _, ok := s.streams[messageID]; ok {
+		return s.streams[messageID]
 	}
 
 	stream := &StreamEvent{
@@ -37,41 +37,41 @@ func (this *StreamHub) CreateStream(messageID uuid.UUID) *StreamEvent {
 		fullContent: "",
 		subscribers: make(map[chan StreamDelta]struct{}),
 	}
-	this.streams[messageID] = stream
+	s.streams[messageID] = stream
 	return stream
 }
 
-func (this *StreamHub) GetStream(messageID uuid.UUID) (*StreamEvent, bool) {
-	this.lock.RLock()
-	defer this.lock.RUnlock()
+func (s *StreamHub) GetStream(messageID uuid.UUID) (*StreamEvent, bool) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 
-	stream, ok := this.streams[messageID]
+	stream, ok := s.streams[messageID]
 	return stream, ok
 }
 
-func (this *StreamHub) DeleteStream(messageID uuid.UUID) {
-	this.lock.Lock()
-	defer this.lock.Unlock()
+func (s *StreamHub) DeleteStream(messageID uuid.UUID) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
-	delete(this.streams, messageID)
+	delete(s.streams, messageID)
 }
 
-func (this *StreamEvent) Subscribe() (<-chan StreamDelta, <-chan error, func()) {
+func (s *StreamEvent) Subscribe() (<-chan StreamDelta, <-chan error, func()) {
 	ch := make(chan StreamDelta, 16)
 	errCh := make(chan error, 1)
 
-	this.lock.Lock()
-	this.subscribers[ch] = struct{}{}
-	fullContent := this.fullContent
-	this.lock.Unlock()
+	s.lock.Lock()
+	s.subscribers[ch] = struct{}{}
+	fullContent := s.fullContent
+	s.lock.Unlock()
 
 	cancel := func() {
-		this.lock.Lock()
-		if _, ok := this.subscribers[ch]; ok {
-			delete(this.subscribers, ch)
+		s.lock.Lock()
+		if _, ok := s.subscribers[ch]; ok {
+			delete(s.subscribers, ch)
 			close(ch)
 		}
-		this.lock.Unlock()
+		s.lock.Unlock()
 	}
 
 	ch <- StreamDelta{
@@ -82,13 +82,13 @@ func (this *StreamEvent) Subscribe() (<-chan StreamDelta, <-chan error, func()) 
 	return ch, errCh, cancel
 }
 
-func (this *StreamEvent) Publish(stream StreamDelta) {
-	this.lock.RLock()
-	subs := make([]chan StreamDelta, 0, len(this.subscribers))
-	for ch := range this.subscribers {
+func (s *StreamEvent) Publish(stream StreamDelta) {
+	s.lock.RLock()
+	subs := make([]chan StreamDelta, 0, len(s.subscribers))
+	for ch := range s.subscribers {
 		subs = append(subs, ch)
 	}
-	this.lock.RUnlock()
+	s.lock.RUnlock()
 
 	for _, ch := range subs {
 		select {
@@ -99,37 +99,37 @@ func (this *StreamEvent) Publish(stream StreamDelta) {
 	}
 }
 
-func (this *StreamEvent) AppendDelta(stream StreamDelta) {
-	this.lock.Lock()
-	this.fullContent += stream.Delta
-	this.lock.Unlock()
-	this.Publish(stream)
+func (s *StreamEvent) AppendDelta(stream StreamDelta) {
+	s.lock.Lock()
+	s.fullContent += stream.Delta
+	s.lock.Unlock()
+	s.Publish(stream)
 }
 
-func (this *StreamEvent) Complete() {
-	this.lock.Lock()
-	this.status = MessageStatusDone
-	this.lock.Unlock()
-	this.Publish(StreamDelta{
+func (s *StreamEvent) Complete() {
+	s.lock.Lock()
+	s.status = MessageStatusDone
+	s.lock.Unlock()
+	s.Publish(StreamDelta{
 		Delta:      "",
 		IsFinished: true,
 	})
 }
 
-func (this *StreamEvent) Fail(err error) {
-	this.lock.Lock()
-	this.err = err
-	this.status = MessageStatusError
-	this.lock.Unlock()
+func (s *StreamEvent) Fail(err error) {
+	s.lock.Lock()
+	s.err = err
+	s.status = MessageStatusError
+	s.lock.Unlock()
 
-	this.Publish(StreamDelta{
+	s.Publish(StreamDelta{
 		Delta:      "",
 		IsFinished: true,
 	})
 }
 
-func (this *StreamEvent) Get() (MessageStatus, string, error) {
-	this.lock.RLock()
-	defer this.lock.RUnlock()
-	return this.status, this.fullContent, this.err
+func (s *StreamEvent) Get() (MessageStatus, string, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	return s.status, s.fullContent, s.err
 }
