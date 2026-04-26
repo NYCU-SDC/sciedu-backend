@@ -20,7 +20,7 @@ type Store interface {
 	GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageReturn, error)
 	CreateMessage(ctx context.Context, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error)
 	Stream(ctx context.Context, messageID uuid.UUID) (bool, <-chan StreamDelta, <-chan error, func())
-	ValidatePreviousID(ctx context.Context, chatID uuid.UUID, previousID uuid.UUID) error
+	ValidatePreviousID(ctx context.Context, previousID uuid.UUID, chatID uuid.UUID) error
 }
 
 type Handler struct {
@@ -35,9 +35,21 @@ type CreateMessageRequest struct {
 	PreviousID uuid.UUID `json:"previousID,omitempty"`
 }
 
+type bodyParseError struct{ err error }
+
+func (e bodyParseError) Error() string { return e.err.Error() }
+func (e bodyParseError) Unwrap() error { return e.err }
+
 func NewHandler(store Store, logger *zap.Logger) *Handler {
 	return &Handler{
-		logger:    logger,
+		logger: logger,
+		problemWriter: problemutil.NewWithMapping(func(err error) problemutil.Problem {
+			var bpe bodyParseError
+			if errors.As(err, &bpe) {
+				return problemutil.NewBadRequestProblem(bpe.Error())
+			}
+			return problemutil.Problem{}
+		}),
 		store:     store,
 		validator: validator.New(),
 	}
@@ -65,13 +77,25 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	status := http.StatusOK
+
 	messages, err := h.store.GetChat(ctx, chatID)
 	if err != nil {
-		h.problemWriter.WriteError(ctx, w, err, logger)
-		return
+		// temporary handling that 502 error
+		if errors.Is(err, ErrStatus502) {
+			status = http.StatusInternalServerError
+		} else {
+			h.problemWriter.WriteError(ctx, w, err, logger)
+			return
+		}
+
 	}
 
-	handlerutil.WriteJSONResponse(w, http.StatusOK, map[string][]MessageReturn{"messages": messages})
+	if messages == nil {
+		messages = []MessageReturn{}
+	}
+
+	handlerutil.WriteJSONResponse(w, status, map[string][]MessageReturn{"messages": messages})
 }
 
 func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request) {
@@ -86,11 +110,11 @@ func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request) {
 
 	var req CreateMessageRequest
 	if err := handlerutil.ParseAndValidateRequestBody(ctx, h.validator, r, &req); err != nil {
-		h.problemWriter.WriteError(ctx, w, err, logger)
+		h.problemWriter.WriteError(ctx, w, bodyParseError{err}, logger)
 		return
 	}
 
-	err = h.store.ValidatePreviousID(ctx, chatID, req.PreviousID)
+	err = h.store.ValidatePreviousID(ctx, req.PreviousID, chatID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -117,9 +141,7 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 
 	ok, chunks, errs, cleanup := h.store.Stream(ctx, messageID)
 	if !ok {
-		err = fmt.Errorf("messageID: %s not found", messageID)
-		errors.As(err, &handlerutil.ErrNotFound)
-		h.problemWriter.WriteError(ctx, w, err, logger)
+		h.problemWriter.WriteError(ctx, w, handlerutil.NewNotFoundError("stream", "messageID", messageID.String(), ""), logger)
 		return
 	}
 
