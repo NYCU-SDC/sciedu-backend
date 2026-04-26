@@ -179,6 +179,10 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 				h.problemWriter.WriteError(ctx, w, err, logger)
 				return
 			}
+			if chunk.IsFinished {
+				cleanup()
+				return
+			}
 		}
 	}
 
