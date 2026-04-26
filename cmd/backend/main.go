@@ -65,8 +65,8 @@ func main() {
 
 	mux.HandleFunc("POST /api/chat", chatHandler.CreateChat)
 	mux.HandleFunc("GET /api/chat/stream/{messageID}", chatHandler.Stream)
-	mux.HandleFunc("GET /api/chat/{chatID}/messages", chatHandler.GetChat)
-	mux.HandleFunc("POST /api/chat/{chatID}/messages", chatHandler.CreateMessage)
+	mux.HandleFunc("GET /api/chat/messages/{chatID}", chatHandler.GetChat)
+	mux.HandleFunc("POST /api/chat/messages/{chatID}", chatHandler.CreateMessage)
 
 	logger.Info("Start listening on port: 8080")
 

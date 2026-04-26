@@ -60,24 +60,12 @@ func (s *ChatService) CreateChat(ctx context.Context) (uuid.UUID, error) {
 	return chat.ID, nil
 }
 
-func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageReturn, error) {
-	chat, err := s.querier.GetChat(ctx, chatID)
-	if err != nil {
-		return nil, databaseutil.WrapDBError(err, s.logger, "get chat")
-	}
-	//not exist
-	if chat.ID == uuid.Nil {
-		err = fmt.Errorf("chat not found: chat_id=%s", chatID.String())
-		errors.As(err, &handlerutil.NotFoundError{})
-		return nil, err
-	}
+func (s *ChatService) fetchMessages(ctx context.Context, chatID uuid.UUID) ([]MessageReturn, error) {
 	messages, err := s.querier.GetMessages(ctx, chatID)
 	if err != nil {
 		return nil, databaseutil.WrapDBErrorWithKeyValue(err, "messages", "chat_id", chatID.String(), s.logger, "get messages")
 	}
-	// Convert to return type
-	var result []MessageReturn
-	err = nil
+	result := make([]MessageReturn, 0, len(messages))
 	for _, msg := range messages {
 		ret := MessageReturn{
 			ID:        msg.ID,
@@ -89,21 +77,35 @@ func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageR
 		if msg.PreviousID.Valid {
 			ret.PreviousID = msg.PreviousID.Bytes
 		}
-		result = append(result, ret)
-		if MessageStatus(msg.Status) == MessageStatusError {
-			err = fmt.Errorf("MessageID: %s, has error status", msg.ID.String())
-			// hei, This is supposed to be an 502 error, but Summer's HttpWriter does not support 502 now, so I have to use 500 for now. wtf
-			continue
-		}
 		if msg.Content.String == "" {
-			stream, ok := s.streamHub.GetStream(msg.ID)
-			if ok {
+			if stream, ok := s.streamHub.GetStream(msg.ID); ok {
 				_, ret.Content, _ = stream.Get()
 			}
 		}
+		result = append(result, ret)
 	}
+	return result, nil
+}
 
-	return result, err
+func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageReturn, error) {
+	chat, err := s.querier.GetChat(ctx, chatID)
+	if err != nil {
+		return nil, databaseutil.WrapDBError(err, s.logger, "get chat")
+	}
+	if chat.ID == uuid.Nil {
+		return nil, handlerutil.NewNotFoundError("chat", "chat_id", chatID.String(), "")
+	}
+	result, err := s.fetchMessages(ctx, chatID)
+	if err != nil {
+		return nil, err
+	}
+	for _, msg := range result {
+		if msg.Status == MessageStatusError {
+			// hei, This is supposed to be an 502 error, but Summer's HttpWriter does not support 502 now, so I have to use 500 for now. wtf
+			return result, fmt.Errorf("MessageID: %s: %w", msg.ID.String(), ErrStatus502)
+		}
+	}
+	return result, nil
 }
 
 func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error) {
@@ -126,7 +128,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 		return CreateMessageReturn{}, databaseutil.WrapDBError(err, s.logger, "create message")
 	}
 
-	allMessages, err := s.GetChat(ctx, chatID)
+	allMessages, err := s.fetchMessages(ctx, chatID)
 	if err != nil {
 		return CreateMessageReturn{}, err
 	}
@@ -186,6 +188,9 @@ func (s *ChatService) streamProcessor(ctx context.Context, messageID uuid.UUID, 
 	endFlag := false
 	for endFlag != true && (llmCh != nil || errCh != nil) {
 		select {
+		case <-ctx.Done():
+			streamEvent.Fail(ctx.Err())
+			endFlag = true
 		case err, ok := <-errCh:
 			if !ok {
 				errCh = nil
@@ -216,7 +221,10 @@ func (s *ChatService) streamProcessor(ctx context.Context, messageID uuid.UUID, 
 		SSEError(err, s.logger)
 	}
 	s.streamHub.DeleteStream(messageID)
-	_, err = s.querier.UpdateMessage(ctx, UpdateMessageParams{
+	// Use a fresh context so client disconnect doesn't prevent persisting the final state.
+	updateCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err = s.querier.UpdateMessage(updateCtx, UpdateMessageParams{
 		ID: messageID,
 		Content: pgtype.Text{
 			String: fullChunk,
@@ -239,14 +247,10 @@ func (s *ChatService) ValidatePreviousID(ctx context.Context, previousID uuid.UU
 		return databaseutil.WrapDBErrorWithKeyValue(err, "message", "ID", previousID.String(), s.logger, "validate previous id")
 	}
 	if msg.ID == uuid.Nil {
-		err := fmt.Errorf("previous message not found: previous_id=%s", previousID.String())
-		errors.As(err, &handlerutil.NotFoundError{})
-		return err
+		return handlerutil.NewNotFoundError("message", "previous_id", previousID.String(), "")
 	}
 	if msg.ChatID != chatID {
-		err = fmt.Errorf("previous message does not belong to the same chat: previous_id=%s, chat_id=%s", previousID.String(), chatID.String())
-		errors.As(err, &handlerutil.ErrNotFound)
-		return err
+		return handlerutil.NewNotFoundError("message", "previous_id", previousID.String(), fmt.Sprintf("previous message does not belong to the same chat: previous_id=%s, chat_id=%s", previousID.String(), chatID.String()))
 	}
 	return nil
 }
@@ -284,3 +288,6 @@ func createChatHistory(allMessages []MessageReturn) []ChatMessage {
 func SSEError(err error, logger *zap.Logger) {
 	logger.Warn("Handling SSE Error", zap.String("problem", "SSE Error"), zap.Error(err))
 }
+
+// temp
+var ErrStatus502 = errors.New("message has error status.")
