@@ -79,7 +79,7 @@ func main() {
 func initLogger() (*zap.Logger, error) {
 	var logger *zap.Logger
 
-	logger, err := logutil.ZapDevelopmentConfig().Build()
+	logger, err := logutil.ZapProductionConfig().Build()
 	if err != nil {
 		return nil, err
 	}
