@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 type fakeChatStore struct {
@@ -87,7 +88,7 @@ func (s *controlledStreamer) Stream(ctx context.Context, messages []Message) (<-
 }
 
 func TestServiceSendMessageValidation(t *testing.T) {
-	service := NewService(&fakeChatStore{}, fakeStreamer{})
+	service := NewService(&fakeChatStore{}, fakeStreamer{}, zap.NewNop())
 
 	_, _, err := service.SendMessage(context.Background(), uuid.New(), SendMessageRequest{})
 	require.Error(t, err)
@@ -101,7 +102,7 @@ func TestServiceStreamReplyStoresCompletedContent(t *testing.T) {
 		messages: []Message{{ID: uuid.New(), Role: RoleUser, Content: "hello", Status: StatusCreated}},
 	}
 	streamer := newControlledStreamer()
-	service := NewService(store, streamer)
+	service := NewService(store, streamer, zap.NewNop())
 
 	_, replyID, err := service.SendMessage(context.Background(), uuid.New(), SendMessageRequest{Content: "hello"})
 	require.NoError(t, err)

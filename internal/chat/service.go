@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 )
 
 var (
@@ -32,13 +33,15 @@ type Service struct {
 	store    Store
 	streamer Streamer
 	streams  *streamRegistry
+	logger   *zap.Logger
 }
 
-func NewService(store Store, streamer Streamer) *Service {
+func NewService(store Store, streamer Streamer, logger *zap.Logger) *Service {
 	return &Service{
 		store:    store,
 		streamer: streamer,
 		streams:  newStreamRegistry(),
+		logger:   logger,
 	}
 }
 
@@ -60,6 +63,11 @@ func (s *Service) SendMessage(ctx context.Context, chatID uuid.UUID, req SendMes
 	}
 
 	stream := s.streams.create(replyID)
+	s.logger.Info("created chat reply placeholder",
+		zap.String("chat_id", chatID.String()),
+		zap.String("user_message_id", message.ID.String()),
+		zap.String("reply_message_id", replyID.String()),
+	)
 	go s.generateReply(context.Background(), replyID, stream)
 
 	return message, replyID, nil
@@ -85,8 +93,13 @@ func (s *Service) SubscribeStream(ctx context.Context, messageID uuid.UUID) (str
 
 func (s *Service) generateReply(ctx context.Context, replyID uuid.UUID, stream *activeStream) {
 	defer s.streams.remove(replyID)
+	s.logger.Info("starting chat reply generation", zap.String("reply_message_id", replyID.String()))
 
 	if err := s.store.UpdateMessage(ctx, replyID, "", StatusStreaming); err != nil {
+		s.logger.Error("failed to mark reply as streaming",
+			zap.String("reply_message_id", replyID.String()),
+			zap.Error(err),
+		)
 		stream.fail(err)
 		return
 	}
@@ -94,15 +107,28 @@ func (s *Service) generateReply(ctx context.Context, replyID uuid.UUID, stream *
 	messages, err := s.store.ListMessagesForReply(ctx, replyID)
 	if err != nil {
 		_ = s.store.UpdateMessage(ctx, replyID, stream.currentContent(), StatusFailed)
+		s.logger.Error("failed to load chat branch for reply generation",
+			zap.String("reply_message_id", replyID.String()),
+			zap.Error(err),
+		)
 		stream.fail(err)
 		return
 	}
+	s.logger.Info("loaded chat branch for reply generation",
+		zap.String("reply_message_id", replyID.String()),
+		zap.Int("message_count", len(messages)),
+	)
 
 	chunks, streamErrs := s.streamer.Stream(ctx, messages)
 	for chunk := range chunks {
 		content := stream.append(chunk)
 		if err := s.store.UpdateMessage(ctx, replyID, content, StatusStreaming); err != nil {
 			_ = s.store.UpdateMessage(ctx, replyID, content, StatusFailed)
+			s.logger.Error("failed to persist streaming reply content",
+				zap.String("reply_message_id", replyID.String()),
+				zap.Int("content_length", len(content)),
+				zap.Error(err),
+			)
 			stream.fail(err)
 			return
 		}
@@ -110,14 +136,28 @@ func (s *Service) generateReply(ctx context.Context, replyID uuid.UUID, stream *
 
 	if err := <-streamErrs; err != nil {
 		_ = s.store.UpdateMessage(ctx, replyID, stream.currentContent(), StatusFailed)
+		s.logger.Error("llm stream failed",
+			zap.String("reply_message_id", replyID.String()),
+			zap.Int("content_length", len(stream.currentContent())),
+			zap.Error(err),
+		)
 		stream.fail(err)
 		return
 	}
 
 	if err := s.store.UpdateMessage(ctx, replyID, stream.currentContent(), StatusCompleted); err != nil {
+		s.logger.Error("failed to mark reply as completed",
+			zap.String("reply_message_id", replyID.String()),
+			zap.Int("content_length", len(stream.currentContent())),
+			zap.Error(err),
+		)
 		stream.fail(err)
 		return
 	}
+	s.logger.Info("completed chat reply generation",
+		zap.String("reply_message_id", replyID.String()),
+		zap.Int("content_length", len(stream.currentContent())),
+	)
 	stream.done()
 }
 

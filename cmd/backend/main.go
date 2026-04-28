@@ -17,7 +17,9 @@ import (
 )
 
 func main() {
-	logger, err := initLogger()
+	cfg, configLogger := config.Load()
+
+	logger, err := initLogger(cfg)
 	if err != nil {
 		log.Fatalf("Failed to initalize logger: %v, exiting...", err)
 	}
@@ -27,7 +29,6 @@ func main() {
 		}
 	}()
 
-	cfg, configLogger := config.Load()
 	configLogger.FlushToZap(logger)
 
 	if cfg.DatabaseURL == "" {
@@ -62,7 +63,7 @@ func main() {
 
 	chatRepo := chat.NewRepository(db, logger)
 	llmClient := chat.NewLLMClient(cfg.LLMModuleURL, &http.Client{Timeout: 0})
-	chatService := chat.NewService(chatRepo, llmClient)
+	chatService := chat.NewService(chatRepo, llmClient, logger)
 	chat.NewHandler(chatService, logger).Register(mux)
 
 	addr := cfg.Host + ":" + cfg.Port
@@ -74,10 +75,15 @@ func main() {
 	}
 }
 
-func initLogger() (*zap.Logger, error) {
+func initLogger(cfg config.Config) (*zap.Logger, error) {
 	var logger *zap.Logger
 
-	logger, err := logutil.ZapDevelopmentConfig().Build()
+	var err error
+	if cfg.Debug {
+		logger, err = logutil.ZapDevelopmentConfig().Build()
+	} else {
+		logger, err = logutil.ZapProductionConfig().Build()
+	}
 	if err != nil {
 		return nil, err
 	}
