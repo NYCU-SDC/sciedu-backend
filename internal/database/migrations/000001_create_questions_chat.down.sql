@@ -1,0 +1,9 @@
+DROP TABLE IF EXISTS messages;
+DROP TABLE IF EXISTS chats;
+DROP TABLE IF EXISTS answers;
+DROP TABLE IF EXISTS options;
+DROP TABLE IF EXISTS questions;
+
+DROP TYPE IF EXISTS message_status;
+DROP TYPE IF EXISTS message_role;
+DROP TYPE IF EXISTS question_type;
