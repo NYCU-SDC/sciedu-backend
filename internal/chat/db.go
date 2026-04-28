@@ -46,7 +46,9 @@ func (r *Repository) CreateUserMessageWithReply(ctx context.Context, chatID uuid
 	if err != nil {
 		return Message{}, uuid.Nil, databaseutil.WrapDBError(err, r.logger, "begin create message")
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 
 	var userMessage Message
 	err = tx.QueryRow(ctx, `

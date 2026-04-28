@@ -32,7 +32,9 @@ func Error(ctx context.Context, w http.ResponseWriter, err error, logger *zap.Lo
 }
 
 func DecodeJSON(r *http.Request, dst any) error {
-	defer r.Body.Close()
+	defer func() {
+		_ = r.Body.Close()
+	}()
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(dst); err != nil {

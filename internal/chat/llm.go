@@ -65,7 +65,9 @@ func (c *LLMClient) Stream(ctx context.Context, messages []Message) (<-chan stri
 			errs <- err
 			return
 		}
-		defer resp.Body.Close()
+		defer func() {
+			_ = resp.Body.Close()
+		}()
 
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 			data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

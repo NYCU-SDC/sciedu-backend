@@ -57,7 +57,9 @@ func (r *Repository) Create(ctx context.Context, req UpsertRequest) (Question, e
 	if err != nil {
 		return Question{}, databaseutil.WrapDBError(err, r.logger, "begin create question")
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 
 	var q Question
 	err = tx.QueryRow(ctx, `
@@ -83,7 +85,9 @@ func (r *Repository) Update(ctx context.Context, id uuid.UUID, req UpsertRequest
 	if err != nil {
 		return Question{}, databaseutil.WrapDBError(err, r.logger, "begin update question")
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 
 	var q Question
 	err = tx.QueryRow(ctx, `
