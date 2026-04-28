@@ -29,10 +29,18 @@ func (r *Repository) List(ctx context.Context) ([]Question, error) {
 	}
 	defer rows.Close()
 
-	questions, err := pgx.CollectRows(rows, pgx.RowToStructByName[Question])
-	if err != nil {
-		return nil, databaseutil.WrapDBError(err, r.logger, "collect questions")
+	var questions []Question
+	for rows.Next() {
+		var q Question
+		if err := rows.Scan(&q.ID, &q.Type, &q.Content, &q.CreatedAt, &q.UpdatedAt); err != nil {
+			return nil, databaseutil.WrapDBError(err, r.logger, "scan questions")
+		}
+		questions = append(questions, q)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, databaseutil.WrapDBError(err, r.logger, "iterate questions")
+	}
+
 	return r.attachOptions(ctx, questions)
 }
 
