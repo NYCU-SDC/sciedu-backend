@@ -166,7 +166,8 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 		Stream:   true,
 	}
 
-	go s.streamProcessor(context.Background(), llmMessage.ID, providerReq)
+	streamEvent := s.streamHub.CreateStream(llmMessage.ID)
+	go s.streamProcessor(context.Background(), llmMessage.ID, streamEvent, providerReq)
 
 	return CreateMessageReturn{
 		Message: MessageReturn{
@@ -190,8 +191,7 @@ func (s *ChatService) Stream(ctx context.Context, messageID uuid.UUID) (bool, <-
 	return ok, llmCh, errCh, cancel
 }
 
-func (s *ChatService) streamProcessor(ctx context.Context, messageID uuid.UUID, providerReq CreateChatCompletionRequest) {
-	streamEvent := s.streamHub.CreateStream(messageID)
+func (s *ChatService) streamProcessor(ctx context.Context, messageID uuid.UUID, streamEvent *StreamEvent, providerReq CreateChatCompletionRequest) {
 	llmCh, errCh := s.provider.Stream(ctx, providerReq)
 	endFlag := false
 	for !endFlag && (llmCh != nil || errCh != nil) {
