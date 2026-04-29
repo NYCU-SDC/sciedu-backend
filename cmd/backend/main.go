@@ -10,9 +10,6 @@ import (
 	"sciedu-backend/internal/cors"
 	"sciedu-backend/internal/question"
 
-	"sciedu-backend/internal/cors"
-	"sciedu-backend/internal/questions"
-
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
