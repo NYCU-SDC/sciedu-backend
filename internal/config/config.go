@@ -3,6 +3,7 @@ package config
 import (
 	"flag"
 	"os"
+	"strings"
 
 	configutil "github.com/NYCU-SDC/summer/pkg/config"
 	"github.com/joho/godotenv"
@@ -13,13 +14,14 @@ import (
 const DefaultSecret = "default-secret"
 
 type Config struct {
-	Debug           bool   `yaml:"debug"              envconfig:"DEBUG"`
-	Host            string `yaml:"host"               envconfig:"HOST"`
-	Port            string `yaml:"port"               envconfig:"PORT"`
-	Secret          string `yaml:"secret"             envconfig:"SECRET"`
-	DatabaseURL     string `yaml:"database_url"       envconfig:"DATABASE_URL"`
-	MigrationSource string `yaml:"migration_source"   envconfig:"MIGRATION_SOURCE"`
-	LLMModuleURL    string `yaml:"llm_module_url"     envconfig:"LLM_MODULE_URL"`
+	Debug           bool     `yaml:"debug"              envconfig:"DEBUG"`
+	Host            string   `yaml:"host"               envconfig:"HOST"`
+	Port            string   `yaml:"port"               envconfig:"PORT"`
+	Secret          string   `yaml:"secret"             envconfig:"SECRET"`
+	DatabaseURL     string   `yaml:"database_url"       envconfig:"DATABASE_URL"`
+	MigrationSource string   `yaml:"migration_source"   envconfig:"MIGRATION_SOURCE"`
+	LLMModuleURL    string   `yaml:"llm_module_url"     envconfig:"LLM_MODULE_URL"`
+	AllowOrigins    []string `yaml:"allow_origins"      envconfig:"ALLOW_ORIGINS"`
 }
 
 type LogBuffer struct {
@@ -65,6 +67,7 @@ func Load() (Config, *LogBuffer) {
 		DatabaseURL:     "",
 		MigrationSource: "file://internal/database/migrations",
 		LLMModuleURL:    "http://localhost:8000",
+		AllowOrigins:    nil,
 	}
 
 	var err error
@@ -123,6 +126,7 @@ func FromEnv(config *Config, logger *LogBuffer) (*Config, error) {
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		MigrationSource: os.Getenv("MIGRATION_SOURCE"),
 		LLMModuleURL:    os.Getenv("LLM_MODULE_URL"),
+		AllowOrigins:    parseAllowOrigins(os.Getenv("ALLOW_ORIGINS")),
 	}
 
 	return configutil.Merge[Config](config, envConfig)
@@ -138,8 +142,29 @@ func FromFlags(config *Config) (*Config, error) {
 	flag.StringVar(&flagConfig.DatabaseURL, "database_url", "", "database url")
 	flag.StringVar(&flagConfig.MigrationSource, "migration_source", "", "migration source")
 	flag.StringVar(&flagConfig.LLMModuleURL, "llm_module_url", "", "llm module url")
+	allowOrigins := flag.String("allow_origins", "", "comma-separated CORS allow origins")
 
 	flag.Parse()
 
+	flagConfig.AllowOrigins = parseAllowOrigins(*allowOrigins)
+
 	return configutil.Merge[Config](config, flagConfig)
+}
+
+func parseAllowOrigins(value string) []string {
+	if value == "" {
+		return nil
+	}
+
+	parts := strings.Split(value, ",")
+	origins := make([]string, 0, len(parts))
+	for _, part := range parts {
+		origin := strings.TrimSpace(part)
+		if origin == "" {
+			continue
+		}
+		origins = append(origins, origin)
+	}
+
+	return origins
 }

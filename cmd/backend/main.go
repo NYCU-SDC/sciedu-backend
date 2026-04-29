@@ -13,6 +13,7 @@ import (
 
 	"sciedu-backend/internal/chat"
 	"sciedu-backend/internal/config"
+	corsmiddleware "sciedu-backend/internal/cors"
 	"sciedu-backend/internal/question"
 )
 
@@ -66,10 +67,13 @@ func main() {
 	chatService := chat.NewService(chatRepo, llmClient, logger)
 	chat.NewHandler(chatService, logger).Register(mux)
 
+	corsMiddleware := corsmiddleware.NewMiddleware(logger, cfg.AllowOrigins)
+	handler := corsMiddleware.HandlerFunc(mux.ServeHTTP)
+
 	addr := cfg.Host + ":" + cfg.Port
 	logger.Info("Start listening", zap.String("addr", addr))
 
-	err = http.ListenAndServe(addr, mux)
+	err = http.ListenAndServe(addr, handler)
 	if err != nil {
 		panic(err)
 	}
