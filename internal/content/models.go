@@ -11,7 +11,7 @@ import (
 
 type Content struct {
 	ID      uuid.UUID
-	Type    string
+	Type    interface{}
 	Content pgtype.Text
 }
 
