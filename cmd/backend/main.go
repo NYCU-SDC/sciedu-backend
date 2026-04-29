@@ -67,6 +67,14 @@ func main() {
 	questionHandler.RegisterRoutes(mux, middlewareSet)
 	contentHandler.RegisterRoutes(mux, middlewareSet)
 
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write([]byte("ok"))
+		if err != nil {
+			panic(err)
+		}
+	})
+
 	logger.Info("Start listening on port: 8080")
 
 	err = http.ListenAndServe(":8080", mux)
