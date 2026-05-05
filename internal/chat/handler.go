@@ -81,14 +81,8 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request) {
 
 	messages, err := h.store.GetChat(ctx, chatID)
 	if err != nil {
-		// temporary handling that 502 error
-		if errors.Is(err, ErrStatus502) {
-			status = http.StatusInternalServerError
-		} else {
-			h.problemWriter.WriteError(ctx, w, err, logger)
-			return
-		}
-
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
 	}
 
 	if messages == nil {
