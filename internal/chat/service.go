@@ -99,12 +99,6 @@ func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageR
 	if err != nil {
 		return nil, err
 	}
-	for _, msg := range result {
-		if msg.Status == MessageStatusError {
-			// hei, This is supposed to be an 502 error, but Summer's HttpWriter does not support 502 now, so I have to use 500 for now. wtf
-			return result, fmt.Errorf("MessageID: %s: %w", msg.ID.String(), ErrStatus502)
-		}
-	}
 	return result, nil
 }
 
