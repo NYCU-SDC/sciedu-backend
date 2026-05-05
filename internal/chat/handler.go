@@ -84,6 +84,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request) {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
+	// 200
 
 	if messages == nil {
 		messages = []MessageReturn{}
