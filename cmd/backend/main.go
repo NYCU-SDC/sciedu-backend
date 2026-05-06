@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"sciedu-backend/internal/cors"
-	"sciedu-backend/internal/questions"
+	"sciedu-backend/internal/question"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
@@ -47,10 +47,10 @@ func main() {
 		logger.Fatal("Failed to connect to database", zap.Error(err))
 	}
 
-	queries := questions.New(pool)
-	optionService := questions.NewOptionService(queries, logger)
-	questionService := questions.NewQuestionService(queries, optionService, logger)
-	questionHandler := questions.NewHandler(questionService, optionService, logger)
+	queries := question.New(pool)
+	optionService := question.NewOptionService(queries, logger)
+	questionService := question.NewQuestionService(queries, optionService, logger)
+	questionHandler := question.NewHandler(questionService, optionService, logger)
 
 	mux := http.NewServeMux()
 
