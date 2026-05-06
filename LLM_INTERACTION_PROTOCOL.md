@@ -71,7 +71,7 @@ sequenceDiagram
     participant FE as Frontend
     participant BE as Backend
 
-    FE->>BE: GET /chat/:chatID/messages
+    FE->>BE: GET /chat/:chatID
     BE-->>FE: Messages array (all status: "completed")
 
     Note over FE: Check message statuses<br/>All status = "completed"
@@ -91,7 +91,7 @@ sequenceDiagram
 
     LLM->>BE: SSE delta events (ongoing)
 
-    FE->>BE: GET /chat/:chatID/messages
+    FE->>BE: GET /chat/:chatID
     BE-->>FE: Messages array<br/>(one message has status: "streaming",<br/>content = buffered partial content)
 
     Note over FE: Detect message with status "streaming"<br/>Render partial content immediately
@@ -108,7 +108,7 @@ sequenceDiagram
 
     Note over BE: Update message<br/>status → "completed"
 
-    FE->>BE: GET /chat/:chatID/messages
+    FE->>BE: GET /chat/:chatID
     BE-->>FE: Final message (status: "completed")
 ```
 
@@ -122,9 +122,9 @@ sequenceDiagram
 
     Note over FE: User types message in<br/>existing conversation
 
-    FE->>BE: POST /chat/:chatID/messages<br/>{content: "...", previousID: "uuid"}
+    FE->>BE: POST /chat/:chatID<br/>{content: "...", previousID: "uuid"}
 
-    BE-->>FE: {message: {id, status: "created", ...},<br/>replyMessageID: "uuid"}
+    BE-->>FE: {message: {id, status: "streaming", ...},<br/>replyMessageID: "uuid"}
 
     Note over FE: Optimistic update:<br/>Render user message + assistant placeholder
 
@@ -147,7 +147,7 @@ sequenceDiagram
 
     Note over BE: Update reply message<br/>status → "completed"
 
-    FE->>BE: GET /chat/:chatID/messages
+    FE->>BE: GET /chat/:chatID
     BE-->>FE: Final messages (all status: "completed")
 
     Note over FE: Reconcile optimistic state<br/>with server response
@@ -169,7 +169,7 @@ sequenceDiagram
     FE->>BE: GET /chat/stream/:messageID (SSE)
     BE-->>FE: 404 (stream not found)
 
-    FE->>BE: GET /chat/:chatID/messages
+    FE->>BE: GET /chat/:chatID
     BE-->>FE: 502 → message status: "failed"
 
     Note over FE: Render error state<br/>(e.g. retry button)

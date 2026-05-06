@@ -186,80 +186,114 @@ Responsible for development-phase login and token refreshing.
 
 - **POST** `/chat`
     
+- **Request Body**: Empty (no request body required)
+    
 - **Response (201 Created)**:
     
-    ```
-    { "chatID": "uuid" }
+    ```json
+    {
+      "chatID": "uuid"
+    }
     ```
     
 
-### 4.2 Get Chat Message List
+### 4.2 Get Chat Messages
 
-- **GET** `/chat/{chatId}/messages`
+- **GET** `/chat/{chatId}`
+    
+- **Parameters**: `chatId` (uuid) - The unique identifier of the chat room
     
 - **Response (200 OK)**:
     
-    ```
+    ```json
     {
       "messages": [
         {
           "id": "uuid",
-          "content": "Hi!",
-          "role": "user", // "user" or "assistant"
-          "previousID": "uuid", // optional
-          "status": "done", // "streaming", "done", "error"
-          "createdAt": "2025-10-14T10:00:00Z"
+          "content": "string",
+          "role": "string",
+          "previousID": "uuid",
+          "status": "string",
+          "createdAt": "timestamp"
         }
       ]
     }
     ```
     
+- **Field Descriptions**:
+    
+    - `id`: Unique identifier of the message
+    - `content`: Message content
+    - `role`: Either `"user"` or `"assistant"`
+    - `previousID`: UUID of the previous message in the conversation chain (optional)
+    - `status`: Message status - `"streaming"`, `"completed"`, or `"failed"`
+    - `createdAt`: UTC timestamp in ISO 8601 format
+    
 
 ### 4.3 Send a Chat Message
 
-- **POST** `/chat/{chatId}/messages`
+- **POST** `/chat/{chatId}`
+    
+- **Parameters**: `chatId` (uuid) - The unique identifier of the chat room
     
 - **Description**: After sending a user message, a reserved `assistant` message in the `streaming` state will be pre-created.
     
 - **Request Body**:
     
-    ```
+    ```json
     {
-      "content": "Please help me answer this question",
-      "previousID": "uuid" // optional
+      "content": "string",
+      "previousID": "uuid"
     }
     ```
     
 - **Response (201 Created)**:
     
-    ```
+    ```json
     {
-      "message": { /* The message object just sent by the user */ },
-      "replyMessageID": "uuid" // Use this ID to call the SSE stream API
+      "message": {
+        "id": "uuid",
+        "content": "string",
+        "role": "string",
+        "previousID": "uuid",
+        "status": "streaming",
+        "createdAt": "timestamp"
+      },
+      "replyMessageID": "uuid"
     }
     ```
+    
+- **Field Descriptions**:
+    
+    - `message`: The user message that was just created
+    - `replyMessageID`: The UUID of the pre-created assistant message (use this ID to establish SSE stream connection)
     
 
 ### 4.4 Receive Assistant Response Stream (Server-Sent Events)
 
 - **GET** `/chat/stream/{messageId}`
     
-- **Description**: Establish a connection using the `replyMessageID` obtained from the previous API.
+- **Parameters**: `messageId` (uuid) - The `replyMessageID` obtained from the previous POST request
+    
+- **Description**: Establish a Server-Sent Events connection to receive the assistant's streaming response.
     
 - **Headers**:
     
     - `Content-Type: text/event-stream`
-        
     - `Cache-Control: no-cache`
-        
     - `Connection: keep-alive`
         
 - **Event Stream Data**:
     
     ```
-    { "content": "This is a stream" }
-    { "content": " text fragment" }
+    event: delta
+    data: {"content": "string"}
     ```
+    
+- **Error Responses**:
+    
+    - `400 Bad Request`: Message ID does not exist (streaming has not been initiated)
+    - `404 Not Found`: Invalid message ID (message not found in database)
     
 
 ## 5. Healthz
