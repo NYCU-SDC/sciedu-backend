@@ -32,6 +32,12 @@ type Answer struct {
 	CreatedAt        pgtype.Timestamptz
 }
 
+type Content struct {
+	ID      uuid.UUID
+	Type    interface{}
+	Content pgtype.Text
+}
+
 type Option struct {
 	ID         uuid.UUID
 	QuestionID uuid.UUID
