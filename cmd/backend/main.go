@@ -3,12 +3,11 @@ package main
 import (
 	"log"
 	"net/http"
-	"os"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
-	"github.com/joho/godotenv"
 	"go.uber.org/zap"
+	"sciedu-backend/internal/config"
 )
 
 func main() {
@@ -19,14 +18,10 @@ func main() {
 
 	logger.Info("Hello, World!")
 
-	err = godotenv.Load()
-	if err != nil {
-		logger.Warn("No .env file loaded, using environment variables", zap.Error(err))
-	}
+	cfg, configLogger := config.Load()
+	configLogger.FlushToZap(logger)
 
-	migrationSource := os.Getenv("MIGRATION_SOURCE")
-	databaseURL := os.Getenv("DATABASE_URL")
-	err = databaseutil.MigrationUp(migrationSource, databaseURL, logger)
+	err = databaseutil.MigrationUp(cfg.MigrationSource, cfg.DatabaseURL, logger)
 	if err != nil {
 		logger.Fatal("Failed to run database migration", zap.Error(err))
 	}
