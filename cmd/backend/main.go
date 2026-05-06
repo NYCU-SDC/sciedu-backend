@@ -33,11 +33,12 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	// Health check route
+	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("ok"))
+		_, err := w.Write([]byte("OK"))
 		if err != nil {
-			panic(err)
+			logger.Error("Failed to write response", zap.Error(err))
 		}
 	})
 
