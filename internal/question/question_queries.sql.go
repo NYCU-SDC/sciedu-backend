@@ -14,7 +14,7 @@ import (
 const createQuestion = `-- name: CreateQuestion :one
 INSERT INTO questions (type, content)
 VALUES ($1, $2)
-RETURNING id, type, content
+RETURNING id, content, type, created_at, updated_at
 `
 
 type CreateQuestionParams struct {
@@ -25,7 +25,13 @@ type CreateQuestionParams struct {
 func (q *Queries) CreateQuestion(ctx context.Context, arg CreateQuestionParams) (Question, error) {
 	row := q.db.QueryRow(ctx, createQuestion, arg.Type, arg.Content)
 	var i Question
-	err := row.Scan(&i.ID, &i.Type, &i.Content)
+	err := row.Scan(
+		&i.ID,
+		&i.Content,
+		&i.Type,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
@@ -40,7 +46,7 @@ func (q *Queries) DeleteQuestion(ctx context.Context, id uuid.UUID) error {
 }
 
 const getQuestion = `-- name: GetQuestion :one
-SELECT id, type, content
+SELECT id, content, type, created_at, updated_at
 FROM questions
 WHERE id = $1
 `
@@ -48,12 +54,18 @@ WHERE id = $1
 func (q *Queries) GetQuestion(ctx context.Context, id uuid.UUID) (Question, error) {
 	row := q.db.QueryRow(ctx, getQuestion, id)
 	var i Question
-	err := row.Scan(&i.ID, &i.Type, &i.Content)
+	err := row.Scan(
+		&i.ID,
+		&i.Content,
+		&i.Type,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
 const listQuestion = `-- name: ListQuestion :many
-SELECT id, type, content
+SELECT id, content, type, created_at, updated_at
 FROM questions
 ORDER BY id
 `
@@ -67,7 +79,13 @@ func (q *Queries) ListQuestion(ctx context.Context) ([]Question, error) {
 	var items []Question
 	for rows.Next() {
 		var i Question
-		if err := rows.Scan(&i.ID, &i.Type, &i.Content); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.Type,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -83,7 +101,7 @@ UPDATE questions
 SET type = $2,
     content = $3
 WHERE id = $1
-RETURNING id, type, content
+RETURNING id, content, type, created_at, updated_at
 `
 
 type UpdateQuestionParams struct {
@@ -95,6 +113,12 @@ type UpdateQuestionParams struct {
 func (q *Queries) UpdateQuestion(ctx context.Context, arg UpdateQuestionParams) (Question, error) {
 	row := q.db.QueryRow(ctx, updateQuestion, arg.ID, arg.Type, arg.Content)
 	var i Question
-	err := row.Scan(&i.ID, &i.Type, &i.Content)
+	err := row.Scan(
+		&i.ID,
+		&i.Content,
+		&i.Type,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }

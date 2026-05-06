@@ -9,23 +9,19 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type Answer struct {
-	ID               uuid.UUID
-	QuestionID       uuid.UUID
-	SelectedOptionID *uuid.UUID
-	TextAnswer       string
-	CreatedAt        pgtype.Timestamptz
-}
-
 type Option struct {
 	ID         uuid.UUID
 	QuestionID uuid.UUID
-	Label      string
 	Content    string
+	Label      string
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
 }
 
 type Question struct {
-	ID      uuid.UUID
-	Type    string
-	Content string
+	ID        uuid.UUID
+	Content   string
+	Type      string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
 }

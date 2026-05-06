@@ -49,8 +49,8 @@ func main() {
 	}
 
 	questionQueries := question.New(pool)
-	questionService := question.NewQuestionService(questionQueries, logger)
 	optionService := question.NewOptionService(questionQueries, logger)
+	questionService := question.NewQuestionService(questionQueries, optionService, logger)
 	questionHandler := question.NewHandler(questionService, optionService, logger)
 
 	contentQueries := content.New(pool)

@@ -1,9 +1,7 @@
 package question
 
 import (
-	"context"
 	"errors"
-	"fmt"
 	"net/http"
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
@@ -95,7 +93,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]questionResponse, 0, len(questions))
 	for _, q := range questions {
-		item, err := h.buildQuestionResponse(ctx, q)
+		item, err := h.questionService.BuildQuestionResponse(ctx, q)
 		if err != nil {
 			h.problemWriter.WriteError(ctx, w, err, logger)
 			return
@@ -122,7 +120,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.buildQuestionResponse(ctx, question)
+	resp, err := h.questionService.BuildQuestionResponse(ctx, question)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -150,12 +148,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.syncQuestionOptions(ctx, question.ID, req.Type, req.Options, false); err != nil {
+	if err := h.questionService.SyncQuestionOptions(ctx, question.ID, req.Type, req.Options, false); err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
 
-	resp, err := h.buildQuestionResponse(ctx, question)
+	resp, err := h.questionService.BuildQuestionResponse(ctx, question)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -194,12 +192,12 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.syncQuestionOptions(ctx, id, req.Type, req.Options, true); err != nil {
+	if err := h.questionService.SyncQuestionOptions(ctx, id, req.Type, req.Options, true); err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
 
-	resp, err := h.buildQuestionResponse(ctx, question)
+	resp, err := h.questionService.BuildQuestionResponse(ctx, question)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -229,68 +227,6 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (h *Handler) buildQuestionResponse(ctx context.Context, q Question) (questionResponse, error) {
-	resp := questionResponse{
-		ID:      q.ID,
-		Type:    q.Type,
-		Content: q.Content,
-	}
-
-	if q.Type != "CHOICE" {
-		return resp, nil
-	}
-
-	opts, err := h.optionService.ListByQuestion(ctx, q.ID)
-	if err != nil {
-		return questionResponse{}, err
-	}
-
-	resp.Options = make([]optionResponse, 0, len(opts))
-	for _, opt := range opts {
-		resp.Options = append(resp.Options, optionResponse{
-			ID:      opt.ID,
-			Label:   opt.Label,
-			Content: opt.Content,
-		})
-	}
-
-	return resp, nil
-}
-
-func (h *Handler) syncQuestionOptions(ctx context.Context, questionID uuid.UUID, questionType string, options []createUpdateOptionRequest, replace bool) error {
-	if replace || questionType == "TEXT" {
-		existing, err := h.optionService.ListByQuestion(ctx, questionID)
-		if err != nil {
-			return err
-		}
-		for _, opt := range existing {
-			if err := h.optionService.Delete(ctx, opt.ID); err != nil {
-				return err
-			}
-		}
-	}
-
-	if questionType == "TEXT" {
-		return nil
-	}
-
-	if len(options) == 0 {
-		return fmt.Errorf("%w: options are required for CHOICE question", errInvalidQuestionPayload)
-	}
-
-	for _, opt := range options {
-		if _, err := h.optionService.Create(ctx, OptionRequest{
-			QuestionID: questionID,
-			Label:      opt.Label,
-			Content:    opt.Content,
-		}); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 func (h *Handler) parseID(raw string) (uuid.UUID, error) {
