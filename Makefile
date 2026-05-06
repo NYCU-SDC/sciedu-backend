@@ -19,10 +19,10 @@ prepare:
 gen:
 	@echo -e ":: $(GREEN)Generating schema and code...$(NC)"
 	# we do not have a sql file yet
-	# @echo -e "  -> Running schema creation script..."
-	# @./scripts/create_sqlc_full_schema.sh || (echo -e "  -> $(RED)Schema creation failed$(NC)" && exit 1)
-	# @echo -e "  -> Generating SQLC code..."
-	# @sqlc generate || (echo -e "  -> $(RED)SQLC generation failed$(NC)" && exit 1)
+	@echo -e "  -> Running schema creation script..."
+	@./scripts/create_sqlc_full_schema.sh || (echo -e "  -> $(RED)Schema creation failed$(NC)" && exit 1)
+	@echo -e "  -> Generating SQLC code..."
+	@sqlc generate || (echo -e "  -> $(RED)SQLC generation failed$(NC)" && exit 1)
 	@echo -e "  -> Running go generate..."
 	@go generate ./... || (echo -e "  -> $(RED)Go generate failed!$(RED)" && exit 1)
 	@echo -e "==> $(BLUE)Generation completed$(NC)"
