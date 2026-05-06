@@ -104,15 +104,24 @@ func (s *Service) CreateMediaContent(ctx context.Context, raw []byte, filename s
 	}
 
 	tmpPath := tmpFile.Name()
-	defer tmpFile.Close()
 
 	if _, err := tmpFile.Write(raw); err != nil {
+		if cerr := tmpFile.Close(); cerr != nil {
+			s.logger.Warn("failed to close temp media file after write error", zap.String("path", tmpPath), zap.Error(cerr))
+		}
 		_ = os.Remove(tmpPath)
 		return Content{}, fmt.Errorf("write media file: %w", err)
 	}
 	if err := tmpFile.Sync(); err != nil {
+		if cerr := tmpFile.Close(); cerr != nil {
+			s.logger.Warn("failed to close temp media file after sync error", zap.String("path", tmpPath), zap.Error(cerr))
+		}
 		_ = os.Remove(tmpPath)
 		return Content{}, fmt.Errorf("sync media file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpPath)
+		return Content{}, fmt.Errorf("close media file: %w", err)
 	}
 
 	// Atomically move the temp file into its final name.

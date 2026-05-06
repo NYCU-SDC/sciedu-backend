@@ -109,7 +109,11 @@ func (h *Handler) CreateMedia(w http.ResponseWriter, r *http.Request) {
 			errInvalidContentPayload), logger)
 		return
 	}
-	defer file.Close()
+	defer func() {
+		if cerr := file.Close(); cerr != nil {
+			logger.Warn("failed to close uploaded multipart file", zap.Error(cerr))
+		}
+	}()
 
 	raw, err := io.ReadAll(file)
 	if err != nil {
@@ -150,7 +154,11 @@ func (h *Handler) StreamMedia(w http.ResponseWriter, r *http.Request) {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil {
+			logger.Warn("failed to close media file", zap.String("path", path), zap.Error(cerr))
+		}
+	}()
 
 	info, err := f.Stat()
 	if err != nil {
