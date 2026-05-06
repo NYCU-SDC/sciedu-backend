@@ -23,3 +23,28 @@
 ### Next Steps
 - Ask the PR author to route startup migration settings through `internal/config.Load()` or otherwise preserve defaults.
 - Consider squashing/replacing the paired contents rename migrations before merge if version 4 has not been deployed anywhere.
+
+## [2026-05-06 21:49] Task Record
+
+### Task Description
+- Re-reviewed GitHub PR 27 after the user requested another review pass.
+
+### Actions Taken
+- Re-fetched PR 27 into `refs/remotes/origin/pr/27` to avoid mixing local report commits into the reviewed diff.
+- Compared `origin/main..origin/pr/27`.
+- Created a temporary clean worktree at `/private/tmp/sciedu-pr27-review` for verification, then removed it after use.
+- Ran `/opt/homebrew/bin/go test ./...` in the clean worktree; tests passed.
+- Ran `git diff --check origin/main..origin/pr/27`; it failed on trailing whitespace in `AGENTS.md`.
+
+### Attempted Methods
+- Used a separate remote-style PR ref because the current branch contains local report commits.
+- Tried `go test ./...` in the temporary worktree, but the shell PATH there did not include `go`; reran using `/opt/homebrew/bin/go test ./...`.
+
+### Issues & Blockers
+- The previous migration-source finding is resolved in the latest PR version because `cmd/backend/main.go` now calls `config.Load()`.
+- The previous transient migration 4/5 finding is no longer applicable because those migration files were removed from the latest PR diff.
+- New review findings: the PR currently deletes multiple documentation/spec files from `origin/main`, and `AGENTS.md` contains trailing whitespace that makes `git diff --check` fail.
+
+### Next Steps
+- Ask the PR author to rebase/merge `origin/main` and restore any unintentionally deleted docs before merge.
+- Remove trailing whitespace from `AGENTS.md` lines added in the commit message example.
