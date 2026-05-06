@@ -271,24 +271,14 @@ If the project uses Git version control, you MUST follow these Git workflow requ
 
 3. **Commit Your Work**
    - After each meaningful unit of work (feature implementation, bug fix, refactoring phase), you MUST create a Git commit.
-   - **Commit Message Convention**: Use clear, descriptive commit messages following this format:
+   - **Commit Message Convention**: Use clear, descriptive commit messages following the project's Angular Conventional Commits format:
      ```
      <type>: <brief description>
-     
-     - Detail 1
-     - Detail 2 (if needed)
-     
-     [AI Agent: <service>-<model>]
      ```
    - **Type examples**: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`
    - **Example**:
      ```
      feat: add user authentication middleware
-     
-     - Implement JWT token validation
-     - Add role-based access control
-     
-     [AI Agent: opencode-claude-3-5-sonnet-20241022]
      ```
    - **Commands**:
      ```bash
