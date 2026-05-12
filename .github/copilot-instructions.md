@@ -63,6 +63,11 @@ You must enforce a strict separation of concerns. **Dependency Direction**: Hand
 
 ## **Coding Standards & Conventions**
 
+### **Documentation Sources**
+
+- Before answering questions or making changes related to API behavior, ERD, or LLM interaction flows, check the corresponding documents under `docs/` first.
+- Use `docs/API.md` for API definitions, `docs/LLM_API.md` for LLM API notes, `docs/LLM_ERD.md` for ERD notes, and `docs/LLM_INTERACTION_PROTOCOL.md` for interaction protocol details.
+
 ### **API Design & Specification (TypeSpec)**
 
 - **Source of Truth**: Always refer to `.tsp` files in the `service/` directory for models and operation signatures.
@@ -206,6 +211,33 @@ Reference: [How We Use Version Control for Collaboration (Chinese)](https://clus
         
 
 ## **Database & SQL Guidelines**
+
+### **Local Development Environment**
+
+- **Docker Compose Setup**: Use the `.deploy/local/compose.yaml` file to start a local PostgreSQL instance.
+    
+- **Starting PostgreSQL**:
+    
+    ```bash
+    # Clean up previous test data to avoid pollution
+    docker compose -f .deploy/local/compose.yaml down -v
+    
+    # Start PostgreSQL
+    docker compose -f .deploy/local/compose.yaml up -d
+    ```
+    
+- **Connection Details** (as defined in `compose.yaml`):
+    
+    - Host: `localhost`
+    - Port: `5432`
+    - Database: `sciedu`
+    - User: `postgres`
+    - Password: `password`
+    
+- **Best Practice**: Always run `docker compose down -v` before starting a new development session to ensure a clean database state and prevent test data pollution.
+    
+
+### **Schema & Migration Guidelines**
 
 - **Schema**: Use `UUID` (`gen_random_uuid()`) for PKs and `TIMESTAMPTZ` for timestamps.
     

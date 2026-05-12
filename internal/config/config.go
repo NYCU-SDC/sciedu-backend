@@ -70,7 +70,9 @@ func Load() (Config, *LogBuffer) {
 	var err error
 	config, err = FromFile("config.yaml", config, logger)
 	if err != nil {
-		logger.Warn("Failed to load config from file", err, map[string]string{"path": "config.yaml"})
+		if !os.IsNotExist(err) {
+			logger.Warn("Failed to load config from file", err, map[string]string{"path": "config.yaml"})
+		}
 	}
 
 	config, err = FromEnv(config, logger)

@@ -63,6 +63,11 @@ You must enforce a strict separation of concerns. **Dependency Direction**: Hand
 
 ## **Coding Standards & Conventions**
 
+### **Documentation Sources**
+
+- Before answering questions or making changes related to API behavior, ERD, or LLM interaction flows, check the corresponding documents under `docs/` first.
+- Use `docs/API.md` for API definitions, `docs/LLM_API.md` for LLM API notes, `docs/LLM_ERD.md` for ERD notes, and `docs/LLM_INTERACTION_PROTOCOL.md` for interaction protocol details.
+
 ### **API Design & Specification (TypeSpec)**
 
 - **Source of Truth**: Always refer to `.tsp` files in the `service/` directory for models and operation signatures.
@@ -207,6 +212,33 @@ Reference: [How We Use Version Control for Collaboration (Chinese)](https://clus
 
 ## **Database & SQL Guidelines**
 
+### **Local Development Environment**
+
+- **Docker Compose Setup**: Use the `.deploy/local/compose.yaml` file to start a local PostgreSQL instance.
+    
+- **Starting PostgreSQL**:
+    
+    ```bash
+    # Clean up previous test data to avoid pollution
+    docker compose -f .deploy/local/compose.yaml down -v
+    
+    # Start PostgreSQL
+    docker compose -f .deploy/local/compose.yaml up -d
+    ```
+    
+- **Connection Details** (as defined in `compose.yaml`):
+    
+    - Host: `localhost`
+    - Port: `5432`
+    - Database: `sciedu`
+    - User: `postgres`
+    - Password: `password`
+    
+- **Best Practice**: Always run `docker compose down -v` before starting a new development session to ensure a clean database state and prevent test data pollution.
+    
+
+### **Schema & Migration Guidelines**
+
 - **Schema**: Use `UUID` (`gen_random_uuid()`) for PKs and `TIMESTAMPTZ` for timestamps.
     
 - **Workflow**: 1. Migration -> 2. `queries.sql` -> 3. `sqlc generate`.
@@ -263,58 +295,42 @@ If the project uses Git version control, you MUST follow these Git workflow requ
    - Run `git status` to verify the current branch and working directory state.
 
 2. **Verify .gitignore**
-   - **CRITICAL**: Before making any commits, ensure that sensitive files, build artifacts, and temporary files are properly listed in `.gitignore`.
+   - **CRITICAL**: Before making any changes, ensure that sensitive files, build artifacts, and temporary files are properly listed in `.gitignore`.
    - **Common items to ignore**: `.env`, `.env.local`, `node_modules/`, `__pycache__/`, `*.pyc`, `.DS_Store`, `dist/`, `build/`, IDE config files, log files, credentials, API keys, etc.
    - **Action**: If `.gitignore` is missing or incomplete, create or update it before proceeding.
 
-**After Completing Each Task Phase:**
+**Git Commit Guidelines:**
 
-3. **Commit Your Work**
-   - After each meaningful unit of work (feature implementation, bug fix, refactoring phase), you MUST create a Git commit.
-   - **Commit Message Convention**: Use clear, descriptive commit messages following this format:
+3. **Committing is Optional**
+   - You are **NOT** required to automatically commit changes after completing work.
+   - The human developer will handle Git commits and version control operations.
+   - Focus on completing the task and updating the report file instead.
+
+4. **If You Do Commit (Optional):**
+   - **DO NOT** include AI-related information in commit messages (e.g., avoid "AI-generated", "by Copilot", "automated by Claude", etc.).
+   - Use natural, human-style commit messages following the project's Angular Conventional Commits format:
      ```
      <type>: <brief description>
-     
-     - Detail 1
-     - Detail 2 (if needed)
-     
-     [AI Agent: <service>-<model>]
      ```
    - **Type examples**: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`
    - **Example**:
      ```
      feat: add user authentication middleware
-     
-     - Implement JWT token validation
-     - Add role-based access control
-     
-     [AI Agent: opencode-claude-3-5-sonnet-20241022]
      ```
-   - **Commands**:
-     ```bash
-     git add <modified-files>
-     git commit -m "your commit message"
-     ```
-
-4. **Never Commit Sensitive Data**
-   - **Double-check before every commit**: Ensure no API keys, passwords, credentials, or personal data are being committed.
-   - Use `git status` and `git diff --cached` to review staged changes before committing.
+   - **Never Commit Sensitive Data**: Double-check that no API keys, passwords, credentials, or personal data are being committed.
 
 5. **STRICTLY PROHIBITED: Remote Push Operations**
    - **NEVER use `git push`** or any commands that send code outside the local machine.
    - **Forbidden commands include**: `git push`, `git push --force`, `git push origin`, `git push --all`, etc.
    - **Reason**: All code must remain local until explicitly reviewed and pushed by the human developer.
-   - **If you need to share your work**: Only commit locally. The human developer will handle all remote operations.
 
 **Summary of Git Workflow:**
 ```
-1. git status (check current branch)
+1. git status (check current branch and working directory state)
 2. [Verify .gitignore is complete]
 3. [Do your work]
-4. git add <files>
-5. git diff --cached (review changes)
-6. git commit -m "descriptive message"
-7. [Update report file]
+4. [Update report file - MANDATORY]
+5. [Optional: Human developer will handle commits]
 ```
 
 ### **Core Protocol 2: Mandatory Reporting (Write After Acting)**
