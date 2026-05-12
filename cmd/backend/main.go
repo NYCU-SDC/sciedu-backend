@@ -4,9 +4,10 @@ import (
 	"log"
 	"net/http"
 
-	// databaseutil "github.com/NYCU-SDC/summer/pkg/database"
+	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	"go.uber.org/zap"
+	"sciedu-backend/internal/config"
 )
 
 func main() {
@@ -16,6 +17,14 @@ func main() {
 	}
 
 	logger.Info("Hello, World!")
+
+	cfg, configLogger := config.Load()
+	configLogger.FlushToZap(logger)
+
+	err = databaseutil.MigrationUp(cfg.MigrationSource, cfg.DatabaseURL, logger)
+	if err != nil {
+		logger.Fatal("Failed to run database migration", zap.Error(err))
+	}
 
 	mux := http.NewServeMux()
 
