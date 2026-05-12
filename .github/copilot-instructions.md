@@ -207,6 +207,33 @@ Reference: [How We Use Version Control for Collaboration (Chinese)](https://clus
 
 ## **Database & SQL Guidelines**
 
+### **Local Development Environment**
+
+- **Docker Compose Setup**: Use the `.deploy/local/compose.yaml` file to start a local PostgreSQL instance.
+    
+- **Starting PostgreSQL**:
+    
+    ```bash
+    # Clean up previous test data to avoid pollution
+    docker compose -f .deploy/local/compose.yaml down -v
+    
+    # Start PostgreSQL
+    docker compose -f .deploy/local/compose.yaml up -d
+    ```
+    
+- **Connection Details** (as defined in `compose.yaml`):
+    
+    - Host: `localhost`
+    - Port: `5432`
+    - Database: `sciedu`
+    - User: `postgres`
+    - Password: `password`
+    
+- **Best Practice**: Always run `docker compose down -v` before starting a new development session to ensure a clean database state and prevent test data pollution.
+    
+
+### **Schema & Migration Guidelines**
+
 - **Schema**: Use `UUID` (`gen_random_uuid()`) for PKs and `TIMESTAMPTZ` for timestamps.
     
 - **Workflow**: 1. Migration -> 2. `queries.sql` -> 3. `sqlc generate`.
