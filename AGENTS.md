@@ -63,6 +63,11 @@ You must enforce a strict separation of concerns. **Dependency Direction**: Hand
 
 ## **Coding Standards & Conventions**
 
+### **Documentation Sources**
+
+- Before answering questions or making changes related to API behavior, ERD, or LLM interaction flows, check the corresponding documents under `docs/` first.
+- Use `docs/API.md` for API definitions, `docs/LLM_API.md` for LLM API notes, `docs/LLM_ERD.md` for ERD notes, and `docs/LLM_INTERACTION_PROTOCOL.md` for interaction protocol details.
+
 ### **API Design & Specification (TypeSpec)**
 
 - **Source of Truth**: Always refer to `.tsp` files in the `service/` directory for models and operation signatures.

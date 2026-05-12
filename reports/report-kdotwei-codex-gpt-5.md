@@ -48,3 +48,48 @@
 ### Next Steps
 - Ask the PR author to rebase/merge `origin/main` and restore any unintentionally deleted docs before merge.
 - Remove trailing whitespace from `AGENTS.md` lines added in the commit message example.
+
+## [2026-05-13 07:45] Task Record
+
+### Task Description
+- Create a new branch, add a `docs` directory, and move the contents of `erd` into it.
+
+### Actions Taken
+- Verified the working tree was clean and confirmed the `erd` directory contents.
+- Created branch `chore/move-erd-docs` from `main`.
+- Created the `docs` directory.
+- Moved `erd/user_question.md` to `docs/user_question.md`.
+- Removed the now-empty `erd` directory.
+- Validated the result with `ls -la docs`, `git diff --summary`, and `git status --short --branch`.
+
+### Attempted Methods
+- Used direct filesystem move commands because this task only required relocating an existing markdown file and creating a directory; no code or content edits were needed.
+
+### Issues & Blockers
+- Git currently shows the change as a delete plus a new untracked directory until the moved file is staged. This is expected before `git add`.
+
+### Next Steps
+- Stage the move with `git add docs erd` when ready so Git can record it as a rename/move in the next commit.
+
+## [2026-05-13 07:47] Task Record
+
+### Task Description
+- Move `API.md`, `LLM_API.md`, `LLM_ERD.md`, and `LLM_INTERACTION_PROTOCOL.md` into `docs/`, then update agent instructions so future agents consult `docs/` for those references.
+
+### Actions Taken
+- Checked the current branch state and confirmed the requested markdown files existed at the repository root.
+- Verified there were no existing references to those filenames elsewhere in the repository that also needed path updates.
+- Updated `AGENTS.md` to instruct agents to consult `docs/` for API, ERD, and LLM interaction documentation.
+- Updated `.github/copilot-instructions.md` with the same `docs/` guidance so Copilot-specific instructions stay aligned.
+- Moved `API.md`, `LLM_API.md`, `LLM_ERD.md`, and `LLM_INTERACTION_PROTOCOL.md` into `docs/`.
+- Validated the result with `ls -la docs`, targeted reads of both instruction files, and `git diff --summary` / `git status --short --branch`.
+
+### Attempted Methods
+- Searched the repository for hard-coded references to the moved filenames before editing; no path updates were needed outside the agent instruction files.
+- Used direct file moves because the task was a pure documentation reorganization without content changes.
+
+### Issues & Blockers
+- `git diff --summary` only shows the root-file deletions until the new `docs/` files are staged, because untracked additions are not part of the diff yet. This is expected.
+
+### Next Steps
+- Stage the documentation move with `git add docs API.md LLM_API.md LLM_ERD.md LLM_INTERACTION_PROTOCOL.md` or simply `git add -A` when ready.
