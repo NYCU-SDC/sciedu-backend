@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"sciedu-backend/internal/chat"
+
+	"sciedu-backend/internal/config"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
-	"sciedu-backend/internal/config"
 )
 
 func main() {
@@ -26,6 +30,21 @@ func main() {
 		logger.Fatal("Failed to run database migration", zap.Error(err))
 	}
 
+	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
+	if err != nil {
+		logger.Fatal("Failed to initialize database pool", zap.Error(err))
+	}
+	defer pool.Close()
+
+	if err = pool.Ping(context.Background()); err != nil {
+		logger.Fatal("Failed to connect to database", zap.Error(err))
+	}
+
+	chatQueriers := chat.New(pool)
+	chatProvider := chat.NewProvider(cfg.LLMURL+"/chat", &http.Client{}, nil)
+	chatStreamHub := chat.NewStreamHub()
+	chatService := chat.NewService(chatProvider, chatQueriers, chatStreamHub, logger)
+	chatHandler := chat.NewHandler(chatService, logger)
 	mux := http.NewServeMux()
 
 	// Health check route
@@ -36,6 +55,11 @@ func main() {
 			logger.Error("Failed to write response", zap.Error(err))
 		}
 	})
+
+	mux.HandleFunc("POST /api/chat", chatHandler.CreateChat)
+	mux.HandleFunc("GET /api/chat/stream/{messageID}", chatHandler.Stream)
+	mux.HandleFunc("GET /api/chat/{chatID}", chatHandler.GetChat)
+	mux.HandleFunc("POST /api/chat/{chatID}", chatHandler.CreateMessage)
 
 	logger.Info("Start listening on port: 8080")
 
@@ -48,7 +72,7 @@ func main() {
 func initLogger() (*zap.Logger, error) {
 	var logger *zap.Logger
 
-	logger, err := logutil.ZapDevelopmentConfig().Build()
+	logger, err := logutil.ZapProductionConfig().Build()
 	if err != nil {
 		return nil, err
 	}
