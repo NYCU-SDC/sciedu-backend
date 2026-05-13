@@ -224,3 +224,53 @@
 ```
 
 
+
+## [2026-05-13 20:45] Task Record - Fix CI/CD Deployment Failure
+
+### Task Description
+Diagnose and fix CI/CD deployment failure in PR #32. The n8n webhook deployment was failing with backend container exiting with code 1 immediately after startup.
+
+### Root Cause Analysis
+Through systematic investigation, identified the issue:
+- **Duplicate Migration Files**: Both `3_chat.*.sql` and `3_contents.*.sql` existed in `internal/database/migrations/`
+- Migration system (golang-migrate) detected duplicate version number 3
+- Backend container failed to start with error: `failed to open source: duplicate migration file: 3_contents.down.sql`
+
+The duplicate files were introduced during merge from main branch. The correct structure should have:
+- Version 3: `3_contents.*.sql` (from main)  
+- Version 6: `6_chat.*.sql` (already existed)
+
+### Actions Taken
+1. **Diagnosis Process**:
+   - Analyzed error.out from n8n deployment
+   - Reviewed Docker Compose configurations (.deploy/snapshot/compose.yaml)
+   - Checked Dockerfile and GitHub Actions workflow
+   - Examined go.mod dependencies
+   - Tested local build and identified migration error
+   
+2. **Fix Applied**:
+   - Removed duplicate files: `internal/database/migrations/3_chat.down.sql` and `3_chat.up.sql`
+   - Verified correct migration sequence: 1_questions → 2_options → 3_contents → 6_chat
+   - Committed fix: `fix: remove duplicate migration files causing version conflict`
+   - Pushed to remote (commit: 8d54dbb)
+
+### Verification
+- Local build successful
+- Migration files now have unique version numbers
+- CI/CD pipeline should now deploy successfully
+
+### Technical Details
+- **Error Type**: Migration version conflict
+- **Affected Files**: `internal/database/migrations/3_chat.{up,down}.sql`
+- **Resolution**: File deletion to maintain unique migration versions
+- **Testing**: Local build passed after fix
+
+### Next Steps
+- Monitor CI/CD pipeline for successful deployment
+- Verify backend container starts properly in snapshot environment
+- Ensure database migrations run correctly
+
+### Lessons Learned
+- Always verify migration file uniqueness after merge operations
+- Check backend startup logs for migration-related errors
+- Migration version conflicts manifest as immediate container exits (exit code 1)

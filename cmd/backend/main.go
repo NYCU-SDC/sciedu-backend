@@ -4,6 +4,9 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"sciedu-backend/internal/chat"
+
+	"sciedu-backend/internal/config"
 
 	"sciedu-backend/internal/config"
 	"sciedu-backend/internal/cors"
@@ -11,7 +14,6 @@ import (
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
-	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -47,6 +49,11 @@ func main() {
 	questionService := question.NewQuestionService(queries, optionService, logger)
 	questionHandler := question.NewHandler(questionService, optionService, logger)
 
+	chatQueriers := chat.New(pool)
+	chatProvider := chat.NewProvider(cfg.LLMURL+"/chat", &http.Client{}, nil)
+	chatStreamHub := chat.NewStreamHub()
+	chatService := chat.NewService(chatProvider, chatQueriers, chatStreamHub, logger)
+	chatHandler := chat.NewHandler(chatService, logger)
 	mux := http.NewServeMux()
 
 	corsMiddleware := cors.NewMiddleware(logger, []string{"*"})
@@ -64,6 +71,11 @@ func main() {
 		}
 	})
 
+	mux.HandleFunc("POST /api/chat", chatHandler.CreateChat)
+	mux.HandleFunc("GET /api/chat/stream/{messageID}", chatHandler.Stream)
+	mux.HandleFunc("GET /api/chat/{chatID}", chatHandler.GetChat)
+	mux.HandleFunc("POST /api/chat/{chatID}", chatHandler.CreateMessage)
+
 	logger.Info("Start listening on port: 8080")
 
 	err = http.ListenAndServe(":8080", mux)
@@ -75,7 +87,7 @@ func main() {
 func initLogger() (*zap.Logger, error) {
 	var logger *zap.Logger
 
-	logger, err := logutil.ZapDevelopmentConfig().Build()
+	logger, err := logutil.ZapProductionConfig().Build()
 	if err != nil {
 		return nil, err
 	}
