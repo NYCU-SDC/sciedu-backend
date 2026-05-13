@@ -112,4 +112,115 @@
 - The `feat/EDU-Migration-Files` branch is clean and back in sync with remote
 - Ready for human developer to review and commit the changes on `chore/ai-agents-config` branch
 
+## [2026-05-13] Task: Create Local Docker Compose for Development Testing
+
+### Task Description
+- Reference the snapshot compose configuration and create a local compose file for developers to test deployment
+- Include complete service stack: backend application, database, migrations
+- Ensure build and deployment process matches production workflow
+- Create a new branch for this work
+
+### Actions Taken
+- **Git Operations**:
+  - Created new branch: `chore/local-compose`
+  - Branch created from `main` branch
+
+- **New Files Created**:
+  - `.deploy/local/Dockerfile`: Multi-stage Docker build for backend service
+  - `.deploy/local/.dockerignore`: Optimized build context (reduced from 6MB to 66KB)
+  - `.deploy/local/README.md`: Comprehensive documentation with architecture diagram
+  - `.deploy/local/quick-start.sh`: Convenient startup script for developers
+
+- **Modified Files**:
+  - `.deploy/local/compose.yaml`: Enhanced with complete backend service configuration
+
+- **Docker Compose Configuration**:
+  - **Backend Service**:
+    - Multi-stage build from source code
+    - Automatic dependency download via `go mod download`
+    - Compiled binary with `CGO_ENABLED=0 GOOS=linux`
+    - Environment: `ENV=local`, `DEBUG=true`
+    - Exposes port 8080
+    - Depends on PostgreSQL health check
+    - Automatic migration on startup
+  
+  - **PostgreSQL Service**:
+    - PostgreSQL 18.1
+    - Volume mount: `/var/lib/postgresql` (fixed for PG 18.1 requirement)
+    - Health checks enabled
+    - Exposes port 5432
+    - Persistent data volume
+
+- **Build Optimizations**:
+  - `.dockerignore` excludes unnecessary files (git, reports, docs, build outputs)
+  - Docker layer caching for dependencies
+  - Build context reduced from 6.13MB to 66.35KB (99% reduction)
+
+- **Testing Performed**:
+  - ✅ Clean deployment: `docker compose down -v && docker compose up -d --build`
+  - ✅ Backend container builds successfully (10 seconds)
+  - ✅ PostgreSQL container starts and becomes healthy
+  - ✅ Backend waits for PostgreSQL health check before starting
+  - ✅ Migrations execute automatically (4 migrations: questions, options, contents, chat)
+  - ✅ Database tables created: `chats`, `contents`, `messages`, `options`, `questions`, `schema_migrations`
+  - ✅ API health check responds with HTTP 200: `http://localhost:8080/api/healthz`
+  - ✅ Rebuild workflow tested: `docker compose up -d --build backend` (7 seconds with cache)
+  - ✅ Service restart verified: API remains accessible after rebuild
+
+### Attempted Methods
+- **Initial Attempt (Database Only)**: 
+  - Created compose with only PostgreSQL service
+  - **Issue**: PostgreSQL 18.1 volume mount path error (`/var/lib/postgresql/data` → `/var/lib/postgresql`)
+  - **Fix**: Updated volume mount path to `/var/lib/postgresql`
+
+- **Backend Integration**:
+  - **Approach 1 (Considered)**: Use pre-built binary like snapshot compose
+    - **Rejected**: Requires manual `go build` before `docker compose up`
+    - **Problem**: Not convenient for developers, breaks "one command" deployment
+  
+  - **Approach 2 (Implemented)**: Multi-stage Docker build
+    - **Stage 1 (Builder)**: Build Go application from source
+    - **Stage 2 (Final)**: Copy binary and migrations to minimal image
+    - **Advantage**: Single command deployment, matches development workflow
+    - **Result**: Successfully builds and runs, migrations execute automatically
+
+- **Build Optimization**:
+  - Created `.dockerignore` to exclude unnecessary files
+  - **Impact**: Build context size reduced by 99% (6.13MB → 66.35KB)
+  - **Benefit**: Faster builds, cleaner Docker context
+
+### Issues & Blockers
+- None. All issues were resolved during implementation:
+  - ✅ PostgreSQL 18.1 volume mount requirement addressed
+  - ✅ Multi-stage build working correctly
+  - ✅ Migration execution verified
+  - ✅ Build optimization successful
+  - ✅ Health checks and dependencies configured properly
+
+### Next Steps
+- ✅ Complete local deployment environment ready for use
+- ✅ Documentation comprehensive and includes:
+  - Quick start guide
+  - Architecture diagram
+  - Development workflow
+  - Troubleshooting section
+  - Useful commands reference
+- ✅ `quick-start.sh` script provides convenient one-command deployment
+- ✅ Configuration verified to work end-to-end
+- Branch `chore/local-compose` ready for review and merge
+- Developers can now test complete deployment locally before pushing to snapshot/production
+
+### Migration Log (Verified)
+```
+2026-05-13T00:17:13.626Z INFO Migration event {"migration": "Start buffering 1/u questions"}
+2026-05-13T00:17:13.626Z INFO Migration event {"migration": "Start buffering 2/u options"}
+2026-05-13T00:17:13.626Z INFO Migration event {"migration": "Start buffering 3/u contents"}
+2026-05-13T00:17:13.626Z INFO Migration event {"migration": "Start buffering 6/u chat"}
+2026-05-13T00:17:13.641Z INFO Migration event {"migration": "Finished 1/u questions (read 3.12445ms, ran 12.142965ms)"}
+2026-05-13T00:17:13.652Z INFO Migration event {"migration": "Finished 2/u options (read 18.986612ms, ran 6.386024ms)"}
+2026-05-13T00:17:13.660Z INFO Migration event {"migration": "Finished 3/u contents (read 27.69592ms, ran 6.418649ms)"}
+2026-05-13T00:17:13.669Z INFO Migration event {"migration": "Finished 6/u chat (read 36.507479ms, ran 5.955608ms)"}
+2026-05-13T00:17:13.669Z INFO Database migration completed successfully
+```
+
 

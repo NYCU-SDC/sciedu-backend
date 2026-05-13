@@ -1,0 +1,40 @@
+# Git
+.git
+.gitignore
+.github
+
+# Development
+.env
+.env.local
+.vscode
+.idea
+
+# Build outputs
+bin/
+*.exe
+*.test
+
+# Reports and documentation
+reports/
+docs/
+*.md
+!README.md
+
+# Docker
+.deploy/
+Dockerfile
+.dockerignore
+
+# Test files
+*_test.go
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
