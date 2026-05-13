@@ -62,7 +62,7 @@ func (s *ChatService) CreateChat(ctx context.Context) (uuid.UUID, error) {
 
 func (s *ChatService) fetchMessages(ctx context.Context, chatID uuid.UUID) ([]MessageReturn, error) {
 	messages, err := s.querier.GetMessages(ctx, pgtype.UUID{
-		Bytes: chatID,
+		Bytes: [16]byte(chatID),
 		Valid: true,
 	})
 	if err != nil {
@@ -78,7 +78,7 @@ func (s *ChatService) fetchMessages(ctx context.Context, chatID uuid.UUID) ([]Me
 			CreatedAt: msg.CreatedAt.Time,
 		}
 		if msg.PreviousID.Valid {
-			ret.PreviousID = msg.PreviousID.Bytes
+			ret.PreviousID = uuid.UUID(msg.PreviousID.Bytes)
 		}
 		if msg.Content.String == "" {
 			if stream, ok := s.streamHub.GetStream(msg.ID); ok {
@@ -92,7 +92,7 @@ func (s *ChatService) fetchMessages(ctx context.Context, chatID uuid.UUID) ([]Me
 
 func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageReturn, error) {
 	chat, err := s.querier.GetChat(ctx, pgtype.UUID{
-		Bytes: chatID,
+		Bytes: [16]byte(chatID),
 		Valid: true,
 	})
 	if err != nil {
@@ -111,7 +111,7 @@ func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageR
 func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error) {
 
 	chat, err := s.querier.GetChat(ctx, pgtype.UUID{
-		Bytes: chatID,
+		Bytes: [16]byte(chatID),
 		Valid: true,
 	})
 	if err != nil {
@@ -124,7 +124,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 	// Create message in DB
 	userMessage, err := s.querier.CreateMessage(ctx, CreateMessageParams{
 		ChatID: pgtype.UUID{
-			Bytes: chatID,
+			Bytes: [16]byte(chatID),
 			Valid: true,
 		},
 		Content: pgtype.Text{
@@ -134,7 +134,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 		Role:   string(MessageRoleUser),
 		Status: string(MessageStatusDone),
 		PreviousID: pgtype.UUID{
-			Bytes: previousID,
+			Bytes: [16]byte(previousID),
 			Valid: previousID != uuid.Nil,
 		},
 	})
@@ -151,7 +151,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 	// create response message in DB
 	llmMessage, err := s.querier.CreateMessage(ctx, CreateMessageParams{
 		ChatID: pgtype.UUID{
-			Bytes: chatID,
+			Bytes: [16]byte(chatID),
 			Valid: true,
 		},
 		Content: pgtype.Text{
@@ -161,7 +161,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 		Role:   string(MessageRoleAssistant),
 		Status: string(MessageStatusStreaming),
 		PreviousID: pgtype.UUID{
-			Bytes: userMessage.ID,
+			Bytes: [16]byte(userMessage.ID),
 			Valid: true,
 		},
 	})
@@ -242,7 +242,7 @@ func (s *ChatService) streamProcessor(ctx context.Context, messageID uuid.UUID, 
 	defer cancel()
 	_, err = s.querier.UpdateMessage(updateCtx, UpdateMessageParams{
 		ID: pgtype.UUID{
-			Bytes: messageID,
+			Bytes: [16]byte(messageID),
 			Valid: true,
 		},
 		Content: pgtype.Text{
@@ -262,7 +262,7 @@ func (s *ChatService) ValidatePreviousID(ctx context.Context, previousID uuid.UU
 		return nil
 	}
 	msg, err := s.querier.GetMessage(ctx, pgtype.UUID{
-		Bytes: previousID,
+		Bytes: [16]byte(previousID),
 		Valid: true,
 	})
 	if err != nil {

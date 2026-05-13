@@ -3,7 +3,7 @@ BLUE = \033[0;34m
 RED = \033[0;31m
 NC = \033[0m
 
-.PHONY: all prepare run build test gen
+.PHONY: all prepare run build test gen lint
 
 prepare:
 	@echo -e ":: $(GREEN) Preparing environment...$(NC)"
@@ -25,6 +25,12 @@ gen:
 	@echo -e "  -> Running go generate..."
 	@go generate ./... || (echo -e "  -> $(RED)Go generate failed!$(RED)" && exit 1)
 	@echo -e "==> $(BLUE)Generation completed$(NC)"
+
+lint:
+	@echo -e ":: $(GREEN)Running linter...$(NC)"
+	@which golangci-lint > /dev/null || (echo -e "  -> $(RED)golangci-lint not found. Install it with: brew install golangci-lint$(NC)" && exit 1)
+	@echo -e "  -> Checking code with golangci-lint..."
+	@golangci-lint run ./... && echo -e "==> $(BLUE)Lint passed!$(NC)" || (echo -e "==> $(RED)Lint failed!$(NC)" && exit 1)
 
 build: gen
 	@echo -e ":: $(GREEN)Building backend...$(NC)"
