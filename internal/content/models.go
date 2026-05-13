@@ -9,10 +9,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Chat struct {
+	ID        uuid.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
 type Content struct {
 	ID      uuid.UUID
 	Type    interface{}
 	Content pgtype.Text
+}
+
+type Message struct {
+	ID         uuid.UUID
+	ChatID     uuid.UUID
+	PreviousID pgtype.UUID
+	Content    pgtype.Text
+	Role       string
+	Status     string
+	CreatedAt  pgtype.Timestamptz
 }
 
 type Option struct {

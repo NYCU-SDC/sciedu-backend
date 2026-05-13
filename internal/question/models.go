@@ -14,6 +14,12 @@ type Chat struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type Content struct {
+	ID      uuid.UUID
+	Type    interface{}
+	Content pgtype.Text
+}
+
 type Message struct {
 	ID         uuid.UUID
 	ChatID     uuid.UUID
@@ -22,20 +28,6 @@ type Message struct {
 	Role       string
 	Status     string
 	CreatedAt  pgtype.Timestamptz
-}
-
-type Answer struct {
-	ID               uuid.UUID
-	QuestionID       uuid.UUID
-	SelectedOptionID *uuid.UUID
-	TextAnswer       string
-	CreatedAt        pgtype.Timestamptz
-}
-
-type Content struct {
-	ID      uuid.UUID
-	Type    interface{}
-	Content pgtype.Text
 }
 
 type Option struct {

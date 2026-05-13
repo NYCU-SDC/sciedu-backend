@@ -14,6 +14,12 @@ type Chat struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type Content struct {
+	ID      uuid.UUID
+	Type    interface{}
+	Content pgtype.Text
+}
+
 type Message struct {
 	ID         uuid.UUID
 	ChatID     uuid.UUID

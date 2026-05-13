@@ -95,3 +95,100 @@
 
 ### Next Steps
 - Free host port `5432` by stopping the existing PostgreSQL/container, or change `.deploy/local/compose.yaml` to publish PostgreSQL on another host port before rerunning `./quick-start.sh`.
+
+## [2026-05-13 14:56] Task Record
+
+### Task Description
+- Rebase local `feat/SCIEDU-62-Complete-Content-Series-API` onto local `feat/SCIEDU-51-Implement-Question-CRUD` without syncing from `main`.
+
+### Actions Taken
+- Confirmed the working tree was clean and current branch was `feat/SCIEDU-62-Complete-Content-Series-API`.
+- Confirmed local `feat/SCIEDU-51-Implement-Question-CRUD` exists.
+- Ran `git rebase feat/SCIEDU-51-Implement-Question-CRUD`.
+- Re-ran the rebase with elevated Git permissions after sandboxed Git could not create `.git/rebase-merge`.
+- Resolved conflicts in `cmd/backend/main.go`, `.gitignore`, `Makefile`, `internal/question/handler.go`, `internal/question/handler_test.go`, `internal/question/models.go`, `internal/question/question_service.go`, and `internal/chat/{db,models}.go`.
+- Preserved SCIEDU-51's transactional question store wiring while adding SCIEDU-62 content routes and service wiring.
+- Continued the rebase using `git -c core.editor=true rebase --continue` to avoid editor prompts in this terminal.
+- Ran `make gen` after rebase verification found missing content sqlc generated types.
+- Ran `go test ./...`; it passed.
+- Ran `golangci-lint run ./...`; it passed with `0 issues`.
+
+### Attempted Methods
+- Initial `git rebase` failed under the sandbox with `could not create temporary .git/rebase-merge: Operation not permitted`; rerunning with approved Git permissions fixed it.
+- During conflict resolution, obsolete commits from the old `internal/questions` layout were resolved by keeping the current `internal/question` and `internal/chat` packages.
+- Initial post-rebase `go test ./...` failed because `internal/content` was missing generated sqlc types such as `ListTextContentsParams`; `make gen` regenerated the sqlc model files and fixed the build.
+
+### Issues & Blockers
+- No unresolved blocker. Rebase completed and tests/lint pass.
+- Working tree is not clean after `make gen`; generated tracked files are modified: `internal/chat/models.go`, `internal/content/models.go`, and `internal/question/models.go`.
+
+### Next Steps
+- Review the generated model diffs and include them with the rebased branch changes if they are expected.
+
+## [2026-05-13 15:01] Task Record
+
+### Task Description
+- Run `.deploy/local/quick-start.sh` and diagnose why `/api/healthz` could not be tested.
+
+### Actions Taken
+- Ran `.deploy/local/quick-start.sh` from `.deploy/local`.
+- The first run built and started PostgreSQL but the backend exited before health check.
+- Inspected compose status with `docker compose ps -a`.
+- Inspected backend logs with `docker logs --tail 120 sciedu-backend-local`.
+- Identified backend fatal startup error: duplicate migration version `6` from `6_chat.*` and `6_contents_data_rename.*`.
+- Renamed content migration files to avoid duplicate versions:
+  - `6_contents_data_rename.*` -> `7_contents_data_rename.*`
+  - `7_contents_content_rename.*` -> `8_contents_content_rename.*`
+- Ran `make gen`.
+- Re-ran `.deploy/local/quick-start.sh`; it completed successfully and reported `API is healthy`.
+- Confirmed both backend and PostgreSQL are running with `docker compose ps`.
+- Ran `go test ./...`; it passed.
+- Ran `golangci-lint run ./...`; it passed with `0 issues`.
+
+### Attempted Methods
+- Direct health check failed initially because the backend container was not running, not because the route was missing.
+- Resolved the startup failure by fixing migration version numbering rather than changing the health route.
+
+### Issues & Blockers
+- No unresolved blocker. Local services are running and `/api/healthz` passes.
+- Working tree contains generated model changes and migration renames that should be reviewed/staged intentionally.
+
+### Next Steps
+- Stage the migration renames and generated model changes if they are expected for SCIEDU-62.
+
+## [2026-05-13 15:06] Task Record
+
+### Task Description
+- Sync SCIEDU-51 and SCIEDU-62 to use the correct migration files from main and verify both branches run correctly.
+
+### Actions Taken
+- Compared migration files on local `main`, `origin/main`, `feat/SCIEDU-51-Implement-Question-CRUD`, and `feat/SCIEDU-62-Complete-Content-Series-API`.
+- Determined `origin/main` is the correct migration baseline because local `main` is stale and has no `internal/database/migrations` tree.
+- Synced current `feat/SCIEDU-62-Complete-Content-Series-API` migration files to match `origin/main`.
+- Removed SCIEDU-62-only duplicate/obsolete migration files:
+  - `internal/database/migrations/5_contents.down.sql`
+  - `internal/database/migrations/5_contents.up.sql`
+  - `internal/database/migrations/6_contents_data_rename.down.sql`
+  - `internal/database/migrations/6_contents_data_rename.up.sql`
+  - `internal/database/migrations/7_contents_content_rename.down.sql`
+  - `internal/database/migrations/7_contents_content_rename.up.sql`
+- Ran `make gen` on SCIEDU-62 after syncing migrations.
+- Ran `go test ./...` and `golangci-lint run ./...` on SCIEDU-62; both passed.
+- Ran `.deploy/local/quick-start.sh` on SCIEDU-62; backend and PostgreSQL started and `/api/healthz` passed.
+- Created a temporary worktree at `/tmp/sciedu-51-verify` for `feat/SCIEDU-51-Implement-Question-CRUD`.
+- Confirmed SCIEDU-51 migration files already match `origin/main`.
+- Ran `make gen`, `go test ./...`, and `golangci-lint run ./...` in the SCIEDU-51 worktree; all passed and the worktree stayed clean.
+- Ran `.deploy/local/quick-start.sh` in the SCIEDU-51 worktree; backend and PostgreSQL started and `/api/healthz` passed.
+- Removed the temporary SCIEDU-51 worktree.
+- Re-ran `.deploy/local/quick-start.sh` from the current SCIEDU-62 working tree so the currently running local stack corresponds to SCIEDU-62.
+
+### Attempted Methods
+- Initially considered the local `main` branch, but it is stale. Used `origin/main` as the authoritative main migration set.
+- Used a temporary worktree for SCIEDU-51 to avoid disturbing the current SCIEDU-62 working tree.
+
+### Issues & Blockers
+- No unresolved blocker. Both SCIEDU-51 and SCIEDU-62 pass tests/lint and can start through quick-start.
+- SCIEDU-62 has unstaged local changes from syncing migrations and regenerated models.
+
+### Next Steps
+- Review and stage the SCIEDU-62 migration deletions plus generated model updates when ready.
