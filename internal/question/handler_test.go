@@ -26,8 +26,10 @@ type fakeQuerier struct {
 	updateOptionFn          func(ctx context.Context, arg UpdateOptionParams) (Option, error)
 	deleteOptionFn          func(ctx context.Context, id uuid.UUID) error
 
-	createOptionCalls []CreateOptionParams
-	deleteOptionCalls []uuid.UUID
+	createQuestionCalls []CreateQuestionParams
+	updateQuestionCalls []UpdateQuestionParams
+	createOptionCalls   []CreateOptionParams
+	deleteOptionCalls   []uuid.UUID
 }
 
 func (f *fakeQuerier) ListQuestion(ctx context.Context) ([]Question, error) {
@@ -45,6 +47,7 @@ func (f *fakeQuerier) GetQuestion(ctx context.Context, id uuid.UUID) (Question, 
 }
 
 func (f *fakeQuerier) CreateQuestion(ctx context.Context, arg CreateQuestionParams) (Question, error) {
+	f.createQuestionCalls = append(f.createQuestionCalls, arg)
 	if f.createQuestionFn != nil {
 		return f.createQuestionFn(ctx, arg)
 	}
@@ -52,6 +55,7 @@ func (f *fakeQuerier) CreateQuestion(ctx context.Context, arg CreateQuestionPara
 }
 
 func (f *fakeQuerier) UpdateQuestion(ctx context.Context, arg UpdateQuestionParams) (Question, error) {
+	f.updateQuestionCalls = append(f.updateQuestionCalls, arg)
 	if f.updateQuestionFn != nil {
 		return f.updateQuestionFn(ctx, arg)
 	}
@@ -100,6 +104,10 @@ func (f *fakeQuerier) DeleteOption(ctx context.Context, id uuid.UUID) error {
 		return f.deleteOptionFn(ctx, id)
 	}
 	return nil
+}
+
+func (f *fakeQuerier) WithinTx(_ context.Context, fn func(QuestionQuerier, OptionQuerier) error) error {
+	return fn(f, f)
 }
 
 func newTestMux(q *fakeQuerier) *http.ServeMux {
@@ -273,18 +281,20 @@ func TestHandlerCreate_TableDriven(t *testing.T) {
 	choiceOptID := uuid.New()
 
 	tests := []struct {
-		name            string
-		body            string
-		querier         *fakeQuerier
-		wantStatus      int
-		wantCreateCalls int
+		name              string
+		body              string
+		querier           *fakeQuerier
+		wantStatus        int
+		wantQuestionCalls int
+		wantCreateCalls   int
 	}{
 		{
-			name:            "invalid payload",
-			body:            `{}`,
-			querier:         &fakeQuerier{},
-			wantStatus:      http.StatusBadRequest,
-			wantCreateCalls: 0,
+			name:              "invalid payload",
+			body:              `{}`,
+			querier:           &fakeQuerier{},
+			wantStatus:        http.StatusBadRequest,
+			wantQuestionCalls: 0,
+			wantCreateCalls:   0,
 		},
 		{
 			name: "create text question",
@@ -292,8 +302,9 @@ func TestHandlerCreate_TableDriven(t *testing.T) {
 			querier: &fakeQuerier{createQuestionFn: func(context.Context, CreateQuestionParams) (Question, error) {
 				return Question{ID: questionID, Type: "TEXT", Content: "text answer"}, nil
 			}},
-			wantStatus:      http.StatusCreated,
-			wantCreateCalls: 0,
+			wantStatus:        http.StatusCreated,
+			wantQuestionCalls: 1,
+			wantCreateCalls:   0,
 		},
 		{
 			name: "create choice question with options",
@@ -309,8 +320,9 @@ func TestHandlerCreate_TableDriven(t *testing.T) {
 					return []Option{{ID: choiceOptID, QuestionID: choiceID, Label: "A", Content: "aaa"}}, nil
 				},
 			},
-			wantStatus:      http.StatusCreated,
-			wantCreateCalls: 2,
+			wantStatus:        http.StatusCreated,
+			wantQuestionCalls: 1,
+			wantCreateCalls:   2,
 		},
 		{
 			name: "choice options empty triggers validation problem",
@@ -318,8 +330,19 @@ func TestHandlerCreate_TableDriven(t *testing.T) {
 			querier: &fakeQuerier{createQuestionFn: func(context.Context, CreateQuestionParams) (Question, error) {
 				return Question{ID: questionID, Type: "CHOICE", Content: "pick"}, nil
 			}},
-			wantStatus:      http.StatusBadRequest,
-			wantCreateCalls: 0,
+			wantStatus:        http.StatusBadRequest,
+			wantQuestionCalls: 0,
+			wantCreateCalls:   0,
+		},
+		{
+			name: "choice duplicate labels rejected before writes",
+			body: `{"type":"CHOICE","content":"pick","options":[{"label":"A","content":"aaa"},{"label":"A","content":"bbb"}]}`,
+			querier: &fakeQuerier{createQuestionFn: func(context.Context, CreateQuestionParams) (Question, error) {
+				return Question{ID: questionID, Type: "CHOICE", Content: "pick"}, nil
+			}},
+			wantStatus:        http.StatusBadRequest,
+			wantQuestionCalls: 0,
+			wantCreateCalls:   0,
 		},
 	}
 
@@ -333,6 +356,9 @@ func TestHandlerCreate_TableDriven(t *testing.T) {
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status mismatch: want %d got %d, body=%s", tt.wantStatus, rec.Code, rec.Body.String())
+			}
+			if got := len(tt.querier.createQuestionCalls); got != tt.wantQuestionCalls {
+				t.Fatalf("create question calls mismatch: want %d got %d", tt.wantQuestionCalls, got)
 			}
 			if got := len(tt.querier.createOptionCalls); got != tt.wantCreateCalls {
 				t.Fatalf("create option calls mismatch: want %d got %d", tt.wantCreateCalls, got)
@@ -352,6 +378,7 @@ func TestHandlerUpdate_TableDriven(t *testing.T) {
 		body            string
 		querier         *fakeQuerier
 		wantStatus      int
+		wantUpdateCalls int
 		wantDeleteCalls int
 		wantCreateCalls int
 	}{
@@ -361,6 +388,7 @@ func TestHandlerUpdate_TableDriven(t *testing.T) {
 			body:            `{"type":"TEXT","content":"updated"}`,
 			querier:         &fakeQuerier{},
 			wantStatus:      http.StatusBadRequest,
+			wantUpdateCalls: 0,
 			wantDeleteCalls: 0,
 			wantCreateCalls: 0,
 		},
@@ -372,6 +400,7 @@ func TestHandlerUpdate_TableDriven(t *testing.T) {
 				return Question{}, pgx.ErrNoRows
 			}},
 			wantStatus:      http.StatusNotFound,
+			wantUpdateCalls: 0,
 			wantDeleteCalls: 0,
 			wantCreateCalls: 0,
 		},
@@ -383,18 +412,19 @@ func TestHandlerUpdate_TableDriven(t *testing.T) {
 				getQuestionFn: func(context.Context, uuid.UUID) (Question, error) {
 					return Question{ID: qid, Type: "CHOICE", Content: "old"}, nil
 				},
-					updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
-						return Question{
-							ID:      arg.ID,
-							Type:    arg.Type,
-							Content: arg.Content,
-						}, nil
-					},
+				updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
+					return Question{
+						ID:      arg.ID,
+						Type:    arg.Type,
+						Content: arg.Content,
+					}, nil
+				},
 				listOptionsByQuestionFn: func(context.Context, uuid.UUID) ([]Option, error) {
 					return []Option{{ID: existingOpt1, QuestionID: qid}, {ID: existingOpt2, QuestionID: qid}}, nil
 				},
 			},
 			wantStatus:      http.StatusOK,
+			wantUpdateCalls: 1,
 			wantDeleteCalls: 2,
 			wantCreateCalls: 0,
 		},
@@ -406,18 +436,19 @@ func TestHandlerUpdate_TableDriven(t *testing.T) {
 				getQuestionFn: func(context.Context, uuid.UUID) (Question, error) {
 					return Question{ID: qid, Type: "CHOICE", Content: "old"}, nil
 				},
-					updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
-						return Question{
-							ID:      arg.ID,
-							Type:    arg.Type,
-							Content: arg.Content,
-						}, nil
-					},
+				updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
+					return Question{
+						ID:      arg.ID,
+						Type:    arg.Type,
+						Content: arg.Content,
+					}, nil
+				},
 				listOptionsByQuestionFn: func(context.Context, uuid.UUID) ([]Option, error) {
 					return []Option{{ID: existingOpt1, QuestionID: qid}}, nil
 				},
 			},
 			wantStatus:      http.StatusOK,
+			wantUpdateCalls: 1,
 			wantDeleteCalls: 1,
 			wantCreateCalls: 1,
 		},
@@ -429,18 +460,43 @@ func TestHandlerUpdate_TableDriven(t *testing.T) {
 				getQuestionFn: func(context.Context, uuid.UUID) (Question, error) {
 					return Question{ID: qid, Type: "CHOICE", Content: "old"}, nil
 				},
-					updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
-						return Question{
-							ID:      arg.ID,
-							Type:    arg.Type,
-							Content: arg.Content,
-						}, nil
-					},
+				updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
+					return Question{
+						ID:      arg.ID,
+						Type:    arg.Type,
+						Content: arg.Content,
+					}, nil
+				},
 				listOptionsByQuestionFn: func(context.Context, uuid.UUID) ([]Option, error) {
 					return nil, nil
 				},
 			},
 			wantStatus:      http.StatusBadRequest,
+			wantUpdateCalls: 0,
+			wantDeleteCalls: 0,
+			wantCreateCalls: 0,
+		},
+		{
+			name: "choice duplicate labels rejected before replacing options",
+			path: "/api/questions/" + qid.String(),
+			body: `{"type":"CHOICE","content":"updated","options":[{"label":"A","content":"new"},{"label":"A","content":"duplicate"}]}`,
+			querier: &fakeQuerier{
+				getQuestionFn: func(context.Context, uuid.UUID) (Question, error) {
+					return Question{ID: qid, Type: "CHOICE", Content: "old"}, nil
+				},
+				updateQuestionFn: func(_ context.Context, arg UpdateQuestionParams) (Question, error) {
+					return Question{
+						ID:      arg.ID,
+						Type:    arg.Type,
+						Content: arg.Content,
+					}, nil
+				},
+				listOptionsByQuestionFn: func(context.Context, uuid.UUID) ([]Option, error) {
+					return []Option{{ID: existingOpt1, QuestionID: qid}}, nil
+				},
+			},
+			wantStatus:      http.StatusBadRequest,
+			wantUpdateCalls: 0,
 			wantDeleteCalls: 0,
 			wantCreateCalls: 0,
 		},
@@ -456,6 +512,9 @@ func TestHandlerUpdate_TableDriven(t *testing.T) {
 
 			if rec.Code != tt.wantStatus {
 				t.Fatalf("status mismatch: want %d got %d, body=%s", tt.wantStatus, rec.Code, rec.Body.String())
+			}
+			if got := len(tt.querier.updateQuestionCalls); got != tt.wantUpdateCalls {
+				t.Fatalf("update question calls mismatch: want %d got %d", tt.wantUpdateCalls, got)
 			}
 			if got := len(tt.querier.deleteOptionCalls); got != tt.wantDeleteCalls {
 				t.Fatalf("delete option calls mismatch: want %d got %d", tt.wantDeleteCalls, got)

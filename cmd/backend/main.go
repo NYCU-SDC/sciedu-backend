@@ -44,9 +44,9 @@ func main() {
 		logger.Fatal("Failed to connect to database", zap.Error(err))
 	}
 
-	queries := question.New(pool)
-	optionService := question.NewOptionService(queries, logger)
-	questionService := question.NewQuestionService(queries, optionService, logger)
+	questionStore := question.NewStore(pool)
+	optionService := question.NewOptionService(questionStore, logger)
+	questionService := question.NewQuestionService(questionStore, optionService, logger)
 	questionHandler := question.NewHandler(questionService, optionService, logger)
 
 	chatQueriers := chat.New(pool)

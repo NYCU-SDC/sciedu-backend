@@ -2,6 +2,7 @@ package question
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
@@ -9,8 +10,15 @@ import (
 	"go.uber.org/zap"
 )
 
+var errQuestionTransactionUnsupported = errors.New("question transaction unsupported")
+
 type QuestionRequest struct {
 	Type    string
+	Content string
+}
+
+type QuestionOptionRequest struct {
+	Label   string
 	Content string
 }
 
@@ -22,10 +30,15 @@ type QuestionQuerier interface {
 	DeleteQuestion(ctx context.Context, id uuid.UUID) error
 }
 
+type QuestionTransactor interface {
+	WithinTx(ctx context.Context, fn func(QuestionQuerier, OptionQuerier) error) error
+}
+
 type QuestionService struct {
 	logger        *zap.Logger
 	querier       QuestionQuerier
 	optionService *OptionService
+	transactor    QuestionTransactor
 }
 
 func NewQuestionService(querier QuestionQuerier, optionService *OptionService, logger *zap.Logger) *QuestionService {
@@ -37,6 +50,7 @@ func NewQuestionService(querier QuestionQuerier, optionService *OptionService, l
 		logger:        logger,
 		querier:       querier,
 		optionService: optionService,
+		transactor:    transactorFromQuerier(querier),
 	}
 }
 
@@ -80,7 +94,65 @@ func (s *QuestionService) Delete(ctx context.Context, id uuid.UUID) error {
 	return databaseutil.WrapDBErrorWithKeyValue(s.querier.DeleteQuestion(ctx, id), "questions", "id", id.String(), s.logger, "delete question")
 }
 
-func (s *QuestionService) BuildQuestionResponse(ctx context.Context, q Question) (questionResponse, error) {
+func (s *QuestionService) CreateWithOptions(ctx context.Context, arg QuestionRequest, options []QuestionOptionRequest) (Question, error) {
+	if err := validateQuestionOptions(arg.Type, options); err != nil {
+		return Question{}, err
+	}
+
+	var question Question
+	err := s.withinTx(ctx, func(questionQuerier QuestionQuerier, optionQuerier OptionQuerier) error {
+		txQuestionService := NewQuestionService(questionQuerier, NewOptionService(optionQuerier, s.logger), s.logger)
+		created, err := txQuestionService.Create(ctx, arg)
+		if err != nil {
+			return err
+		}
+
+		if err := txQuestionService.SyncQuestionOptions(ctx, created.ID, arg.Type, options, false); err != nil {
+			return err
+		}
+
+		question = created
+		return nil
+	})
+	if err != nil {
+		return Question{}, err
+	}
+
+	return question, nil
+}
+
+func (s *QuestionService) UpdateWithOptions(ctx context.Context, id uuid.UUID, arg QuestionRequest, options []QuestionOptionRequest) (Question, error) {
+	if err := validateQuestionOptions(arg.Type, options); err != nil {
+		return Question{}, err
+	}
+
+	var question Question
+	err := s.withinTx(ctx, func(questionQuerier QuestionQuerier, optionQuerier OptionQuerier) error {
+		txQuestionService := NewQuestionService(questionQuerier, NewOptionService(optionQuerier, s.logger), s.logger)
+		if _, err := txQuestionService.Get(ctx, id); err != nil {
+			return err
+		}
+
+		updated, err := txQuestionService.Update(ctx, id, arg)
+		if err != nil {
+			return err
+		}
+
+		if err := txQuestionService.SyncQuestionOptions(ctx, id, arg.Type, options, true); err != nil {
+			return err
+		}
+
+		question = updated
+		return nil
+	})
+	if err != nil {
+		return Question{}, err
+	}
+
+	return question, nil
+}
+
+func (s *QuestionService) buildQuestionResponse(ctx context.Context, q Question) (questionResponse, error) {
 	resp := questionResponse{
 		ID:      q.ID,
 		Type:    q.Type,
@@ -108,7 +180,7 @@ func (s *QuestionService) BuildQuestionResponse(ctx context.Context, q Question)
 	return resp, nil
 }
 
-func (s *QuestionService) SyncQuestionOptions(ctx context.Context, questionID uuid.UUID, questionType string, options []createUpdateOptionRequest, replace bool) error {
+func (s *QuestionService) SyncQuestionOptions(ctx context.Context, questionID uuid.UUID, questionType string, options []QuestionOptionRequest, replace bool) error {
 	if replace || questionType == "TEXT" {
 		existing, err := s.optionService.ListByQuestion(ctx, questionID)
 		if err != nil {
@@ -125,10 +197,6 @@ func (s *QuestionService) SyncQuestionOptions(ctx context.Context, questionID uu
 		return nil
 	}
 
-	if len(options) == 0 {
-		return fmt.Errorf("%w: options are required for CHOICE question", errInvalidQuestionPayload)
-	}
-
 	for _, opt := range options {
 		if _, err := s.optionService.Create(ctx, OptionRequest{
 			QuestionID: questionID,
@@ -140,4 +208,39 @@ func (s *QuestionService) SyncQuestionOptions(ctx context.Context, questionID uu
 	}
 
 	return nil
+}
+
+func (s *QuestionService) withinTx(ctx context.Context, fn func(QuestionQuerier, OptionQuerier) error) error {
+	if s.transactor == nil {
+		return errQuestionTransactionUnsupported
+	}
+	return s.transactor.WithinTx(ctx, fn)
+}
+
+func validateQuestionOptions(questionType string, options []QuestionOptionRequest) error {
+	if questionType == "TEXT" {
+		return nil
+	}
+
+	if len(options) == 0 {
+		return fmt.Errorf("%w: options are required for CHOICE question", errInvalidQuestionPayload)
+	}
+
+	seen := make(map[string]struct{}, len(options))
+	for _, opt := range options {
+		if _, ok := seen[opt.Label]; ok {
+			return fmt.Errorf("%w: option labels must be unique", errInvalidQuestionPayload)
+		}
+		seen[opt.Label] = struct{}{}
+	}
+
+	return nil
+}
+
+func transactorFromQuerier(querier QuestionQuerier) QuestionTransactor {
+	transactor, ok := querier.(QuestionTransactor)
+	if !ok {
+		return nil
+	}
+	return transactor
 }

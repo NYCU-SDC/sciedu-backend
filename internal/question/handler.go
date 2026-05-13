@@ -93,7 +93,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]questionResponse, 0, len(questions))
 	for _, q := range questions {
-		item, err := h.questionService.BuildQuestionResponse(ctx, q)
+		item, err := h.questionService.buildQuestionResponse(ctx, q)
 		if err != nil {
 			h.problemWriter.WriteError(ctx, w, err, logger)
 			return
@@ -120,7 +120,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.questionService.BuildQuestionResponse(ctx, question)
+	resp, err := h.questionService.buildQuestionResponse(ctx, question)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -139,21 +139,16 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	question, err := h.questionService.Create(ctx, QuestionRequest{
+	question, err := h.questionService.CreateWithOptions(ctx, QuestionRequest{
 		Type:    req.Type,
 		Content: req.Content,
-	})
+	}, req.toQuestionOptionRequests())
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
 
-	if err := h.questionService.SyncQuestionOptions(ctx, question.ID, req.Type, req.Options, false); err != nil {
-		h.problemWriter.WriteError(ctx, w, err, logger)
-		return
-	}
-
-	resp, err := h.questionService.BuildQuestionResponse(ctx, question)
+	resp, err := h.questionService.buildQuestionResponse(ctx, question)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -178,26 +173,16 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.questionService.Get(ctx, id); err != nil {
-		h.problemWriter.WriteError(ctx, w, err, logger)
-		return
-	}
-
-	question, err := h.questionService.Update(ctx, id, QuestionRequest{
+	question, err := h.questionService.UpdateWithOptions(ctx, id, QuestionRequest{
 		Type:    req.Type,
 		Content: req.Content,
-	})
+	}, req.toQuestionOptionRequests())
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
 
-	if err := h.questionService.SyncQuestionOptions(ctx, id, req.Type, req.Options, true); err != nil {
-		h.problemWriter.WriteError(ctx, w, err, logger)
-		return
-	}
-
-	resp, err := h.questionService.BuildQuestionResponse(ctx, question)
+	resp, err := h.questionService.buildQuestionResponse(ctx, question)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -231,4 +216,12 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) parseID(raw string) (uuid.UUID, error) {
 	return handlerutil.ParseUUID(raw)
+}
+
+func (r createUpdateQuestionRequest) toQuestionOptionRequests() []QuestionOptionRequest {
+	options := make([]QuestionOptionRequest, 0, len(r.Options))
+	for _, opt := range r.Options {
+		options = append(options, QuestionOptionRequest(opt))
+	}
+	return options
 }
