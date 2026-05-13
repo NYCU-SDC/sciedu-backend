@@ -5,14 +5,15 @@ import (
 	"log"
 	"net/http"
 
+	"sciedu-backend/internal/config"
+	"sciedu-backend/internal/cors"
+	"sciedu-backend/internal/question"
+
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
-	"sciedu-backend/internal/config"
-	"sciedu-backend/internal/cors"
-	"sciedu-backend/internal/question"
 )
 
 func main() {
