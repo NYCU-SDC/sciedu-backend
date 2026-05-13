@@ -5,11 +5,14 @@ import (
 	"log"
 	"net/http"
 	"sciedu-backend/internal/chat"
+	"sciedu-backend/internal/cors"
+	"strings"
 
 	"sciedu-backend/internal/config"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
+	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -47,6 +50,12 @@ func main() {
 	chatHandler := chat.NewHandler(chatService, logger)
 	mux := http.NewServeMux()
 
+	allowOrigins := parseAllowOrigins(cfg.AllowOrigins)
+	corsMiddleware := cors.NewMiddleware(logger, allowOrigins)
+	middlewareSet := middlewareutil.NewSet(
+		corsMiddleware.HandlerFunc,
+	)
+
 	// Health check route
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -63,7 +72,7 @@ func main() {
 
 	logger.Info("Start listening on port: 8080")
 
-	err = http.ListenAndServe(":8080", mux)
+	err = http.ListenAndServe(":8080", middlewareSet.HandlerFunc(mux.ServeHTTP))
 	if err != nil {
 		panic(err)
 	}
@@ -85,4 +94,22 @@ func initLogger() (*zap.Logger, error) {
 	}()
 
 	return logger, nil
+}
+
+func parseAllowOrigins(origins string) []string {
+	if origins == "" {
+		return nil
+	}
+	parts := strings.Split(origins, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }

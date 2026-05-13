@@ -16,6 +16,7 @@ services:
       - DATABASE_URL=postgres://postgres:password@postgres:5432/sciedu?sslmode=disable
       - MIGRATION_SOURCE=file:///app/migrations
       - LLM_URL=https://llm.dev.sciedu.sdc.nycu.club
+      - ALLOW_ORIGINS=*.sciedu.sdc.nycu.club,http://localhost:5173
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.sciedu-backend-dev.rule=Host(`api.dev.sciedu.sdc.nycu.club`)"

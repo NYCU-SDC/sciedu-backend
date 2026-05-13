@@ -75,7 +75,7 @@ func (s *ChatService) fetchMessages(ctx context.Context, chatID uuid.UUID) ([]Me
 			CreatedAt: msg.CreatedAt.Time,
 		}
 		if msg.PreviousID.Valid {
-			ret.PreviousID = msg.PreviousID.Bytes
+			ret.PreviousID = uuid.UUID(msg.PreviousID.Bytes)
 		}
 		if msg.Content.String == "" {
 			if stream, ok := s.streamHub.GetStream(msg.ID); ok {
@@ -122,7 +122,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 		Role:   string(MessageRoleUser),
 		Status: string(MessageStatusDone),
 		PreviousID: pgtype.UUID{
-			Bytes: previousID,
+			Bytes: [16]byte(previousID),
 			Valid: previousID != uuid.Nil,
 		},
 	})
@@ -146,7 +146,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 		Role:   string(MessageRoleAssistant),
 		Status: string(MessageStatusStreaming),
 		PreviousID: pgtype.UUID{
-			Bytes: userMessage.ID,
+			Bytes: [16]byte(userMessage.ID),
 			Valid: true,
 		},
 	})
