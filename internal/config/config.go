@@ -20,6 +20,7 @@ type Config struct {
 	DatabaseURL     string `yaml:"database_url"       envconfig:"DATABASE_URL"`
 	MigrationSource string `yaml:"migration_source"   envconfig:"MIGRATION_SOURCE"`
 	LLMURL          string `yaml:"llm_url"            envconfig:"LLM_URL"`
+	AllowOrigins    string `yaml:"allow_origins"      envconfig:"ALLOW_ORIGINS"`
 }
 
 type LogBuffer struct {
@@ -65,6 +66,7 @@ func Load() (Config, *LogBuffer) {
 		DatabaseURL:     "",
 		MigrationSource: "file://internal/database/migrations",
 		LLMURL:          "https://llm.dev.sciedu.sdc.nycu.club",
+		AllowOrigins:    "*",
 	}
 
 	var err error
@@ -125,6 +127,7 @@ func FromEnv(config *Config, logger *LogBuffer) (*Config, error) {
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		MigrationSource: os.Getenv("MIGRATION_SOURCE"),
 		LLMURL:          os.Getenv("LLM_URL"),
+		AllowOrigins:    os.Getenv("ALLOW_ORIGINS"),
 	}
 
 	return configutil.Merge[Config](config, envConfig)
@@ -140,6 +143,7 @@ func FromFlags(config *Config) (*Config, error) {
 	flag.StringVar(&flagConfig.DatabaseURL, "database_url", "", "database url")
 	flag.StringVar(&flagConfig.MigrationSource, "migration_source", "", "migration source")
 	flag.StringVar(&flagConfig.LLMURL, "llm_url", "", "LLM url")
+	flag.StringVar(&flagConfig.AllowOrigins, "allow_origins", "", "allowed CORS origins (comma-separated)")
 
 	flag.Parse()
 
