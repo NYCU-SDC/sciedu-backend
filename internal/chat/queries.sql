@@ -9,7 +9,8 @@ SELECT * FROM messages
 WHERE id = $1;
 -- name: GetMessages :many
 SELECT * FROM messages
-WHERE chat_id = $1;
+WHERE chat_id = $1
+ORDER BY created_at;
 -- name: CreateMessage :one
 INSERT INTO messages (chat_id, previous_id, content, role, status)
 VALUES ($1, $2, $3, $4, $5)

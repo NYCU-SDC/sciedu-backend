@@ -16,8 +16,8 @@ type MessageStatus string
 
 const (
 	MessageStatusStreaming MessageStatus = "streaming"
-	MessageStatusDone      MessageStatus = "done"
-	MessageStatusError     MessageStatus = "error"
+	MessageStatusDone      MessageStatus = "completed"
+	MessageStatusError     MessageStatus = "failed"
 )
 
 type ChatMessage struct {

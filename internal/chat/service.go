@@ -35,7 +35,7 @@ type MessageReturn struct {
 	Role       MessageRole   `json:"role"`
 	PreviousID uuid.UUID     `json:"previousID,omitempty"`
 	Status     MessageStatus `json:"status"`
-	CreatedAt  time.Time     `json:"created_at"`
+	CreatedAt  time.Time     `json:"createdAt"`
 }
 
 type CreateMessageReturn struct {
