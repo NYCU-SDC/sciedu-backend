@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 ## [2026-05-06 16:59] Task Record
 
 ### Task Description
@@ -57,7 +56,7 @@
 ### Next Steps
 - Update review feedback to replace the P0 compile blocker with a lower-priority generation portability/direct-test concern.
 - Keep the API contract and message ordering findings active.
-=======
+
 ## [2026-05-06 16:12] Task Record
 
 ### Task Description
@@ -153,4 +152,3 @@
 
 ### Next Steps
 - Stage the documentation move with `git add docs API.md LLM_API.md LLM_ERD.md LLM_INTERACTION_PROTOCOL.md` or simply `git add -A` when ready.
->>>>>>> main

@@ -4,17 +4,14 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"os"
 	"sciedu-backend/internal/chat"
 
-	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"sciedu-backend/internal/config"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
-	"github.com/joho/godotenv"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
-	"sciedu-backend/internal/config"
 )
 
 func main() {
@@ -25,27 +22,15 @@ func main() {
 
 	logger.Info("Hello, World!")
 
-<<<<<<< HEAD
-	err = godotenv.Load()
-	if err != nil {
-		logger.Warn("No .env file loaded, using environment variables", zap.Error(err))
-	}
-
-	migrationSource := os.Getenv("MIGRATION_SOURCE")
-	databaseURL := os.Getenv("DATABASE_URL")
-	err = databaseutil.MigrationUp(migrationSource, databaseURL, logger)
-=======
 	cfg, configLogger := config.Load()
 	configLogger.FlushToZap(logger)
 
 	err = databaseutil.MigrationUp(cfg.MigrationSource, cfg.DatabaseURL, logger)
->>>>>>> main
 	if err != nil {
 		logger.Fatal("Failed to run database migration", zap.Error(err))
 	}
 
-<<<<<<< HEAD
-	pool, err := pgxpool.New(context.Background(), databaseURL)
+	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 	if err != nil {
 		logger.Fatal("Failed to initialize database pool", zap.Error(err))
 	}
@@ -56,13 +41,10 @@ func main() {
 	}
 
 	chatQueriers := chat.New(pool)
-	chatProvider := chat.NewProvider(os.Getenv("LLM_URL")+"/chat", &http.Client{}, nil)
+	chatProvider := chat.NewProvider(cfg.LLMURL+"/chat", &http.Client{}, nil)
 	chatStreamHub := chat.NewStreamHub()
 	chatService := chat.NewService(chatProvider, chatQueriers, chatStreamHub, logger)
 	chatHandler := chat.NewHandler(chatService, logger)
-
-=======
->>>>>>> main
 	mux := http.NewServeMux()
 
 	// Health check route
