@@ -23,17 +23,19 @@ func NewMiddleware(logger *zap.Logger, allowOrigins []string) Middleware {
 func (m Middleware) HandlerFunc(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
+		isPreflight := origin != "" &&
+			r.Method == http.MethodOptions &&
+			r.Header.Get("Access-Control-Request-Method") != ""
 
-		// Check if origin is allowed
 		if m.isOriginAllowed(origin) {
+			w.Header().Add("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 			w.Header().Set("Access-Control-Max-Age", "3600")
 		}
 
-		// Handle preflight requests
-		if r.Method == http.MethodOptions {
+		if isPreflight {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -42,7 +44,6 @@ func (m Middleware) HandlerFunc(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// isOriginAllowed checks if the origin matches any allowed pattern
 func (m Middleware) isOriginAllowed(origin string) bool {
 	if origin == "" {
 		return false

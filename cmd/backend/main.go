@@ -65,14 +65,14 @@ func main() {
 		}
 	})
 
-	mux.HandleFunc("POST /api/chat", middlewareSet.HandlerFunc(chatHandler.CreateChat))
-	mux.HandleFunc("GET /api/chat/stream/{messageID}", middlewareSet.HandlerFunc(chatHandler.Stream))
-	mux.HandleFunc("GET /api/chat/{chatID}", middlewareSet.HandlerFunc(chatHandler.GetChat))
-	mux.HandleFunc("POST /api/chat/{chatID}", middlewareSet.HandlerFunc(chatHandler.CreateMessage))
+	mux.HandleFunc("POST /api/chat", chatHandler.CreateChat)
+	mux.HandleFunc("GET /api/chat/stream/{messageID}", chatHandler.Stream)
+	mux.HandleFunc("GET /api/chat/{chatID}", chatHandler.GetChat)
+	mux.HandleFunc("POST /api/chat/{chatID}", chatHandler.CreateMessage)
 
 	logger.Info("Start listening on port: 8080")
 
-	err = http.ListenAndServe(":8080", mux)
+	err = http.ListenAndServe(":8080", middlewareSet.HandlerFunc(mux.ServeHTTP))
 	if err != nil {
 		panic(err)
 	}
@@ -98,7 +98,7 @@ func initLogger() (*zap.Logger, error) {
 
 func parseAllowOrigins(origins string) []string {
 	if origins == "" {
-		return []string{"*"}
+		return nil
 	}
 	parts := strings.Split(origins, ",")
 	result := make([]string, 0, len(parts))
@@ -109,7 +109,7 @@ func parseAllowOrigins(origins string) []string {
 		}
 	}
 	if len(result) == 0 {
-		return []string{"*"}
+		return nil
 	}
 	return result
 }

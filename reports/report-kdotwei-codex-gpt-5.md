@@ -152,3 +152,33 @@
 
 ### Next Steps
 - Stage the documentation move with `git add docs API.md LLM_API.md LLM_ERD.md LLM_INTERACTION_PROTOCOL.md` or simply `git add -A` when ready.
+
+## [2026-05-13 16:13] Task Record
+
+### Task Description
+- Inspect PR 41 (`feat/cors-config`) Copilot code review comments, decide which items need changes, implement needed fixes, and report any items that do not need changes.
+
+### Actions Taken
+- Verified current Git status on `feat/cors-config`, checked `.gitignore`, confirmed Git username `kdotwei`, and reviewed existing report files.
+- Used the GitHub connector to fetch PR 41 metadata and unresolved review threads because local `gh` authentication is invalid.
+- Modified `.env.example` to use `LLM_URL` instead of `LLM_MODULE_URL`.
+- Modified `cmd/backend/main.go` so CORS middleware wraps the whole mux via `middlewareSet.HandlerFunc(mux.ServeHTTP)` instead of only chat routes.
+- Modified `cmd/backend/main.go` and `internal/config/config.go` so missing `ALLOW_ORIGINS` defaults to an empty allowlist instead of `*`.
+- Modified `internal/cors/middleware.go` to add `Vary: Origin` when reflecting an allowed origin and to only short-circuit real CORS preflight OPTIONS requests.
+- Modified `internal/cors/middleware_test.go` to assert `Vary: Origin` and cover non-preflight OPTIONS passthrough.
+- Ran `gofmt -w cmd/backend/main.go internal/config/config.go internal/cors/middleware.go internal/cors/middleware_test.go`.
+- Ran `git diff --check`, `go test ./internal/cors`, and `go test ./...`.
+
+### Attempted Methods
+- Attempted `gh auth status` first per GitHub review-thread workflow, but the token in keyring was invalid.
+- Switched to the GitHub connector for PR metadata and review threads.
+- Initial sandboxed Go test commands failed because the sandbox could not write to `/Users/kwei/Library/Caches/go-build`; reran tests with escalated permissions.
+
+### Issues & Blockers
+- Local `gh` remains unauthenticated (`Bad credentials` / invalid keyring token), so future CLI-based GitHub operations will need `gh auth login`.
+- No Copilot inline comments were judged unnecessary; all four unresolved inline comments were valid and addressed.
+- The low-confidence suppressed Copilot OPTIONS comment was also valid enough to address with a small middleware change.
+
+### Next Steps
+- Review the diff, then stage and commit if acceptable.
+- Optionally re-check PR 41 review threads after pushing these local changes; this session did not push or resolve GitHub comments.

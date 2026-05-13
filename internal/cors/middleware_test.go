@@ -131,9 +131,15 @@ func TestCORSMiddleware(t *testing.T) {
 					t.Errorf("%s: expected Access-Control-Allow-Origin=%s, got %s",
 						tt.description, tt.requestOrigin, allowOriginHeader)
 				}
+				if rec.Header().Get("Vary") != "Origin" {
+					t.Errorf("%s: expected Vary=Origin, got %s", tt.description, rec.Header().Get("Vary"))
+				}
 			} else {
 				if allowOriginHeader != "" {
 					t.Errorf("%s: expected no CORS header, but got %s", tt.description, allowOriginHeader)
+				}
+				if rec.Header().Get("Vary") != "" {
+					t.Errorf("%s: expected no Vary header, got %s", tt.description, rec.Header().Get("Vary"))
 				}
 			}
 		})
@@ -174,5 +180,32 @@ func TestCORSPreflightRequest(t *testing.T) {
 
 	if rec.Header().Get("Access-Control-Allow-Headers") == "" {
 		t.Error("Expected Access-Control-Allow-Headers header to be set")
+	}
+}
+
+func TestCORSOptionsWithoutPreflightHeadersCallsNext(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	middleware := NewMiddleware(logger, []string{"*.sciedu.sdc.nycu.club"})
+	calledNext := false
+
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledNext = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := middleware.HandlerFunc(nextHandler)
+
+	req := httptest.NewRequest("OPTIONS", "/test", nil)
+	req.Header.Set("Origin", "https://dev.sciedu.sdc.nycu.club")
+	rec := httptest.NewRecorder()
+
+	handler(rec, req)
+
+	if !calledNext {
+		t.Error("Expected next handler to be called for non-preflight OPTIONS request")
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("Expected status 200 for non-preflight OPTIONS, got %d", rec.Code)
 	}
 }

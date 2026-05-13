@@ -66,7 +66,7 @@ func Load() (Config, *LogBuffer) {
 		DatabaseURL:     "",
 		MigrationSource: "file://internal/database/migrations",
 		LLMURL:          "https://llm.dev.sciedu.sdc.nycu.club",
-		AllowOrigins:    "*",
+		AllowOrigins:    "",
 	}
 
 	var err error
