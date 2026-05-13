@@ -4,17 +4,15 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"os"
-
-	"sciedu-backend/internal/cors"
-	"sciedu-backend/internal/question"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/joho/godotenv"
 	"go.uber.org/zap"
+	"sciedu-backend/internal/config"
+	"sciedu-backend/internal/cors"
+	"sciedu-backend/internal/question"
 )
 
 func main() {
@@ -25,19 +23,15 @@ func main() {
 
 	logger.Info("Hello, World!")
 
-	err = godotenv.Load()
-	if err != nil {
-		logger.Warn("No .env file loaded, using environment variables", zap.Error(err))
-	}
+	cfg, configLogger := config.Load()
+	configLogger.FlushToZap(logger)
 
-	migrationSource := os.Getenv("MIGRATION_SOURCE")
-	databaseURL := os.Getenv("DATABASE_URL")
-	err = databaseutil.MigrationUp(migrationSource, databaseURL, logger)
+	err = databaseutil.MigrationUp(cfg.MigrationSource, cfg.DatabaseURL, logger)
 	if err != nil {
 		logger.Fatal("Failed to run database migration", zap.Error(err))
 	}
 
-	pool, err := pgxpool.New(context.Background(), databaseURL)
+	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
 	if err != nil {
 		logger.Fatal("Failed to initialize database pool", zap.Error(err))
 	}
