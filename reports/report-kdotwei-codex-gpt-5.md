@@ -153,6 +153,33 @@
 ### Next Steps
 - Stage the documentation move with `git add docs API.md LLM_API.md LLM_ERD.md LLM_INTERACTION_PROTOCOL.md` or simply `git add -A` when ready.
 
+## [2026-05-13 16:45] Task Record
+
+### Task Description
+- Fix the `./quick-start.sh` lint/typecheck failure on `feat/cors-config` where chat service passed `pgtype.UUID` values into sqlc-generated fields and methods that currently expect `uuid.UUID`.
+
+### Actions Taken
+- Inspected `internal/chat/service.go`, `internal/chat/models.go`, and `internal/chat/queries.sql.go` to confirm generated sqlc UUID types.
+- Modified `internal/chat/service.go`:
+  - Changed `ChatQuerier` interface methods `GetChat`, `GetMessage`, and `GetMessages` back to `uuid.UUID`.
+  - Passed `chatID` directly into `CreateMessageParams.ChatID`.
+  - Passed `messageID` directly into `UpdateMessageParams.ID`.
+  - Passed UUIDs directly into `GetChat`, `GetMessage`, and `GetMessages`.
+  - Kept `pgtype.UUID` only for nullable `PreviousID`.
+- Ran `gofmt -w internal/chat/service.go`.
+- Ran `go test ./internal/chat`, `go test ./...`, `make lint`, and `git diff --check`.
+
+### Attempted Methods
+- Initial sandboxed `go test ./internal/chat` failed because the sandbox could not write to `/Users/kwei/Library/Caches/go-build`; reran with escalated permissions.
+- Initial sandboxed `make lint` failed with golangci-lint context loading issues; reran with escalated permissions and it passed.
+
+### Issues & Blockers
+- Did not run the full `.deploy/local/quick-start.sh` because it performs `docker compose down -v` and would clear local Docker volumes.
+- No remaining lint/typecheck issue was found after the service type fix.
+
+### Next Steps
+- The developer can rerun `.deploy/local/quick-start.sh`; its lint step should now pass.
+
 ## [2026-05-13 16:13] Task Record
 
 ### Task Description
