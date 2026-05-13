@@ -23,3 +23,20 @@ type Message struct {
 	Status     string
 	CreatedAt  pgtype.Timestamptz
 }
+
+type Option struct {
+	ID         uuid.UUID
+	QuestionID uuid.UUID
+	Content    string
+	Label      string
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type Question struct {
+	ID        uuid.UUID
+	Content   string
+	Type      string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}
