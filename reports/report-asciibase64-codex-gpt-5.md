@@ -115,3 +115,25 @@
 ### Next Steps
 - Run migration up/down against local PostgreSQL when Docker is available.
 - Stage the renamed migration files with the deleted old names if they had been staged elsewhere.
+
+## [2026-05-18 21:17] Task Record
+
+### Task Description
+- Delete `AuthFlow.md` and `AuthTableDesign.md`, and remove them from remote GitHub.
+
+### Actions Taken
+- Deleted `AuthFlow.md`.
+- Deleted `AuthTableDesign.md`.
+- Checked Git status after deletion.
+- Searched for remaining references to the deleted filenames.
+
+### Attempted Methods
+- Used file deletion patches so Git records the files as deleted.
+- Did not push to GitHub because workspace instructions strictly prohibit remote push operations by agents.
+
+### Issues & Blockers
+- Remote GitHub removal requires a commit and push, but agent remote push operations are prohibited in this project.
+- Remaining references to the deleted filenames exist only in this report file as historical task records.
+
+### Next Steps
+- Human developer should review, commit, and push the deletions to remove the files from remote GitHub.
