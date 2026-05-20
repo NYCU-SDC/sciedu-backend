@@ -9,27 +9,15 @@ EXCEPTION
 END $$;
 
 -- Internal users returned by the Users API and referenced by auth flows.
-CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    email CITEXT NOT NULL UNIQUE,
-
-    name TEXT NOT NULL,
-
-    avatar_url TEXT,
-
-    roles user_role[] NOT NULL,
-
-    last_login_at TIMESTAMPTZ,
-
-    disabled_at TIMESTAMPTZ,
-
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-
-    CONSTRAINT users_name_not_empty CHECK (btrim(name) <> ''),
-    CONSTRAINT users_roles_not_empty CHECK (cardinality(roles) > 0)
-);
+ALTER TABLE users
+    DROP CONSTRAINT IF EXISTS users_roles_check,
+    ALTER COLUMN email TYPE CITEXT,
+    ALTER COLUMN name TYPE TEXT,
+    ALTER COLUMN roles TYPE user_role[] USING roles::TEXT[]::user_role[],
+    ADD COLUMN last_login_at TIMESTAMPTZ,
+    ADD COLUMN disabled_at TIMESTAMPTZ,
+    ADD CONSTRAINT users_name_not_empty CHECK (btrim(name) <> ''),
+    ADD CONSTRAINT users_roles_not_empty CHECK (cardinality(roles) > 0);
 
 -- OAuth provider identities linked to internal users.
 CREATE TABLE oauth_accounts (

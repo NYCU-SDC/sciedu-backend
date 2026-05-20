@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+
 	"sciedu-backend/internal/chat"
 	"sciedu-backend/internal/config"
 	"sciedu-backend/internal/content"
@@ -66,9 +67,6 @@ func main() {
 		corsMiddleware.HandlerFunc,
 	)
 
-	questionHandler.RegisterRoutes(mux, middlewareSet)
-	contentHandler.RegisterRoutes(mux, middlewareSet)
-
 	// Health check route
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -78,6 +76,8 @@ func main() {
 		}
 	})
 
+	questionHandler.RegisterRoutes(mux, middlewareSet)
+	contentHandler.RegisterRoutes(mux, middlewareSet)
 	mux.HandleFunc("POST /api/chat", chatHandler.CreateChat)
 	mux.HandleFunc("GET /api/chat/stream/{messageID}", chatHandler.Stream)
 	mux.HandleFunc("GET /api/chat/{chatID}", chatHandler.GetChat)

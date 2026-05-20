@@ -192,3 +192,175 @@
 
 ### Next Steps
 - Review and stage the SCIEDU-62 migration deletions plus generated model updates when ready.
+
+## [2026-05-20 13:53] Task Record
+
+### Task Description
+- Explain the local runtime error only, without changing backend implementation.
+
+### Actions Taken
+- Checked Git status and verified `.gitignore` contents before diagnosis.
+- Read recent Codex report context under `reports/`.
+- Checked attached terminal state; no app terminal session was available.
+- Inspected backend container logs and migration files.
+- Modified only this report file:
+  - `reports/report-asciibase64-codex-gpt-5.md`
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `ls -la reports`
+  - `test -f .gitignore && sed -n '1,200p' .gitignore`
+  - `tail -n 120 reports/report-asciibase64-codex-gpt-5.md`
+  - `docker compose -f .deploy/local/compose.yaml ps -a`
+  - `docker logs --tail 120 sciedu-backend-local`
+  - `rg --files internal/database/migrations`
+  - `rg -n "CREATE TABLE users|CREATE TABLE IF NOT EXISTS users|oauth_accounts|refresh_token_families" internal/database/migrations`
+  - `sed -n '1,120p' internal/database/migrations/7_users.up.sql`
+  - `sed -n '1,80p' internal/database/migrations/8_auth_users.up.sql`
+  - `git config user.name`
+  - `date '+%Y-%m-%d %H:%M'`
+
+### Attempted Methods
+- Tried `docker compose -f .deploy/local/compose.yaml ps -a`, but sandboxed Docker daemon access was denied.
+- Used `docker logs --tail 120 sciedu-backend-local`, which was permitted and exposed the actual backend failure.
+- Compared migration files to confirm the duplicate `users` table creation source.
+
+### Issues & Blockers
+- Runtime startup fails during database migration because `7_users.up.sql` creates `users`, then `8_auth_users.up.sql` attempts another `CREATE TABLE users`.
+- `8_auth_users.up.sql` is not idempotent for the `users` table, so PostgreSQL returns `pq: relation "users" already exists`.
+- No code fix was applied because the user requested explanation only.
+
+### Next Steps
+- Decide which users migration is canonical for this branch.
+- Either remove/supersede the older `7_users` migration, or convert the later auth migration into a schema-alteration migration that evolves the existing `users` table instead of recreating it.
+
+## [2026-05-20 13:57] Task Record
+
+### Task Description
+- Keep the existing `users` table from migration `7_users` and update it through the auth migration instead of recreating it.
+
+### Actions Taken
+- Modified `internal/database/migrations/8_auth_users.up.sql`:
+  - Replaced `CREATE TABLE users` with `ALTER TABLE users`.
+  - Converts `email` to `CITEXT`, `name` to `TEXT`, and `roles` to `user_role[]`.
+  - Adds `last_login_at`, `disabled_at`, `users_name_not_empty`, and `users_roles_not_empty`.
+  - Keeps OAuth and refresh-token table creation unchanged.
+- Modified `internal/database/migrations/8_auth_users.down.sql`:
+  - Stops dropping the original `users` table.
+  - Drops auth-added columns/constraints and converts `users` columns back toward the old schema.
+- Verified with local quick-start and tests.
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `tail -n 80 reports/report-asciibase64-codex-gpt-5.md`
+  - `sed -n '1,260p' internal/database/migrations/8_auth_users.up.sql`
+  - `sed -n '1,220p' internal/database/migrations/8_auth_users.down.sql`
+  - `./quick-start.sh`
+  - `go test ./...`
+  - `git diff -- internal/database/migrations/8_auth_users.up.sql internal/database/migrations/8_auth_users.down.sql`
+  - `git status --short`
+  - `date '+%Y-%m-%d %H:%M'`
+
+### Attempted Methods
+- Chose schema evolution over deleting `7_users` because the user explicitly requested keeping the old table.
+- Used a clean Docker startup through `.deploy/local/quick-start.sh` to verify the migration chain from an empty PostgreSQL volume.
+
+### Issues & Blockers
+- No unresolved blocker.
+- Existing unrelated working-tree changes remain in `cmd/backend/main.go` and the migration rename state.
+
+### Next Steps
+- Review whether the down migration's restored `users_roles_check` constraint name is acceptable for the project.
+- Stage the two migration edits with the existing migration rename changes when ready.
+
+## [2026-05-20 14:01] Task Record
+
+### Task Description
+- Drop existing SciEdu database tables from the requested Docker container.
+
+### Actions Taken
+- Checked Git status and `.gitignore` before acting.
+- Read recent report context.
+- Tried to inspect compose-managed SciEdu containers.
+- Confirmed the compose-managed PostgreSQL container `sciedu-local-postgres-1` existed but was stopped.
+- After the user clarified the container name, executed SQL against Docker container `SciEdu`.
+- Dropped all tables in the `public` schema of database `sciedu`.
+- Verified no `public.*` tables remain.
+- Modified only this report file:
+  - `reports/report-asciibase64-codex-gpt-5.md`
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `test -f .gitignore && sed -n '1,200p' .gitignore`
+  - `tail -n 80 reports/report-asciibase64-codex-gpt-5.md`
+  - `docker compose -f .deploy/local/compose.yaml ps`
+  - `docker logs --tail 20 sciedu-local-postgres-1`
+  - `docker logs --tail 20 sciedu-backend-local`
+  - `docker exec sciedu-local-postgres-1 psql -U postgres -d sciedu -c '\dt public.*'`
+  - `docker start sciedu-local-postgres-1`
+  - `docker exec SciEdu psql -U postgres -d sciedu -v ON_ERROR_STOP=1 -c "DO ..."`
+  - `docker exec SciEdu psql -U postgres -d sciedu -c '\dt public.*'`
+  - `date '+%Y-%m-%d %H:%M'`
+
+### Attempted Methods
+- Initially attempted to use the compose-managed container, but `docker compose ps` required Docker daemon access and then showed no running services.
+- Attempted to query `sciedu-local-postgres-1`, but it was stopped.
+- Requested permission to start `sciedu-local-postgres-1`; the request was rejected.
+- The user clarified the target container was named `SciEdu`; using `docker exec SciEdu ...` succeeded.
+
+### Issues & Blockers
+- `sciedu-local-postgres-1` was not running and could not be started due to denied approval.
+- No blocker remained after switching to the user-specified `SciEdu` container.
+
+### Next Steps
+- If the backend is pointed at the `SciEdu` container, rerun migrations or restart the backend so it can recreate the schema.
+
+## [2026-05-20 14:04] Task Record
+
+### Task Description
+- Diagnose and resolve GoLand startup failure: `Dirty database version 8. Fix and force version.`
+
+### Actions Taken
+- Checked the user-provided GoLand runtime output.
+- Inspected `SciEdu` container database state.
+- Found `sciedu` database was empty, but `.env` points the backend to `postgresql://postgres:password@localhost:5432/postgres?sslmode=disable`.
+- Queried the `postgres` database in container `SciEdu` and confirmed `schema_migrations` was at `version=8 dirty=true`.
+- Dropped all `public` tables from the `postgres` database in container `SciEdu`.
+- Verified no `public.*` tables remained before rerunning the backend.
+- Ran `go run ./cmd/backend` with localhost DB access to verify migrations rerun cleanly.
+- Stopped the backend test process that was listening on port `8080`.
+- Verified final migration state is `version=9 dirty=false`.
+- Modified only this report file:
+  - `reports/report-asciibase64-codex-gpt-5.md`
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `docker exec SciEdu psql -U postgres -d sciedu -c "SELECT * FROM schema_migrations;"`
+  - `docker exec SciEdu psql -U postgres -d sciedu -c "SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name;"`
+  - `docker exec SciEdu psql -U postgres -d sciedu -c "SELECT ... enum types ..."`
+  - `sed -n '1,180p' internal/config/config.go`
+  - `sed -n '1,140p' cmd/backend/main.go`
+  - `ls -la .env config.yaml .deploy/local 2>/dev/null`
+  - `rg -n "DATABASE_URL|MIGRATION_SOURCE|schema_migrations|dirty|ENV|DB" -S .`
+  - `sed -n '1,80p' .env`
+  - `docker exec SciEdu psql -U postgres -d postgres -c "SELECT * FROM schema_migrations;"`
+  - `docker exec SciEdu psql -U postgres -d postgres -c "SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name;"`
+  - `docker exec SciEdu psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "DO ..."`
+  - `docker exec SciEdu psql -U postgres -d postgres -c '\dt public.*'`
+  - `docker exec SciEdu psql -U postgres -d postgres -c "SELECT ... enum types ..."`
+  - `rg -n "CREATE TYPE|content_type|user_role" internal/database/migrations`
+  - `sed -n '1,120p' internal/database/migrations/3_contents.up.sql`
+  - `go run ./cmd/backend`
+  - `lsof -nP -iTCP:8080 -sTCP:LISTEN`
+  - `kill 8018`
+  - `docker exec SciEdu psql -U postgres -d postgres -c "SELECT * FROM schema_migrations;"`
+  - `date '+%Y-%m-%d %H:%M'`
+
+### Attempted Methods
+- Initially checked `sciedu` database, but it did not match the backend's `.env` configuration.
+- Direct sandboxed `go run ./cmd/backend` failed to connect to `localhost:5432` with `operation not permitted`; reran with approved localhost DB access.
+- The backend test process could not be stopped inside the sandbox; stopped it with approved process permissions.
+
+### Issues & Blockers
+- Root cause was database mismatch: prior cleanup targeted `sciedu`, but GoLand/backend used the default `postgres` database.
+- No unresolved blocker. The backend migration state is now clean at version 9.
+
+### Next Steps
+- Run the GoLand configuration again; it should no longer fail on dirty version 8.
+- Consider changing `.env` to use `/sciedu` instead of `/postgres` if the intended local database is `sciedu`.
