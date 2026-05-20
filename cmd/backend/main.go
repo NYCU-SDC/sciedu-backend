@@ -5,9 +5,8 @@ import (
 	"log"
 	"net/http"
 	"sciedu-backend/internal/chat"
-
 	"sciedu-backend/internal/config"
-
+	"sciedu-backend/internal/content"
 	"sciedu-backend/internal/cors"
 	"sciedu-backend/internal/question"
 
@@ -49,6 +48,10 @@ func main() {
 	questionService := question.NewQuestionService(questionStore, optionService, logger)
 	questionHandler := question.NewHandler(questionService, optionService, logger)
 
+	contentQueries := content.New(pool)
+	contentService := content.NewService(contentQueries, logger)
+	contentHandler := content.NewHandler(contentService, logger)
+
 	chatQueriers := chat.New(pool)
 	chatProvider := chat.NewProvider(cfg.LLMURL+"/chat", &http.Client{}, nil)
 	chatStreamHub := chat.NewStreamHub()
@@ -62,6 +65,8 @@ func main() {
 	)
 
 	questionHandler.RegisterRoutes(mux, middlewareSet)
+	contentHandler.RegisterRoutes(mux, middlewareSet)
+
 	// Health check route
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
