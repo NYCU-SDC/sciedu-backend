@@ -2,8 +2,8 @@ package cors
 
 import (
 	"net/http"
+	"strings"
 
-	corsutil "github.com/NYCU-SDC/summer/pkg/cors"
 	"go.uber.org/zap"
 )
 
@@ -21,5 +21,70 @@ func NewMiddleware(logger *zap.Logger, allowOrigins []string) Middleware {
 }
 
 func (m Middleware) HandlerFunc(next http.HandlerFunc) http.HandlerFunc {
-	return corsutil.CORSMiddleware(next, m.logger, m.allowOrigins)
+	return func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		isPreflight := origin != "" &&
+			r.Method == http.MethodOptions &&
+			r.Header.Get("Access-Control-Request-Method") != ""
+
+		if m.isOriginAllowed(origin) {
+			w.Header().Add("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Max-Age", "3600")
+		}
+
+		if isPreflight {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+func (m Middleware) isOriginAllowed(origin string) bool {
+	if origin == "" {
+		return false
+	}
+
+	for _, allowed := range m.allowOrigins {
+		// Exact match with "*"
+		if allowed == "*" {
+			return true
+		}
+
+		// Exact match with full origin
+		if allowed == origin {
+			return true
+		}
+
+		// Wildcard subdomain match (e.g., *.sciedu.sdc.nycu.club)
+		if strings.HasPrefix(allowed, "*.") {
+			domain := allowed[2:] // Remove "*."
+
+			// Extract hostname from origin (remove protocol)
+			hostname := origin
+			if idx := strings.Index(origin, "://"); idx != -1 {
+				hostname = origin[idx+3:]
+			}
+			// Remove port if present
+			if idx := strings.Index(hostname, ":"); idx != -1 {
+				hostname = hostname[:idx]
+			}
+
+			// Check if hostname ends with the domain
+			if strings.HasSuffix(hostname, domain) {
+				// Ensure it's a proper subdomain match
+				// e.g., dev.sciedu.sdc.nycu.club matches *.sciedu.sdc.nycu.club
+				// but sciedu.sdc.nycu.club does NOT match *.sciedu.sdc.nycu.club
+				if len(hostname) > len(domain) && hostname[len(hostname)-len(domain)-1] == '.' {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
 }

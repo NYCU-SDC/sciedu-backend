@@ -15,6 +15,24 @@ echo -e "${BLUE}  SciEdu Local Development${NC}"
 echo -e "${BLUE}================================${NC}"
 echo ""
 
+# Run lint check
+echo -e "${YELLOW}→ Running lint check...${NC}"
+cd ../..
+if ! command -v golangci-lint &> /dev/null; then
+    echo -e "${RED}✗ golangci-lint not found${NC}"
+    echo -e "  Install it with: ${BLUE}brew install golangci-lint${NC}"
+    exit 1
+fi
+
+if make lint; then
+    echo -e "${GREEN}✓ Lint check passed${NC}"
+else
+    echo -e "${RED}✗ Lint check failed. Please fix the issues before starting services.${NC}"
+    exit 1
+fi
+cd .deploy/local
+echo ""
+
 # Clean up existing containers
 echo -e "${YELLOW}→ Cleaning up previous environment...${NC}"
 docker compose down -v 2>/dev/null || true

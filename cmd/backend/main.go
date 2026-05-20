@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"strings"
 	"sciedu-backend/internal/chat"
 	"sciedu-backend/internal/config"
 	"sciedu-backend/internal/content"
@@ -59,7 +60,8 @@ func main() {
 	chatHandler := chat.NewHandler(chatService, logger)
 	mux := http.NewServeMux()
 
-	corsMiddleware := cors.NewMiddleware(logger, []string{"*"})
+	allowOrigins := parseAllowOrigins(cfg.AllowOrigins)
+	corsMiddleware := cors.NewMiddleware(logger, allowOrigins)
 	middlewareSet := middlewareutil.NewSet(
 		corsMiddleware.HandlerFunc,
 	)
@@ -83,7 +85,7 @@ func main() {
 
 	logger.Info("Start listening on port: 8080")
 
-	err = http.ListenAndServe(":8080", mux)
+	err = http.ListenAndServe(":8080", middlewareSet.HandlerFunc(mux.ServeHTTP))
 	if err != nil {
 		panic(err)
 	}
@@ -105,4 +107,22 @@ func initLogger() (*zap.Logger, error) {
 	}()
 
 	return logger, nil
+}
+
+func parseAllowOrigins(origins string) []string {
+	if origins == "" {
+		return nil
+	}
+	parts := strings.Split(origins, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }

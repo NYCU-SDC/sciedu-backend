@@ -18,6 +18,7 @@ services:
       - PORT=8080
       - DATABASE_URL=postgres://postgres:password@postgres:5432/sciedu?sslmode=disable
       - MIGRATION_SOURCE=file:///app/migrations
+      - ALLOW_ORIGINS=*.sciedu.sdc.nycu.club,http://localhost:5173
     networks:
       - sciedu-local
 
