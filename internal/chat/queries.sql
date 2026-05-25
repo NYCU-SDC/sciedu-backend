@@ -2,7 +2,13 @@
 SELECT * FROM chats
 WHERE id = $1;
 -- name: CreateChat :one
-INSERT INTO chats DEFAULT VALUES
+INSERT INTO chats (user_id, title)
+VALUES ($1, $2)
+RETURNING *;
+-- name: UpdateChatTitle :one
+UPDATE chats
+SET title = $2
+WHERE id = $1
 RETURNING *;
 -- name: GetMessage :one
 SELECT * FROM messages
@@ -20,3 +26,8 @@ UPDATE messages
 SET content = $2, status = $3
 WHERE id = $1
 RETURNING *;
+-- name: DeleteChat :exec
+DELETE FROM chats
+WHERE id = $1;
+DELETE FROM messages
+WHERE chat_id = $1;

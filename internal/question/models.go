@@ -57,6 +57,8 @@ func (ns NullContentType) Value() (driver.Value, error) {
 type Chat struct {
 	ID        uuid.UUID
 	CreatedAt pgtype.Timestamptz
+	UserID    uuid.UUID
+	Title     string
 }
 
 type Content struct {

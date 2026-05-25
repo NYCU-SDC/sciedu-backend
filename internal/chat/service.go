@@ -2,7 +2,6 @@ package chat
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -14,12 +13,13 @@ import (
 )
 
 type ChatQuerier interface {
-	CreateChat(ctx context.Context) (Chat, error)
+	CreateChat(ctx context.Context, arg CreateChatParams) (Chat, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	GetChat(ctx context.Context, id uuid.UUID) (Chat, error)
 	GetMessage(ctx context.Context, id uuid.UUID) (Message, error)
 	GetMessages(ctx context.Context, chatID uuid.UUID) ([]Message, error)
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) (Message, error)
+	UpdateChatTitle(ctx context.Context, arg UpdateChatTitleParams) (Chat, error)
 }
 
 type ChatService struct {
@@ -52,8 +52,11 @@ func NewService(provider LLMProvider, querier ChatQuerier, streamHub *StreamHub,
 	}
 }
 
-func (s *ChatService) CreateChat(ctx context.Context) (uuid.UUID, error) {
-	chat, err := s.querier.CreateChat(ctx)
+func (s *ChatService) CreateChat(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	chat, err := s.querier.CreateChat(ctx, CreateChatParams{
+		UserID: userID,
+		Title:  "",
+	})
 	if err != nil {
 		return uuid.New(), databaseutil.WrapDBError(err, s.logger, "create chat")
 	}
@@ -161,7 +164,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 	}
 
 	streamEvent := s.streamHub.CreateStream(llmMessage.ID)
-	go s.streamProcessor(context.Background(), llmMessage.ID, streamEvent, providerReq)
+	go s.streamProcessor(context.Background(), chatID, llmMessage.ID, streamEvent, providerReq)
 
 	return CreateMessageReturn{
 		Message: MessageReturn{
@@ -185,7 +188,7 @@ func (s *ChatService) Stream(ctx context.Context, messageID uuid.UUID) (bool, <-
 	return ok, llmCh, errCh, cancel
 }
 
-func (s *ChatService) streamProcessor(ctx context.Context, messageID uuid.UUID, streamEvent *StreamEvent, providerReq CreateChatCompletionRequest) {
+func (s *ChatService) streamProcessor(ctx context.Context, chatID uuid.UUID, messageID uuid.UUID, streamEvent *StreamEvent, providerReq CreateChatCompletionRequest) {
 	llmCh, errCh := s.provider.Stream(ctx, providerReq)
 	endFlag := false
 	for !endFlag && (llmCh != nil || errCh != nil) {
@@ -237,6 +240,12 @@ func (s *ChatService) streamProcessor(ctx context.Context, messageID uuid.UUID, 
 		SSEError(err, s.logger)
 	}
 
+	if status == MessageStatusDone {
+		if err := s.tryCreateTitle(updateCtx, chatID); err != nil {
+			SSEError(err, s.logger)
+		}
+	}
+
 }
 
 func (s *ChatService) ValidatePreviousID(ctx context.Context, previousID uuid.UUID, chatID uuid.UUID) error {
@@ -252,6 +261,33 @@ func (s *ChatService) ValidatePreviousID(ctx context.Context, previousID uuid.UU
 	}
 	if msg.ChatID != chatID {
 		return handlerutil.NewNotFoundError("message", "previous_id", previousID.String(), fmt.Sprintf("previous message does not belong to the same chat: previous_id=%s, chat_id=%s", previousID.String(), chatID.String()))
+	}
+	return nil
+}
+
+func (s *ChatService) tryCreateTitle(ctx context.Context, chatID uuid.UUID) error {
+	chat, err := s.querier.GetChat(ctx, chatID)
+	if err != nil {
+		return databaseutil.WrapDBErrorWithKeyValue(err, "chat", "chat_id", chatID.String(), s.logger, "get chat for title")
+	}
+	if chat.Title != "" {
+		return nil
+	}
+	messages, err := s.fetchMessages(ctx, chatID)
+	if err != nil {
+		return err
+	}
+	history := createChatHistory(messages)
+	title, err := s.provider.GetTitle(ctx, history)
+	if err != nil {
+		return databaseutil.WrapDBErrorWithKeyValue(err, "title", "chat_id", chatID.String(), s.logger, "get title for chat")
+	}
+	_, err = s.querier.UpdateChatTitle(ctx, UpdateChatTitleParams{
+		ID:    chatID,
+		Title: title,
+	})
+	if err != nil {
+		return databaseutil.WrapDBErrorWithKeyValue(err, "chat", "chat_id", chatID.String(), s.logger, "update chat title")
 	}
 	return nil
 }
@@ -295,6 +331,3 @@ func createChatHistory(allMessages []MessageReturn) []ChatMessage {
 func SSEError(err error, logger *zap.Logger) {
 	logger.Warn("Handling SSE Error", zap.String("problem", "SSE Error"), zap.Error(err))
 }
-
-// temp
-var ErrStatus502 = errors.New("message has error status")
