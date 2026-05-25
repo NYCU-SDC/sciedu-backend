@@ -1,0 +1,184 @@
+package auth
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"time"
+
+	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
+	logutil "github.com/NYCU-SDC/summer/pkg/log"
+	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
+	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
+	"go.uber.org/zap"
+)
+
+type HandlerService interface {
+	Session(ctx context.Context, accessToken, refreshToken string) (Session, error)
+	Refresh(ctx context.Context, refreshToken string) (Session, error)
+	Logout(ctx context.Context, refreshToken string) error
+}
+
+type CookieConfig struct {
+	Environment string
+	Domain      string
+}
+
+type Handler struct {
+	service       HandlerService
+	cookies       CookieConfig
+	logger        *zap.Logger
+	problemWriter *problemutil.HttpWriter
+}
+
+func NewHandler(service HandlerService, cookies CookieConfig, logger *zap.Logger) *Handler {
+	if cookies.Environment == "" {
+		cookies.Environment = EnvironmentProd
+	}
+	if cookies.Domain == "" && cookies.Environment != EnvironmentDev {
+		cookies.Domain = defaultCookieDomain
+	}
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+
+	return &Handler{
+		service: service,
+		cookies: cookies,
+		logger:  logger,
+		problemWriter: problemutil.NewWithMapping(func(err error) problemutil.Problem {
+			if errors.Is(err, ErrRefreshReuseDetected) {
+				return problemutil.NewUnauthorizedProblem("You must be logged in to access this resource")
+			}
+			return problemutil.Problem{}
+		}),
+	}
+}
+
+func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil.Set) {
+	handle := func(pattern string, fn http.HandlerFunc) {
+		if middlewares != nil {
+			fn = middlewares.HandlerFunc(fn)
+		}
+		mux.HandleFunc(pattern, fn)
+	}
+
+	handle("GET /api/auth/session", h.Session)
+	handle("POST /api/auth/refresh", h.Refresh)
+	handle("POST /api/auth/logout", h.Logout)
+}
+
+func (h *Handler) Session(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+	accessToken, err := cookieValue(r, accessTokenCookieName)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	refreshToken, err := cookieValue(r, refreshTokenCookieName)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	session, err := h.service.Session(ctx, accessToken, refreshToken)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	handlerutil.WriteJSONResponse(w, http.StatusOK, session)
+}
+
+func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+	refreshToken, err := cookieValue(r, refreshTokenCookieName)
+	if err != nil {
+		h.clearSessionCookies(w)
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	session, err := h.service.Refresh(ctx, refreshToken)
+	if err != nil {
+		if errors.Is(err, ErrRefreshReuseDetected) || errors.Is(err, handlerutil.ErrUnauthorized) {
+			h.clearSessionCookies(w)
+		}
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	h.setSessionCookies(w, session)
+	handlerutil.WriteJSONResponse(w, http.StatusOK, session)
+}
+
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+	refreshToken, err := cookieValue(r, refreshTokenCookieName)
+	if err != nil && !errors.Is(err, handlerutil.ErrUnauthorized) {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	if err := h.service.Logout(ctx, refreshToken); err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	h.clearSessionCookies(w)
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *Handler) setSessionCookies(w http.ResponseWriter, session Session) {
+	http.SetCookie(w, h.accessCookie(session.AccessToken, int(accessTokenLifetime.Seconds())))
+	http.SetCookie(w, h.refreshCookie(session.RefreshToken, int(timeUntil(session.RefreshTokenExpiresAt).Seconds())))
+}
+
+func (h *Handler) clearSessionCookies(w http.ResponseWriter) {
+	http.SetCookie(w, h.accessCookie("", -1))
+	http.SetCookie(w, h.refreshCookie("", -1))
+}
+
+func (h *Handler) accessCookie(value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     accessTokenCookieName,
+		Value:    value,
+		Path:     "/",
+		Domain:   h.cookies.Domain,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   h.cookies.Environment != EnvironmentDev,
+		MaxAge:   maxAge,
+	}
+}
+
+func (h *Handler) refreshCookie(value string, maxAge int) *http.Cookie {
+	return &http.Cookie{
+		Name:     refreshTokenCookieName,
+		Value:    value,
+		Path:     "/api/auth",
+		Domain:   h.cookies.Domain,
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   h.cookies.Environment != EnvironmentDev,
+		MaxAge:   maxAge,
+	}
+}
+
+func cookieValue(r *http.Request, name string) (string, error) {
+	cookie, err := r.Cookie(name)
+	if err != nil || cookie.Value == "" {
+		return "", handlerutil.ErrUnauthorized
+	}
+	return cookie.Value, nil
+}
+
+func timeUntil(deadline time.Time) time.Duration {
+	remaining := time.Until(deadline)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}

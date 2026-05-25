@@ -10,7 +10,7 @@ You have to **write the test first**, including several common test and edge con
 
 # API Spec
 
-https://nycu-sdc.github.io/sciedu-api/#tag/auth
+https://nycu-sdc.github.io/sciedu-api/tsp-output/schema/openapi.1.0.0.yaml
 
 # Goals
 

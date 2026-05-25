@@ -17,6 +17,7 @@ type Config struct {
 	Host            string `yaml:"host"               envconfig:"HOST"`
 	Port            string `yaml:"port"               envconfig:"PORT"`
 	Secret          string `yaml:"secret"             envconfig:"SECRET"`
+	Environment     string `yaml:"environment"        envconfig:"ENVIRONMENT"`
 	DatabaseURL     string `yaml:"database_url"       envconfig:"DATABASE_URL"`
 	MigrationSource string `yaml:"migration_source"   envconfig:"MIGRATION_SOURCE"`
 	LLMURL          string `yaml:"llm_url"            envconfig:"LLM_URL"`
@@ -63,6 +64,7 @@ func Load() (Config, *LogBuffer) {
 		Host:            "localhost",
 		Port:            "8080",
 		Secret:          DefaultSecret,
+		Environment:     "prod",
 		DatabaseURL:     "",
 		MigrationSource: "file://internal/database/migrations",
 		LLMURL:          "https://llm.dev.sciedu.sdc.nycu.club",
@@ -124,6 +126,7 @@ func FromEnv(config *Config, logger *LogBuffer) (*Config, error) {
 		Host:            os.Getenv("HOST"),
 		Port:            os.Getenv("PORT"),
 		Secret:          os.Getenv("SECRET"),
+		Environment:     os.Getenv("ENVIRONMENT"),
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		MigrationSource: os.Getenv("MIGRATION_SOURCE"),
 		LLMURL:          os.Getenv("LLM_URL"),
@@ -140,6 +143,7 @@ func FromFlags(config *Config) (*Config, error) {
 	flag.StringVar(&flagConfig.Host, "host", "", "host")
 	flag.StringVar(&flagConfig.Port, "port", "", "port")
 	flag.StringVar(&flagConfig.Secret, "secret", "", "secret")
+	flag.StringVar(&flagConfig.Environment, "environment", "", "environment")
 	flag.StringVar(&flagConfig.DatabaseURL, "database_url", "", "database url")
 	flag.StringVar(&flagConfig.MigrationSource, "migration_source", "", "migration source")
 	flag.StringVar(&flagConfig.LLMURL, "llm_url", "", "LLM url")

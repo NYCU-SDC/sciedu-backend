@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"sciedu-backend/internal/auth"
 	"sciedu-backend/internal/chat"
 	"sciedu-backend/internal/config"
 	"sciedu-backend/internal/content"
@@ -66,6 +67,16 @@ func main() {
 	middlewareSet := middlewareutil.NewSet(
 		corsMiddleware.HandlerFunc,
 	)
+	authStore := auth.NewStore(pool)
+	authService := auth.NewService(authStore, auth.ServiceConfig{
+		Secret:      cfg.Secret,
+		Environment: cfg.Environment,
+	}, logger)
+	authHandler := auth.NewHandler(authService, auth.CookieConfig{
+		Environment: cfg.Environment,
+	}, logger)
+	authMiddleware := auth.NewMiddleware(authService, logger)
+	protectedMiddlewareSet := middlewareSet.Append(authMiddleware.HandlerFunc)
 
 	// Health check route
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -76,12 +87,13 @@ func main() {
 		}
 	})
 
-	questionHandler.RegisterRoutes(mux, middlewareSet)
-	contentHandler.RegisterRoutes(mux, middlewareSet)
-	mux.HandleFunc("POST /api/chat", chatHandler.CreateChat)
-	mux.HandleFunc("GET /api/chat/stream/{messageID}", chatHandler.Stream)
-	mux.HandleFunc("GET /api/chat/{chatID}", chatHandler.GetChat)
-	mux.HandleFunc("POST /api/chat/{chatID}", chatHandler.CreateMessage)
+	authHandler.RegisterRoutes(mux, middlewareSet)
+	questionHandler.RegisterRoutes(mux, protectedMiddlewareSet)
+	contentHandler.RegisterRoutes(mux, protectedMiddlewareSet)
+	mux.HandleFunc("POST /api/chat", protectedMiddlewareSet.HandlerFunc(chatHandler.CreateChat))
+	mux.HandleFunc("GET /api/chat/stream/{messageID}", protectedMiddlewareSet.HandlerFunc(chatHandler.Stream))
+	mux.HandleFunc("GET /api/chat/{chatID}", protectedMiddlewareSet.HandlerFunc(chatHandler.GetChat))
+	mux.HandleFunc("POST /api/chat/{chatID}", protectedMiddlewareSet.HandlerFunc(chatHandler.CreateMessage))
 
 	logger.Info("Start listening on port: 8080")
 

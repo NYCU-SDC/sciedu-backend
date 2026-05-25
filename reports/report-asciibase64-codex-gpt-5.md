@@ -641,3 +641,23 @@
 
 ### Next Steps
 - Review the generated model diffs and migration/schema change before committing.
+
+## [2026-05-25 21:59] Task Record
+
+### Task Description
+- Implement the backend-managed HttpOnly cookie JWT auth flow from `docs/AUTH_DESIGN.md`.
+
+### Actions Taken
+- Added the `internal/auth` package with handlers, service logic, middleware, repository code, sqlc schema/queries, and table-driven tests.
+- Updated backend wiring and config for auth routes, auth middleware, JWT secret/environment handling, refresh token rotation, logout revocation, and access-token user context.
+- Added JWT dependency and regenerated sqlc code for the merged schema.
+
+### Attempted Methods
+- Wrote tests first for session, refresh, logout, and middleware unauthorized behavior.
+- Fixed refresh-token reuse handling to wrap the standard unauthorized error and normalized JWT expiry comparisons to UTC.
+
+### Issues & Blockers
+- Google OAuth provider exchange and id-token verification were left for a later auth pass.
+
+### Next Steps
+- Add Google OAuth provider configuration, PKCE state persistence, callback exchange, and verified user linking on top of the auth tables.
