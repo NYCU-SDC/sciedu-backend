@@ -362,6 +362,39 @@ func TestCreateMedia(t *testing.T) {
 			},
 			wantStatus: http.StatusCreated,
 		},
+		{
+			name: "file exceeds upload limit",
+			buildReq: func(t *testing.T) *http.Request {
+				t.Helper()
+				originalMaxMediaUploadBytes := maxMediaUploadBytes
+				maxMediaUploadBytes = 8
+				t.Cleanup(func() {
+					maxMediaUploadBytes = originalMaxMediaUploadBytes
+				})
+				var body bytes.Buffer
+				writer := multipart.NewWriter(&body)
+				part, err := writer.CreateFormFile("content", "large.bin")
+				if err != nil {
+					t.Fatalf("create form file: %v", err)
+				}
+				if _, err := part.Write(bytes.Repeat([]byte("x"), int(maxMediaUploadBytes)+1)); err != nil {
+					t.Fatalf("write part: %v", err)
+				}
+				if err := writer.Close(); err != nil {
+					t.Fatalf("close writer: %v", err)
+				}
+				req := httptest.NewRequest(http.MethodPost, "/api/content/media", &body)
+				req.Header.Set("Content-Type", writer.FormDataContentType())
+				return req
+			},
+			service: &fakeHandlerService{
+				createMediaContentFn: func(context.Context, []byte, string, string) (Content, error) {
+					t.Fatal("service should not be called for oversized uploads")
+					return Content{}, nil
+				},
+			},
+			wantStatus: http.StatusRequestEntityTooLarge,
+		},
 	}
 
 	for _, tt := range tests {

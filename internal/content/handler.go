@@ -20,8 +20,13 @@ import (
 )
 
 const defaultUploadDir = "contents"
+const defaultMaxMediaUploadBytes = 200 << 20
+const maxMultipartFormOverheadBytes = 1 << 20
+
+var maxMediaUploadBytes int64 = defaultMaxMediaUploadBytes
 
 var errInvalidContentPayload = errors.New("invalid content payload")
+var errMediaContentTooLarge = errors.New("media content exceeds size limit")
 
 type Handler struct {
 	service       HandlerService
@@ -73,6 +78,14 @@ func NewHandler(service HandlerService, logger *zap.Logger) *Handler {
 		service: service,
 		logger:  logger,
 		problemWriter: problemutil.NewWithMapping(func(err error) problemutil.Problem {
+			if errors.Is(err, errMediaContentTooLarge) {
+				return problemutil.Problem{
+					Title:  "Payload Too Large",
+					Status: http.StatusRequestEntityTooLarge,
+					Type:   "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/413",
+					Detail: err.Error(),
+				}
+			}
 			if errors.Is(err, errInvalidContentPayload) {
 				return problemutil.NewValidateProblem(err.Error())
 			}
@@ -103,8 +116,15 @@ func (h *Handler) CreateMedia(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := logutil.WithContext(ctx, h.logger)
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxMediaUploadBytes+maxMultipartFormOverheadBytes)
 	file, header, err := r.FormFile("content")
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			h.problemWriter.WriteError(ctx, w, fmt.Errorf("%w: maximum upload size is %d bytes",
+				errMediaContentTooLarge, maxMediaUploadBytes), logger)
+			return
+		}
 		h.problemWriter.WriteError(ctx, w, fmt.Errorf("%w: missing multipart field 'content'",
 			errInvalidContentPayload), logger)
 		return
@@ -115,9 +135,14 @@ func (h *Handler) CreateMedia(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	raw, err := io.ReadAll(file)
+	raw, err := io.ReadAll(io.LimitReader(file, maxMediaUploadBytes+1))
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	if int64(len(raw)) > maxMediaUploadBytes {
+		h.problemWriter.WriteError(ctx, w, fmt.Errorf("%w: maximum upload size is %d bytes",
+			errMediaContentTooLarge, maxMediaUploadBytes), logger)
 		return
 	}
 

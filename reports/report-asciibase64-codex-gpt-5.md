@@ -407,3 +407,92 @@
 
 ### Next Steps
 - Apply the same `/auth/...` cookie-based contract in the upstream `sciedu-api` TypeSpec repo and regenerate `docs/API.md` from that output when available.
+
+## [2026-05-25 22:29] Task Record
+
+### Task Description
+- Address only review threads 1-3 on PR #34: media short-write handling, media upload size limiting, and unused question handler dependency removal.
+
+### Actions Taken
+- Checked Git status, Git username, `.gitignore`, and prior reports before editing.
+- Resolved PR #34 from the current branch and read unresolved review threads using the GitHub connector after `gh` was unavailable locally.
+- Modified `internal/content/service.go` to detect short writes from `tmpFile.Write(raw)`, remove the temp file, and return `io.ErrShortWrite` wrapped with context.
+- Modified `internal/content/handler.go` to cap media upload request bodies with `http.MaxBytesReader`, cap file reads with `io.LimitReader`, and map oversized media uploads to a 413 Problem response.
+- Modified `internal/content/handler_table_test.go` to verify oversized media uploads return 413 and do not call the service.
+- Modified `internal/question/handler.go`, `internal/question/handler_test.go`, and `cmd/backend/main.go` to remove the unused `optionService` field/constructor parameter from the question handler.
+- Ran `gofmt` on touched Go files.
+- Ran `go test ./internal/content`, `go test ./internal/question`, `go test ./...`, `git diff --check`, and `golangci-lint run ./...`; all passed.
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `git config user.name`
+  - `rg --files reports`
+  - `sed -n '1,220p' .gitignore`
+  - `sed -n '1,240p' reports/report-asciibase64-codex-gpt-5.md`
+  - `sed -n '1,220p' reports/report-kdotwei-codex-gpt-5.md`
+  - `gh auth status`
+  - `git remote -v`
+  - `git branch -vv`
+  - `git show-ref`
+  - `curl -L -sS 'https://api.github.com/repos/NYCU-SDC/sciedu-backend/pulls?head=NYCU-SDC:feat/SCIEDU-51-Implement-Question-CRUD'`
+  - GitHub connector PR/thread reads for PR #34
+  - `sed -n '1,260p' internal/content/handler.go`
+  - `sed -n '1,260p' internal/content/service.go`
+  - `sed -n '1,180p' internal/question/handler.go`
+  - `rg -n "content|media|MaxBytes|LimitReader|StatusRequestEntityTooLarge|payload" docs service internal -S`
+  - `sed -n '260,420p' internal/content/handler.go`
+  - `sed -n '300,380p' internal/content/handler_table_test.go`
+  - `sed -n '1,220p' internal/content/service_table_test.go`
+  - `rg -n "NewHandler\\(|optionService" internal cmd -S`
+  - `rg -n "type Problem|func New.*Problem|StatusRequestEntityTooLarge|WithMapping|HttpWriter" $(go env GOPATH)/pkg/mod/github.com/!n!y!c!u-!s!d!c/summer* -S`
+  - `sed -n '1,190p' /Users/asciibase64/go/pkg/mod/github.com/!n!y!c!u-!s!d!c/summer@v1.0.0-test/pkg/problem/problem.go`
+  - `gofmt -w cmd/backend/main.go internal/content/handler.go internal/content/handler_table_test.go internal/content/service.go internal/question/handler.go internal/question/handler_test.go`
+  - `go test ./internal/content`
+  - `go test ./internal/question`
+  - `go test ./...`
+  - `git diff --check`
+  - `golangci-lint run ./...`
+  - `date '+%Y-%m-%d %H:%M'`
+
+### Attempted Methods
+- Attempted to use `gh auth status` per the review-thread workflow, but `gh` is not installed in this environment.
+- Used the GitHub connector review-thread API instead, which preserved unresolved/outdated thread state.
+- Left the PR-scope/description thread untouched because the user explicitly requested only items 1-3.
+
+### Issues & Blockers
+- No unresolved blocker. Full tests, lint, and diff whitespace checks pass.
+- PR #34 still has an unresolved scope/description thread that requires either a PR description update or splitting unrelated content/auth changes; this was intentionally not addressed.
+
+### Next Steps
+- Review the local diff, then commit/push manually if acceptable.
+- Optionally update the PR description for the remaining scope thread before requesting review again.
+
+## [2026-05-25 22:44] Task Record
+
+### Task Description
+- Change the media upload limit from 10 MiB to 200 MiB.
+
+### Actions Taken
+- Updated `internal/content/handler.go` so `defaultMaxMediaUploadBytes` is `200 << 20`.
+- Kept the upload limit in an unexported package variable initialized to the 200 MiB default so the oversized-upload test can lower it locally without allocating a 200 MiB request.
+- Updated `internal/content/handler_table_test.go` to temporarily lower `maxMediaUploadBytes` inside the oversized-upload subtest and restore it with `t.Cleanup`.
+- Ran `gofmt` on touched files.
+- Ran `go test ./internal/content`, `go test ./...`, `git diff --check`, and `golangci-lint run ./...`; all passed.
+- Terminal commands executed:
+  - `sed -n '1,40p' internal/content/handler.go`
+  - `sed -n '1,40p' internal/content/handler_table_test.go`
+  - `sed -n '340,395p' internal/content/handler_table_test.go`
+  - `gofmt -w internal/content/handler.go internal/content/handler_table_test.go`
+  - `go test ./internal/content`
+  - `go test ./...`
+  - `git diff --check`
+  - `golangci-lint run ./...`
+  - `date '+%Y-%m-%d %H:%M'`
+
+### Attempted Methods
+- Avoided making the test allocate or read a 200 MiB multipart body by lowering the package-level upload limit only during that subtest.
+
+### Issues & Blockers
+- No unresolved blocker. Tests, lint, and diff whitespace checks pass.
+
+### Next Steps
+- Review the diff and commit locally if acceptable.

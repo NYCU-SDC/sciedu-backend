@@ -114,7 +114,7 @@ func newTestMux(q *fakeQuerier) *http.ServeMux {
 	logger := zap.NewNop()
 	optionService := NewOptionService(q, logger)
 	questionService := NewQuestionService(q, optionService, logger)
-	handler := NewHandler(questionService, optionService, logger)
+	handler := NewHandler(questionService, logger)
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux, nil)

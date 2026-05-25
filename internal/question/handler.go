@@ -17,7 +17,6 @@ var errInvalidQuestionPayload = errors.New("invalid question payload")
 
 type Handler struct {
 	questionService *QuestionService
-	optionService   *OptionService
 	logger          *zap.Logger
 	problemWriter   *problemutil.HttpWriter
 	validator       *validator.Validate
@@ -47,14 +46,13 @@ type questionResponse struct {
 	Options []optionResponse `json:"options,omitempty"`
 }
 
-func NewHandler(questionService *QuestionService, optionService *OptionService, logger *zap.Logger) *Handler {
+func NewHandler(questionService *QuestionService, logger *zap.Logger) *Handler {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 
 	return &Handler{
 		questionService: questionService,
-		optionService:   optionService,
 		logger:          logger,
 		problemWriter: problemutil.NewWithMapping(func(err error) problemutil.Problem {
 			if errors.Is(err, errInvalidQuestionPayload) {

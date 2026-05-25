@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -105,12 +106,20 @@ func (s *Service) CreateMediaContent(ctx context.Context, raw []byte, filename s
 
 	tmpPath := tmpFile.Name()
 
-	if _, err := tmpFile.Write(raw); err != nil {
+	n, err := tmpFile.Write(raw)
+	if err != nil {
 		if cerr := tmpFile.Close(); cerr != nil {
 			s.logger.Warn("failed to close temp media file after write error", zap.String("path", tmpPath), zap.Error(cerr))
 		}
 		_ = os.Remove(tmpPath)
 		return Content{}, fmt.Errorf("write media file: %w", err)
+	}
+	if n != len(raw) {
+		if cerr := tmpFile.Close(); cerr != nil {
+			s.logger.Warn("failed to close temp media file after short write", zap.String("path", tmpPath), zap.Error(cerr))
+		}
+		_ = os.Remove(tmpPath)
+		return Content{}, fmt.Errorf("write media file: %w", io.ErrShortWrite)
 	}
 	if err := tmpFile.Sync(); err != nil {
 		if cerr := tmpFile.Close(); cerr != nil {
