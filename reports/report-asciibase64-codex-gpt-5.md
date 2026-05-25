@@ -364,3 +364,46 @@
 ### Next Steps
 - Run the GoLand configuration again; it should no longer fail on dirty version 8.
 - Consider changing `.env` to use `/sciedu` instead of `/postgres` if the intended local database is `sciedu`.
+
+## [2026-05-25 12:12] Task Record
+
+### Task Description
+- Implement the docs/spec sync plan for cookie-based auth using `/auth/...` endpoints.
+
+### Actions Taken
+- Checked Git status, Git username, `.gitignore`, and prior Codex report context before editing.
+- Moved the untracked root design document into the docs tree:
+  - `Auth Design.md` -> `docs/AUTH_DESIGN.md`
+- Updated `docs/AUTH_DESIGN.md` so OAuth login, callback, refresh, logout, and refresh-cookie path examples consistently use `/auth/...`.
+- Updated `docs/API.md` auth section to replace the stale token-in-body dev login and path refresh endpoints with the target cookie-based contract:
+  - `GET /auth/login/oauth/google`
+  - `GET /auth/callback`
+  - `GET /auth/session`
+  - `POST /auth/refresh`
+  - `POST /auth/logout`
+  - `access_token` and `refresh_token` cookie security scheme notes.
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `git config user.name`
+  - `sed -n '1,220p' .gitignore`
+  - `tail -n 100 reports/report-asciibase64-codex-gpt-5.md`
+  - `rg -n "(/api/auth|/api/login|/auth/dev/login|/auth/refreshToken|/auth/session|/auth/refresh|/auth/logout|/auth/callback|/auth/login/oauth/google|/api/users/me|/api/chat|/api/questions)" 'Auth Design.md' docs/API.md docs/auth_ERD.md`
+  - `sed -n '45,100p' docs/API.md`
+  - `sed -n '1,320p' 'Auth Design.md'`
+  - `rg --files | rg '\.tsp$|tspconfig|package.json|openapi|swagger'`
+  - `mv 'Auth Design.md' docs/AUTH_DESIGN.md`
+  - `rg -n "(/api/auth|/api/login|/auth/dev/login|/auth/refreshToken|accessToken\"|refreshToken\"|expirationTime|/auth/login/oauth/google|/auth/callback|/auth/session|/auth/refresh|/auth/logout)" docs/API.md docs/AUTH_DESIGN.md docs/auth_ERD.md`
+  - `sed -n '45,150p' docs/API.md`
+  - `sed -n '45,215p' docs/AUTH_DESIGN.md`
+  - `git diff -- docs/API.md docs/AUTH_DESIGN.md`
+  - `date '+%Y-%m-%d %H:%M'`
+
+### Attempted Methods
+- Looked for local TypeSpec/OpenAPI inputs first, but this backend checkout has no `.tsp`, `tspconfig`, `package.json`, OpenAPI, or Swagger source files. Because the TypeSpec API repo is unavailable locally, updated the backend docs directly and added a note in `docs/API.md`.
+
+### Issues & Blockers
+- TypeSpec compile/emission and `docs/API.md` regeneration could not be run from this repository because the TypeSpec source repo is not present.
+- No Go tests were run because the change is documentation-only.
+
+### Next Steps
+- Apply the same `/auth/...` cookie-based contract in the upstream `sciedu-api` TypeSpec repo and regenerate `docs/API.md` from that output when available.
