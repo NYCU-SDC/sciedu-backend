@@ -4,11 +4,13 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"sciedu-backend/internal/chat"
-	"sciedu-backend/internal/cors"
 	"strings"
 
+	"sciedu-backend/internal/chat"
 	"sciedu-backend/internal/config"
+	"sciedu-backend/internal/content"
+	"sciedu-backend/internal/cors"
+	"sciedu-backend/internal/question"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
@@ -43,6 +45,15 @@ func main() {
 		logger.Fatal("Failed to connect to database", zap.Error(err))
 	}
 
+	questionStore := question.NewStore(pool)
+	optionService := question.NewOptionService(questionStore, logger)
+	questionService := question.NewQuestionService(questionStore, optionService, logger)
+	questionHandler := question.NewHandler(questionService, logger)
+
+	contentQueries := content.New(pool)
+	contentService := content.NewService(contentQueries, logger)
+	contentHandler := content.NewHandler(contentService, logger)
+
 	chatQueriers := chat.New(pool)
 	chatProvider := chat.NewProvider(cfg.LLMURL+"/chat", &http.Client{}, nil)
 	chatStreamHub := chat.NewStreamHub()
@@ -65,6 +76,8 @@ func main() {
 		}
 	})
 
+	questionHandler.RegisterRoutes(mux, middlewareSet)
+	contentHandler.RegisterRoutes(mux, middlewareSet)
 	mux.HandleFunc("POST /api/chat", chatHandler.CreateChat)
 	mux.HandleFunc("GET /api/chat/stream/{messageID}", chatHandler.Stream)
 	mux.HandleFunc("GET /api/chat/{chatID}", chatHandler.GetChat)

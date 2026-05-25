@@ -34,6 +34,9 @@ mocks/
 .idea/
 .vscode/
 
-.DS_store
+.DS_Store
 
 bin
+
+# Local temp artifacts from media tests
+internal/content/var/

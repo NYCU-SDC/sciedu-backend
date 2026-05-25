@@ -1,9 +1,4 @@
-DO $$
-BEGIN
-    CREATE TYPE content_type AS ENUM ('TEXT', 'MEDIA');
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
-END $$;
+CREATE TYPE content_type AS ENUM ('TEXT', 'MEDIA');
 
 CREATE TABLE IF NOT EXISTS contents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

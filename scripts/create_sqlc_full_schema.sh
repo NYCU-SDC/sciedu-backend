@@ -121,6 +121,8 @@ EOF
             go_type:
               import: "github.com/google/uuid"
               type: "UUID"
+          - db_type: "content_type"
+            go_type: "string"
 EOF
 done
 
