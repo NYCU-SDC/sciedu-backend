@@ -12,7 +12,6 @@ import (
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"go.uber.org/zap"
 )
 
@@ -27,8 +26,8 @@ var errEmptyMediaContent = errors.New("media content is empty")
 var errEmptyTextContent = errors.New("text content is empty")
 
 type Querier interface {
-	CreateMediaContent(ctx context.Context, content pgtype.Text) (Content, error)
-	CreateTextContent(ctx context.Context, content pgtype.Text) (Content, error)
+	CreateMediaContent(ctx context.Context, content string) (Content, error)
+	CreateTextContent(ctx context.Context, content string) (Content, error)
 	GetMediaContent(ctx context.Context, id uuid.UUID) (Content, error)
 	GetTextContent(ctx context.Context, id uuid.UUID) (Content, error)
 	GetContent(ctx context.Context, id uuid.UUID) (Content, error)
@@ -52,6 +51,13 @@ type TextPage struct {
 	HasNextPage bool
 }
 
+type MediaUploadRequest struct {
+	Content  io.Reader
+	Filename string
+	Dir      string
+	MaxBytes int64
+}
+
 func NewService(querier Querier, logger *zap.Logger) *Service {
 	if logger == nil {
 		logger = zap.NewNop()
@@ -69,10 +75,7 @@ func (s *Service) CreateTextContent(ctx context.Context, content string) (Conten
 		return Content{}, errEmptyTextContent
 	}
 
-	item, err := s.querier.CreateTextContent(ctx, pgtype.Text{
-		String: content,
-		Valid:  true,
-	})
+	item, err := s.querier.CreateTextContent(ctx, content)
 	if err != nil {
 		return Content{}, databaseutil.WrapDBError(err, s.logger, "create text content")
 	}
@@ -80,15 +83,20 @@ func (s *Service) CreateTextContent(ctx context.Context, content string) (Conten
 	return item, nil
 }
 
-func (s *Service) CreateMediaContent(ctx context.Context, raw []byte, filename string, dir string) (Content, error) {
-	if len(raw) == 0 {
+func (s *Service) CreateMediaContent(ctx context.Context, upload MediaUploadRequest) (Content, error) {
+	if upload.Content == nil {
 		return Content{}, errEmptyMediaContent
 	}
+	dir := upload.Dir
 	if dir == "" {
 		dir = defaultMediaDir
 	}
+	maxBytes := upload.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultMaxMediaUploadBytes
+	}
 
-	ext := sanitizeExt(filepath.Ext(filename))
+	ext := sanitizeExt(filepath.Ext(upload.Filename))
 	mediaRoot := dir
 	if !filepath.IsAbs(dir) {
 		mediaRoot = filepath.Join(".", dir)
@@ -106,7 +114,7 @@ func (s *Service) CreateMediaContent(ctx context.Context, raw []byte, filename s
 
 	tmpPath := tmpFile.Name()
 
-	n, err := tmpFile.Write(raw)
+	written, err := io.Copy(tmpFile, io.LimitReader(upload.Content, maxBytes+1))
 	if err != nil {
 		if cerr := tmpFile.Close(); cerr != nil {
 			s.logger.Warn("failed to close temp media file after write error", zap.String("path", tmpPath), zap.Error(cerr))
@@ -114,12 +122,19 @@ func (s *Service) CreateMediaContent(ctx context.Context, raw []byte, filename s
 		_ = os.Remove(tmpPath)
 		return Content{}, fmt.Errorf("write media file: %w", err)
 	}
-	if n != len(raw) {
+	if written == 0 {
 		if cerr := tmpFile.Close(); cerr != nil {
-			s.logger.Warn("failed to close temp media file after short write", zap.String("path", tmpPath), zap.Error(cerr))
+			s.logger.Warn("failed to close temp media file after empty upload", zap.String("path", tmpPath), zap.Error(cerr))
 		}
 		_ = os.Remove(tmpPath)
-		return Content{}, fmt.Errorf("write media file: %w", io.ErrShortWrite)
+		return Content{}, errEmptyMediaContent
+	}
+	if written > maxBytes {
+		if cerr := tmpFile.Close(); cerr != nil {
+			s.logger.Warn("failed to close temp media file after oversized upload", zap.String("path", tmpPath), zap.Error(cerr))
+		}
+		_ = os.Remove(tmpPath)
+		return Content{}, fmt.Errorf("%w: maximum upload size is %d bytes", errMediaContentTooLarge, maxBytes)
 	}
 	if err := tmpFile.Sync(); err != nil {
 		if cerr := tmpFile.Close(); cerr != nil {
@@ -143,10 +158,7 @@ func (s *Service) CreateMediaContent(ctx context.Context, raw []byte, filename s
 
 	storedPath := toStoredPath(finalPath)
 	// Persist only the stored path in DB; rollback file if DB insert fails.
-	item, err := s.querier.CreateMediaContent(ctx, pgtype.Text{
-		String: storedPath,
-		Valid:  true,
-	})
+	item, err := s.querier.CreateMediaContent(ctx, storedPath)
 	if err != nil {
 		_ = os.Remove(finalPath)
 		return Content{}, databaseutil.WrapDBError(err, s.logger, "create media content")

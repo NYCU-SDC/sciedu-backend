@@ -1,6 +1,7 @@
 package question
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -12,8 +13,6 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
-
-var errInvalidQuestionPayload = errors.New("invalid question payload")
 
 type Handler struct {
 	questionService *QuestionService
@@ -91,7 +90,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]questionResponse, 0, len(questions))
 	for _, q := range questions {
-		item, err := h.questionService.buildQuestionResponse(ctx, q)
+		item, err := h.buildQuestionResponse(ctx, q)
 		if err != nil {
 			h.problemWriter.WriteError(ctx, w, err, logger)
 			return
@@ -118,7 +117,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.questionService.buildQuestionResponse(ctx, question)
+	resp, err := h.buildQuestionResponse(ctx, question)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -146,7 +145,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.questionService.buildQuestionResponse(ctx, question)
+	resp, err := h.buildQuestionResponse(ctx, question)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -180,7 +179,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.questionService.buildQuestionResponse(ctx, question)
+	resp, err := h.buildQuestionResponse(ctx, question)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -214,6 +213,34 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) parseID(raw string) (uuid.UUID, error) {
 	return handlerutil.ParseUUID(raw)
+}
+
+func (h *Handler) buildQuestionResponse(ctx context.Context, q Question) (questionResponse, error) {
+	resp := questionResponse{
+		ID:      q.ID,
+		Type:    q.Type,
+		Content: q.Content,
+	}
+
+	if q.Type != "CHOICE" {
+		return resp, nil
+	}
+
+	opts, err := h.questionService.ListOptionsByQuestion(ctx, q.ID)
+	if err != nil {
+		return questionResponse{}, err
+	}
+
+	resp.Options = make([]optionResponse, 0, len(opts))
+	for _, opt := range opts {
+		resp.Options = append(resp.Options, optionResponse{
+			ID:      opt.ID,
+			Label:   opt.Label,
+			Content: opt.Content,
+		})
+	}
+
+	return resp, nil
 }
 
 func (r createUpdateQuestionRequest) toQuestionOptionRequests() []QuestionOptionRequest {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -14,12 +15,11 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"go.uber.org/zap"
 )
 
 type fakeHandlerService struct {
-	createMediaContentFn func(ctx context.Context, raw []byte, filename string, dir string) (Content, error)
+	createMediaContentFn func(ctx context.Context, upload MediaUploadRequest) (Content, error)
 	getMediaContentFn    func(ctx context.Context, id uuid.UUID) (Content, error)
 	listTextContentsFn   func(ctx context.Context, page, pageSize int32) (TextPage, error)
 	createTextContentFn  func(ctx context.Context, content string) (Content, error)
@@ -29,9 +29,9 @@ type fakeHandlerService struct {
 	deleteContentFn      func(ctx context.Context, id uuid.UUID) error
 }
 
-func (f *fakeHandlerService) CreateMediaContent(ctx context.Context, raw []byte, filename string, dir string) (Content, error) {
+func (f *fakeHandlerService) CreateMediaContent(ctx context.Context, upload MediaUploadRequest) (Content, error) {
 	if f.createMediaContentFn != nil {
-		return f.createMediaContentFn(ctx, raw, filename, dir)
+		return f.createMediaContentFn(ctx, upload)
 	}
 	return Content{}, nil
 }
@@ -112,7 +112,7 @@ func TestCreateText(t *testing.T) {
 			body: `{"content":"hello"}`,
 			service: &fakeHandlerService{
 				createTextContentFn: func(context.Context, string) (Content, error) {
-					return Content{ID: id, Type: "TEXT", Content: pgtype.Text{String: "hello", Valid: true}}, nil
+					return Content{ID: id, Type: "TEXT", Content: "hello"}, nil
 				},
 			},
 			wantStatus: http.StatusCreated,
@@ -163,12 +163,18 @@ func TestListText(t *testing.T) {
 			wantStatus: http.StatusBadRequest,
 		},
 		{
+			name:       "overflow query",
+			path:       "/api/content/text?page=999999999999",
+			service:    &fakeHandlerService{},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
 			name: "success",
 			path: "/api/content/text?page=1&pageSize=20",
 			service: &fakeHandlerService{
 				listTextContentsFn: func(context.Context, int32, int32) (TextPage, error) {
 					return TextPage{
-						Items:       []Content{{ID: id, Type: "TEXT", Content: pgtype.Text{String: "data", Valid: true}}},
+						Items:       []Content{{ID: id, Type: "TEXT", Content: "data"}},
 						TotalPages:  1,
 						TotalItems:  1,
 						CurrentPage: 1,
@@ -237,7 +243,7 @@ func TestDelete(t *testing.T) {
 			path: "/api/content/" + id.String(),
 			service: &fakeHandlerService{
 				getContentFn: func(context.Context, uuid.UUID) (Content, error) {
-					return Content{ID: id, Type: "TEXT", Content: pgtype.Text{String: "x", Valid: true}}, nil
+					return Content{ID: id, Type: "TEXT", Content: "x"}, nil
 				},
 			},
 			wantStatus: http.StatusNoContent,
@@ -247,7 +253,7 @@ func TestDelete(t *testing.T) {
 			path: "/api/content/" + id.String(),
 			service: &fakeHandlerService{
 				getContentFn: func(context.Context, uuid.UUID) (Content, error) {
-					return Content{ID: id, Type: "TEXT", Content: pgtype.Text{String: "x", Valid: true}}, nil
+					return Content{ID: id, Type: "TEXT", Content: "x"}, nil
 				},
 				deleteContentFn: func(context.Context, uuid.UUID) error {
 					return errors.New("boom")
@@ -260,7 +266,7 @@ func TestDelete(t *testing.T) {
 			path: "/api/content/" + id.String(),
 			service: &fakeHandlerService{
 				getContentFn: func(context.Context, uuid.UUID) (Content, error) {
-					return Content{ID: id, Type: "MEDIA", Content: pgtype.Text{String: mediaFileKeep, Valid: true}}, nil
+					return Content{ID: id, Type: "MEDIA", Content: mediaFileKeep}, nil
 				},
 				deleteContentFn: func(context.Context, uuid.UUID) error {
 					return errors.New("boom")
@@ -279,7 +285,7 @@ func TestDelete(t *testing.T) {
 			path: "/api/content/" + id.String(),
 			service: &fakeHandlerService{
 				getContentFn: func(context.Context, uuid.UUID) (Content, error) {
-					return Content{ID: id, Type: "MEDIA", Content: pgtype.Text{String: mediaFile, Valid: true}}, nil
+					return Content{ID: id, Type: "MEDIA", Content: mediaFile}, nil
 				},
 			},
 			wantStatus: http.StatusNoContent,
@@ -346,18 +352,25 @@ func TestCreateMedia(t *testing.T) {
 				return req
 			},
 			service: &fakeHandlerService{
-				createMediaContentFn: func(_ context.Context, raw []byte, filename string, _ string) (Content, error) {
-					if string(raw) != "hello" {
-						t.Fatalf("unexpected media input raw=%q filename=%s", string(raw), filename)
+				createMediaContentFn: func(_ context.Context, upload MediaUploadRequest) (Content, error) {
+					raw, err := io.ReadAll(upload.Content)
+					if err != nil {
+						t.Fatalf("read upload content: %v", err)
 					}
-					ext := filepath.Ext(filename)
+					if string(raw) != "hello" {
+						t.Fatalf("unexpected media input raw=%q filename=%s", string(raw), upload.Filename)
+					}
+					ext := filepath.Ext(upload.Filename)
 					if ext != ".txt" {
 						t.Fatalf("expected extension .txt, got %q", ext)
 					}
-					if _, err := uuid.Parse(strings.TrimSuffix(filename, ext)); err != nil {
-						t.Fatalf("expected generated uuid filename, got %q", filename)
+					if _, err := uuid.Parse(strings.TrimSuffix(upload.Filename, ext)); err != nil {
+						t.Fatalf("expected generated uuid filename, got %q", upload.Filename)
 					}
-					return Content{ID: uuid.New(), Type: "MEDIA", Content: pgtype.Text{String: "./contents/a.txt", Valid: true}}, nil
+					if upload.MaxBytes != maxMediaUploadBytes {
+						t.Fatalf("expected max bytes %d, got %d", maxMediaUploadBytes, upload.MaxBytes)
+					}
+					return Content{ID: uuid.New(), Type: "MEDIA", Content: "./contents/a.txt"}, nil
 				},
 			},
 			wantStatus: http.StatusCreated,
@@ -388,9 +401,15 @@ func TestCreateMedia(t *testing.T) {
 				return req
 			},
 			service: &fakeHandlerService{
-				createMediaContentFn: func(context.Context, []byte, string, string) (Content, error) {
-					t.Fatal("service should not be called for oversized uploads")
-					return Content{}, nil
+				createMediaContentFn: func(_ context.Context, upload MediaUploadRequest) (Content, error) {
+					raw, err := io.ReadAll(upload.Content)
+					if err != nil {
+						t.Fatalf("read upload content: %v", err)
+					}
+					if int64(len(raw)) <= upload.MaxBytes {
+						t.Fatalf("expected oversized upload, got %d bytes with limit %d", len(raw), upload.MaxBytes)
+					}
+					return Content{}, errMediaContentTooLarge
 				},
 			},
 			wantStatus: http.StatusRequestEntityTooLarge,
@@ -434,7 +453,7 @@ func TestStreamMedia(t *testing.T) {
 			path: "/api/content/media/" + id.String(),
 			service: &fakeHandlerService{
 				getMediaContentFn: func(context.Context, uuid.UUID) (Content, error) {
-					return Content{ID: id, Type: "MEDIA", Content: pgtype.Text{String: path, Valid: true}}, nil
+					return Content{ID: id, Type: "MEDIA", Content: path}, nil
 				},
 			},
 			wantStatus: http.StatusOK,

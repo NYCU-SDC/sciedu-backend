@@ -152,35 +152,11 @@ func (s *QuestionService) UpdateWithOptions(ctx context.Context, id uuid.UUID, a
 	return question, nil
 }
 
-func (s *QuestionService) buildQuestionResponse(ctx context.Context, q Question) (questionResponse, error) {
-	resp := questionResponse{
-		ID:      q.ID,
-		Type:    q.Type,
-		Content: q.Content,
-	}
-
-	if q.Type != "CHOICE" {
-		return resp, nil
-	}
-
-	opts, err := s.optionService.ListByQuestion(ctx, q.ID)
-	if err != nil {
-		return questionResponse{}, err
-	}
-
-	resp.Options = make([]optionResponse, 0, len(opts))
-	for _, opt := range opts {
-		resp.Options = append(resp.Options, optionResponse{
-			ID:      opt.ID,
-			Label:   opt.Label,
-			Content: opt.Content,
-		})
-	}
-
-	return resp, nil
-}
-
 func (s *QuestionService) SyncQuestionOptions(ctx context.Context, questionID uuid.UUID, questionType string, options []QuestionOptionRequest, replace bool) error {
+	if err := validateQuestionOptions(questionType, options); err != nil {
+		return err
+	}
+
 	if replace || questionType == "TEXT" {
 		existing, err := s.optionService.ListByQuestion(ctx, questionID)
 		if err != nil {
@@ -210,6 +186,10 @@ func (s *QuestionService) SyncQuestionOptions(ctx context.Context, questionID uu
 	return nil
 }
 
+func (s *QuestionService) ListOptionsByQuestion(ctx context.Context, questionID uuid.UUID) ([]Option, error) {
+	return s.optionService.ListByQuestion(ctx, questionID)
+}
+
 func (s *QuestionService) withinTx(ctx context.Context, fn func(QuestionQuerier, OptionQuerier) error) error {
 	if s.transactor == nil {
 		return errQuestionTransactionUnsupported
@@ -218,8 +198,12 @@ func (s *QuestionService) withinTx(ctx context.Context, fn func(QuestionQuerier,
 }
 
 func validateQuestionOptions(questionType string, options []QuestionOptionRequest) error {
-	if questionType == "TEXT" {
+	switch questionType {
+	case "TEXT":
 		return nil
+	case "CHOICE":
+	default:
+		return fmt.Errorf("%w: unsupported question type", errInvalidQuestionPayload)
 	}
 
 	if len(options) == 0 {

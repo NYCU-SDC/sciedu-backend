@@ -25,9 +25,6 @@ const maxMultipartFormOverheadBytes = 1 << 20
 
 var maxMediaUploadBytes int64 = defaultMaxMediaUploadBytes
 
-var errInvalidContentPayload = errors.New("invalid content payload")
-var errMediaContentTooLarge = errors.New("media content exceeds size limit")
-
 type Handler struct {
 	service       HandlerService
 	logger        *zap.Logger
@@ -36,7 +33,7 @@ type Handler struct {
 }
 
 type HandlerService interface {
-	CreateMediaContent(ctx context.Context, raw []byte, filename string, dir string) (Content, error)
+	CreateMediaContent(ctx context.Context, upload MediaUploadRequest) (Content, error)
 	GetMediaContent(ctx context.Context, id uuid.UUID) (Content, error)
 	ListTextContents(ctx context.Context, page, pageSize int32) (TextPage, error)
 	CreateTextContent(ctx context.Context, content string) (Content, error)
@@ -135,20 +132,14 @@ func (h *Handler) CreateMedia(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	raw, err := io.ReadAll(io.LimitReader(file, maxMediaUploadBytes+1))
-	if err != nil {
-		h.problemWriter.WriteError(ctx, w, err, logger)
-		return
-	}
-	if int64(len(raw)) > maxMediaUploadBytes {
-		h.problemWriter.WriteError(ctx, w, fmt.Errorf("%w: maximum upload size is %d bytes",
-			errMediaContentTooLarge, maxMediaUploadBytes), logger)
-		return
-	}
-
 	ext := sanitizeExt(filepath.Ext(header.Filename))
 	generatedFilename := uuid.NewString() + ext
-	item, err := h.service.CreateMediaContent(ctx, raw, generatedFilename, defaultUploadDir)
+	item, err := h.service.CreateMediaContent(ctx, MediaUploadRequest{
+		Content:  file,
+		Filename: generatedFilename,
+		Dir:      defaultUploadDir,
+		MaxBytes: maxMediaUploadBytes,
+	})
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -173,7 +164,7 @@ func (h *Handler) StreamMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	path := item.Content.String
+	path := item.Content
 	f, err := os.Open(path)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
@@ -316,8 +307,8 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if enumToString(item.Type) == "MEDIA" {
-		if rmErr := os.Remove(item.Content.String); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
-			logger.Warn("failed to remove media file after deleting content", zap.String("path", item.Content.String), zap.Error(rmErr))
+		if rmErr := os.Remove(item.Content); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			logger.Warn("failed to remove media file after deleting content", zap.String("path", item.Content), zap.Error(rmErr))
 		}
 	}
 
@@ -329,7 +320,7 @@ func parsePaginationParams(r *http.Request) (int32, int32, error) {
 
 	pageRaw := r.URL.Query().Get("page")
 	if pageRaw != "" {
-		parsed, parseErr := strconv.Atoi(pageRaw)
+		parsed, parseErr := strconv.ParseInt(pageRaw, 10, 32)
 		if parseErr != nil {
 			return 0, 0, fmt.Errorf("%w: invalid page query", errInvalidContentPayload)
 		}
@@ -338,7 +329,7 @@ func parsePaginationParams(r *http.Request) (int32, int32, error) {
 
 	pageSizeRaw := r.URL.Query().Get("pageSize")
 	if pageSizeRaw != "" {
-		parsed, parseErr := strconv.Atoi(pageSizeRaw)
+		parsed, parseErr := strconv.ParseInt(pageSizeRaw, 10, 32)
 		if parseErr != nil {
 			return 0, 0, fmt.Errorf("%w: invalid pageSize query", errInvalidContentPayload)
 		}
@@ -365,7 +356,7 @@ func toContentResponse(c Content) contentResponse {
 	return contentResponse{
 		ID:      c.ID,
 		Type:    enumToString(c.Type),
-		Content: c.Content.String,
+		Content: c.Content,
 	}
 }
 

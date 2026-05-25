@@ -496,3 +496,148 @@
 
 ### Next Steps
 - Review the diff and commit locally if acceptable.
+
+## [2026-05-25 23:12] Task Record
+
+### Task Description
+- Inspect current unresolved review threads on PR #34 using the GitHub PR comment workflow.
+
+### Actions Taken
+- Checked Git status, Git username, `.gitignore`, and prior Codex report context.
+- Confirmed the current branch is `feat/SCIEDU-51-Implement-Question-CRUD`.
+- Confirmed `gh` is not installed in this environment, so the bundled CLI review-thread script path is unavailable.
+- Used the GitHub connector to fetch PR #34 metadata and thread-aware review state.
+- Clustered unresolved review threads into outdated/already-addressed threads, actionable code/doc threads, and PR-scope description threads.
+- Modified only this report file.
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `git config user.name`
+  - `sed -n '1,220p' .gitignore`
+  - `tail -n 180 reports/report-asciibase64-codex-gpt-5.md`
+  - `command -v gh`
+  - `git remote -v`
+  - `git branch --show-current`
+  - GitHub connector PR/thread reads for PR #34
+  - `date '+%Y-%m-%d %H:%M'`
+
+### Attempted Methods
+- Followed the GitHub review workflow, but `gh` is unavailable locally. Used the GitHub connector's review-thread API as the fallback because it includes resolved and outdated state.
+
+### Issues & Blockers
+- No code changes were made during this inspection phase.
+- Several older threads remain unresolved on GitHub even though they are outdated or appear addressed in the current PR diff; no GitHub resolve action was taken because the user did not explicitly request write actions.
+
+### Next Steps
+- User should choose which numbered unresolved threads to address locally before edits begin.
+
+## [2026-05-25 23:17] Task Record
+
+### Task Description
+- Address PR #34 review threads 1, 4, 5, 6, and 7 locally.
+
+### Actions Taken
+- Modified `internal/content/handler.go` so `CreateMedia` no longer reads media uploads into memory; it passes the multipart stream to the service and keeps request-level guardrails.
+- Added `internal/content/errors.go` for shared content handler/service sentinel errors.
+- Modified `internal/content/service.go` to accept `MediaUploadRequest`, stream upload content into a temp file with `io.Copy` and `io.LimitReader`, enforce max bytes, clean up empty/oversized/failed files, then persist the stored path.
+- Modified `internal/content/handler_table_test.go` for streamed upload request assertions and pagination overflow coverage.
+- Modified `internal/content/service_table_test.go` for reader-based media upload tests and oversized upload cleanup coverage.
+- Added `internal/question/errors.go` so `errInvalidQuestionPayload` is no longer owned by `handler.go`.
+- Modified `internal/question/handler.go` so HTTP response DTO mapping happens in the handler instead of `QuestionService`.
+- Modified `internal/question/question_service.go` to remove handler DTO construction, expose domain option listing, validate question type explicitly, and validate before direct option sync.
+- Modified `internal/question/handler_test.go` with table-driven service validation coverage including unsupported question type.
+- Ran `gofmt` on touched Go files.
+- Ran `go test ./internal/content`, `go test ./internal/question`, `go test ./...`, `git diff --check`, and `golangci-lint run ./...`; all passed.
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `sed -n '1,240p' internal/content/handler.go`
+  - `sed -n '1,280p' internal/content/service.go`
+  - `sed -n '1,280p' internal/question/question_service.go`
+  - `sed -n '240,380p' internal/content/handler.go`
+  - `sed -n '1,260p' internal/question/handler.go`
+  - `sed -n '1,220p' internal/content/service_table_test.go`
+  - `sed -n '300,410p' internal/content/handler_table_test.go`
+  - `sed -n '1,640p' internal/question/handler_test.go`
+  - `rg -n "CreateMediaContent|buildQuestionResponse|validateQuestionOptions|invalid question|unsupported|parsePaginationParams" internal -S`
+  - `gofmt -w ...`
+  - `go test ./internal/content`
+  - `go test ./internal/question`
+  - `go test ./...`
+  - `git diff --check`
+  - `golangci-lint run ./...`
+  - `git status --short`
+  - `git diff -- internal/content/handler.go internal/content/service.go internal/question/handler.go internal/question/question_service.go`
+  - `date '+%Y-%m-%d %H:%M'`
+
+### Attempted Methods
+- Initial oversized upload handler test still expected the service not to be called. That failed because the new streaming design intentionally delegates per-file size enforcement to the service after multipart parsing. Updated the fake service to read the stream and return `errMediaContentTooLarge`, verifying the handler maps it to 413.
+
+### Issues & Blockers
+- No unresolved blocker. Tests, lint, and diff whitespace checks pass.
+- GitHub review threads were not resolved or replied to because no GitHub write action was requested.
+
+### Next Steps
+- Review the local diff and decide whether to address the remaining doc/scope review threads separately.
+
+## [2026-05-25 23:44] Task Record
+
+### Task Description
+- Diagnose and fix the runtime error when testing `/api/content/text`.
+
+### Actions Taken
+- Checked Git status, Git username, `.gitignore`, and prior Codex report context.
+- Confirmed `docs/API.md` is currently missing in this branch, so API docs could not be used as the reference for this endpoint.
+- Reproduced `GET /api/content/text` returning `500 Internal Server Error` against the stale backend process on port `8080`.
+- Checked PostgreSQL migration/table state in the `postgres` database; `schema_migrations` was `version=9 dirty=false`, `contents` existed, and equivalent SQL queries worked in psql.
+- Added a temporary `cmd/debug-content` program to call `content.New(pool).ListTextContents` directly; it revealed the actual Go error: `can't scan into dest[1] (col: type): cannot scan unknown type ... into *interface {}`.
+- Removed the temporary debug program after diagnosis.
+- Updated `internal/content/schema.sql` so sqlc can parse `CREATE TYPE content_type AS ENUM ('TEXT', 'MEDIA')` directly instead of hiding it inside a `DO $$` block.
+- Updated `scripts/create_sqlc_full_schema.sh` to override `content_type` to Go `string`.
+- Updated `internal/content/schema.sql` and `internal/database/migrations/3_contents.up.sql` so `contents.type` and `contents.content` are `NOT NULL`.
+- Ran `make gen`, regenerating `internal/content/models.go`, `internal/chat/models.go`, and `internal/question/models.go` with `Content.Type` and `Content.Content` as `string`.
+- Updated content handler/service/tests to use string content values instead of `pgtype.Text` for generated `Content.Content`.
+- Restarted the local backend after stopping the stale process, verified:
+  - `GET /api/content/text` returned `200 OK` with text content JSON.
+  - `POST /api/content/text` returned `201 Created`.
+- Deleted the `codex verify` text row inserted during endpoint verification.
+- Stopped the backend process started for verification.
+- Ran `go test ./internal/content`, `go test ./...`, `git diff --check`, and `golangci-lint run ./...`; all passed.
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `git config user.name`
+  - `sed -n '1,220p' .gitignore`
+  - `tail -n 160 reports/report-asciibase64-codex-gpt-5.md`
+  - `sed -n '1,220p' docs/API.md`
+  - `sed -n '1,260p' internal/content/handler.go`
+  - `sed -n '1,260p' internal/content/service.go`
+  - `sed -n '1,120p' internal/content/queries.sql`
+  - `lsof -nP -iTCP:8080 -sTCP:LISTEN`
+  - `docker logs --tail 120 sciedu-backend-local`
+  - `curl -i -sS http://localhost:8080/api/content/text`
+  - `docker exec SciEdu psql -U postgres -d postgres -c "SELECT * FROM schema_migrations;"`
+  - `docker exec SciEdu psql -U postgres -d postgres -c "\\d+ contents"`
+  - `docker exec SciEdu psql -U postgres -d postgres -c "SELECT id, type, content FROM contents WHERE type = 'TEXT' ORDER BY id LIMIT 20 OFFSET 0;"`
+  - `docker exec SciEdu psql -U postgres -d postgres -c "SELECT COUNT(*) FROM contents WHERE type = 'TEXT';"`
+  - `make gen`
+  - `go run ./cmd/debug-content`
+  - `go test ./internal/content`
+  - `kill 59251`
+  - `go run ./cmd/backend`
+  - `curl -i -sS -X POST http://localhost:8080/api/content/text -H 'Content-Type: application/json' -d '{"content":"codex verify"}'`
+  - `kill 60707`
+  - `docker exec SciEdu psql -U postgres -d postgres -c "DELETE FROM contents WHERE content = 'codex verify';"`
+  - `go test ./...`
+  - `git diff --check`
+  - `golangci-lint run ./...`
+  - `date '+%Y-%m-%d %H:%M'`
+
+### Attempted Methods
+- Direct SQL queries in psql worked, so the issue was not table absence, migration dirtiness, or invalid SQL.
+- The first sqlc override did not work because `content_type` was declared inside a `DO $$` block that sqlc did not parse as a type declaration. Changing `internal/content/schema.sql` to direct `CREATE TYPE` fixed code generation.
+- `curl` initially kept hitting a stale backend process; stopped it and restarted the backend from the fixed source before final endpoint verification.
+
+### Issues & Blockers
+- No unresolved blocker. Endpoint verification, tests, lint, and diff whitespace checks pass.
+- `docs/API.md` is absent on this branch, so API docs remain unavailable until the separate documentation PR issue is addressed.
+
+### Next Steps
+- Review the generated model diffs and migration/schema change before committing.

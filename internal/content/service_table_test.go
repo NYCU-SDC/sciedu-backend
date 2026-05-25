@@ -1,6 +1,7 @@
 package content
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -8,14 +9,13 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 	"go.uber.org/zap"
 )
 
 type fakeMediaQuerier struct {
-	createMediaContentFn   func(ctx context.Context, content pgtype.Text) (Content, error)
+	createMediaContentFn   func(ctx context.Context, content string) (Content, error)
 	createMediaContentArgs []string
-	createTextContentFn    func(ctx context.Context, content pgtype.Text) (Content, error)
+	createTextContentFn    func(ctx context.Context, content string) (Content, error)
 	createTextContentArgs  []string
 	getMediaContentFn      func(ctx context.Context, id uuid.UUID) (Content, error)
 	getTextContentFn       func(ctx context.Context, id uuid.UUID) (Content, error)
@@ -26,16 +26,16 @@ type fakeMediaQuerier struct {
 	deleteContentFn        func(ctx context.Context, id uuid.UUID) error
 }
 
-func (f *fakeMediaQuerier) CreateMediaContent(ctx context.Context, content pgtype.Text) (Content, error) {
-	f.createMediaContentArgs = append(f.createMediaContentArgs, content.String)
+func (f *fakeMediaQuerier) CreateMediaContent(ctx context.Context, content string) (Content, error) {
+	f.createMediaContentArgs = append(f.createMediaContentArgs, content)
 	if f.createMediaContentFn != nil {
 		return f.createMediaContentFn(ctx, content)
 	}
 	return Content{}, nil
 }
 
-func (f *fakeMediaQuerier) CreateTextContent(ctx context.Context, content pgtype.Text) (Content, error) {
-	f.createTextContentArgs = append(f.createTextContentArgs, content.String)
+func (f *fakeMediaQuerier) CreateTextContent(ctx context.Context, content string) (Content, error) {
+	f.createTextContentArgs = append(f.createTextContentArgs, content)
 	if f.createTextContentFn != nil {
 		return f.createTextContentFn(ctx, content)
 	}
@@ -97,6 +97,7 @@ func TestCreateMediaContent(t *testing.T) {
 		raw        []byte
 		file       string
 		setup      func(q *fakeMediaQuerier)
+		maxBytes   int64
 		wantErr    error
 		wantAnyErr bool
 		assert     func(t *testing.T, root string, q *fakeMediaQuerier, got Content)
@@ -106,7 +107,7 @@ func TestCreateMediaContent(t *testing.T) {
 			raw:  []byte("hello world"),
 			file: "photo.png",
 			setup: func(q *fakeMediaQuerier) {
-				q.createMediaContentFn = func(_ context.Context, storedPath pgtype.Text) (Content, error) {
+				q.createMediaContentFn = func(_ context.Context, storedPath string) (Content, error) {
 					return Content{ID: uuid.New(), Type: "MEDIA", Content: storedPath}, nil
 				}
 			},
@@ -126,8 +127,8 @@ func TestCreateMediaContent(t *testing.T) {
 				if string(fileContent) != "hello world" {
 					t.Fatalf("stored file content mismatch: got %q", string(fileContent))
 				}
-				if got.Content.String != storedPath {
-					t.Fatalf("expected content path %q, got %q", storedPath, got.Content.String)
+				if got.Content != storedPath {
+					t.Fatalf("expected content path %q, got %q", storedPath, got.Content)
 				}
 			},
 		},
@@ -137,7 +138,7 @@ func TestCreateMediaContent(t *testing.T) {
 			file:       "x.txt",
 			wantAnyErr: true,
 			setup: func(q *fakeMediaQuerier) {
-				q.createMediaContentFn = func(_ context.Context, _ pgtype.Text) (Content, error) {
+				q.createMediaContentFn = func(_ context.Context, _ string) (Content, error) {
 					return Content{}, errors.New("db boom")
 				}
 			},
@@ -158,6 +159,26 @@ func TestCreateMediaContent(t *testing.T) {
 			file:    "x.txt",
 			wantErr: errEmptyMediaContent,
 		},
+		{
+			name:     "oversized payload cleans up file",
+			raw:      []byte("payload"),
+			file:     "x.txt",
+			maxBytes: 4,
+			wantErr:  errMediaContentTooLarge,
+			assert: func(t *testing.T, root string, q *fakeMediaQuerier, _ Content) {
+				t.Helper()
+				if len(q.createMediaContentArgs) != 0 {
+					t.Fatalf("expected no db call, got %d", len(q.createMediaContentArgs))
+				}
+				entries, err := os.ReadDir(root)
+				if err != nil {
+					t.Fatalf("read media root: %v", err)
+				}
+				if len(entries) != 0 {
+					t.Fatalf("expected cleanup on oversized upload, found %d files", len(entries))
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -169,7 +190,12 @@ func TestCreateMediaContent(t *testing.T) {
 			}
 			svc := NewService(q, zap.NewNop())
 
-			got, err := svc.CreateMediaContent(context.Background(), tt.raw, tt.file, root)
+			got, err := svc.CreateMediaContent(context.Background(), MediaUploadRequest{
+				Content:  bytes.NewReader(tt.raw),
+				Filename: tt.file,
+				Dir:      root,
+				MaxBytes: tt.maxBytes,
+			})
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("expected error %v, got %v", tt.wantErr, err)
@@ -206,7 +232,7 @@ func TestCreateTextContent(t *testing.T) {
 			name:  "success trims before save",
 			input: "  hello  ",
 			setup: func(q *fakeMediaQuerier) {
-				q.createTextContentFn = func(_ context.Context, content pgtype.Text) (Content, error) {
+				q.createTextContentFn = func(_ context.Context, content string) (Content, error) {
 					return Content{ID: uuid.New(), Type: "TEXT", Content: content}, nil
 				}
 			},

@@ -5,9 +5,54 @@
 package chat
 
 import (
+	"database/sql/driver"
+	"fmt"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+type ContentType string
+
+const (
+	ContentTypeTEXT  ContentType = "TEXT"
+	ContentTypeMEDIA ContentType = "MEDIA"
+)
+
+func (e *ContentType) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ContentType(s)
+	case string:
+		*e = ContentType(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ContentType: %T", src)
+	}
+	return nil
+}
+
+type NullContentType struct {
+	ContentType ContentType
+	Valid       bool // Valid is true if ContentType is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullContentType) Scan(value interface{}) error {
+	if value == nil {
+		ns.ContentType, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ContentType.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullContentType) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ContentType), nil
+}
 
 type Chat struct {
 	ID        uuid.UUID
@@ -16,8 +61,8 @@ type Chat struct {
 
 type Content struct {
 	ID      uuid.UUID
-	Type    interface{}
-	Content pgtype.Text
+	Type    string
+	Content string
 }
 
 type Message struct {

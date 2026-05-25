@@ -587,3 +587,56 @@ func TestHandlerDelete_TableDriven(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateQuestionOptions_TableDriven(t *testing.T) {
+	tests := []struct {
+		name         string
+		questionType string
+		options      []QuestionOptionRequest
+		wantErr      bool
+	}{
+		{
+			name:         "text allows no options",
+			questionType: "TEXT",
+		},
+		{
+			name:         "choice requires options",
+			questionType: "CHOICE",
+			wantErr:      true,
+		},
+		{
+			name:         "choice rejects duplicate labels",
+			questionType: "CHOICE",
+			options: []QuestionOptionRequest{
+				{Label: "A", Content: "one"},
+				{Label: "A", Content: "two"},
+			},
+			wantErr: true,
+		},
+		{
+			name:         "choice accepts unique labels",
+			questionType: "CHOICE",
+			options: []QuestionOptionRequest{
+				{Label: "A", Content: "one"},
+				{Label: "B", Content: "two"},
+			},
+		},
+		{
+			name:         "unsupported type rejected",
+			questionType: "BOOLEAN",
+			wantErr:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateQuestionOptions(tt.questionType, tt.options)
+			if tt.wantErr && !errors.Is(err, errInvalidQuestionPayload) {
+				t.Fatalf("expected invalid question payload error, got %v", err)
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+		})
+	}
+}
