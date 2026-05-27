@@ -68,9 +68,42 @@ func main() {
 		corsMiddleware.HandlerFunc,
 	)
 	authStore := auth.NewStore(pool)
+	var oauthProvider auth.OAuthProvider
+	googleClientID := cfg.GoogleOAuthClientID
+	googleClientSecret := cfg.GoogleOAuthClientSecret
+	googleRedirectURL := cfg.GoogleOAuthRedirectURL
+	if cfg.GoogleOAuthCredentialsFile != "" {
+		credentials, err := auth.LoadGoogleOAuthCredentials(cfg.GoogleOAuthCredentialsFile)
+		if err != nil {
+			logger.Fatal("Failed to load Google OAuth credentials", zap.Error(err))
+		}
+		if googleClientID == "" {
+			googleClientID = credentials.ClientID
+		}
+		if googleClientSecret == "" {
+			googleClientSecret = credentials.ClientSecret
+		}
+		if googleRedirectURL == "" && len(credentials.RedirectURIs) > 0 {
+			googleRedirectURL = credentials.RedirectURIs[0]
+		}
+	}
+	if googleClientID != "" || googleClientSecret != "" || googleRedirectURL != "" {
+		googleProvider, err := auth.NewGoogleOAuthProvider(auth.GoogleOAuthConfig{
+			ClientID:     googleClientID,
+			ClientSecret: googleClientSecret,
+			RedirectURL:  googleRedirectURL,
+			HTTPClient:   http.DefaultClient,
+		})
+		if err != nil {
+			logger.Fatal("Failed to initialize Google OAuth provider", zap.Error(err))
+		}
+		oauthProvider = googleProvider
+	}
 	authService := auth.NewService(authStore, auth.ServiceConfig{
-		Secret:      cfg.Secret,
-		Environment: cfg.Environment,
+		Secret:               cfg.Secret,
+		Environment:          cfg.Environment,
+		OAuthProvider:        oauthProvider,
+		RedirectURLAllowlist: parseAllowOrigins(cfg.AuthRedirectAllowlist),
 	}, logger)
 	authHandler := auth.NewHandler(authService, auth.CookieConfig{
 		Environment: cfg.Environment,

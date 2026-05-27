@@ -129,6 +129,104 @@ func (s *Store) MarkReuseDetected(ctx context.Context, familyID uuid.UUID, now t
 	})
 }
 
+func (s *Store) CreateOAuthLoginState(ctx context.Context, params CreateOAuthStateParams) error {
+	return s.queries.CreateOAuthLoginState(ctx, CreateOAuthLoginStateParams{
+		StateHash:    params.StateHash,
+		Provider:     params.Provider,
+		CodeVerifier: params.CodeVerifier,
+		RedirectUrl:  params.RedirectURL,
+		ExpiresAt:    timestamptz(params.ExpiresAt),
+		IpAddress:    nullableIP(params.IPAddress),
+		UserAgent:    nullableText(params.UserAgent),
+		CreatedAt:    timestamptz(params.Now),
+	})
+}
+
+func (s *Store) ConsumeOAuthLoginState(ctx context.Context, stateHash []byte, now time.Time) (OAuthLoginStateRecord, error) {
+	row, err := s.queries.ConsumeOAuthLoginState(ctx, ConsumeOAuthLoginStateParams{
+		StateHash: stateHash,
+		UsedAt:    timestamptz(now),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return OAuthLoginStateRecord{}, errOAuthStateNotFound
+		}
+		return OAuthLoginStateRecord{}, err
+	}
+	return OAuthLoginStateRecord{
+		StateHash:    row.StateHash,
+		Provider:     row.Provider,
+		CodeVerifier: row.CodeVerifier,
+		RedirectURL:  row.RedirectUrl,
+		ExpiresAt:    row.ExpiresAt.Time,
+		UsedAt:       timePtr(row.UsedAt),
+	}, nil
+}
+
+func (s *Store) FindOrCreateOAuthUser(ctx context.Context, identity OAuthIdentity) (OAuthUserRecord, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return OAuthUserRecord{}, err
+	}
+	defer rollbackTx(ctx, tx)
+
+	// Link by the provider subject, not email, because provider emails can change or be unverified.
+	q := s.queries.WithTx(tx)
+	account, err := q.GetOAuthAccountByProviderUserID(ctx, GetOAuthAccountByProviderUserIDParams{
+		Provider:       identity.Provider,
+		ProviderUserID: identity.ProviderUserID,
+	})
+	if err == nil {
+		if err := q.TouchOAuthAccount(ctx, TouchOAuthAccountParams{
+			ID:            account.ID,
+			UserID:        account.UserID,
+			ProviderEmail: identity.Email,
+			EmailVerified: identity.EmailVerified,
+			LastLoginAt:   timestamptz(identity.Now),
+		}); err != nil {
+			return OAuthUserRecord{}, err
+		}
+		if err := q.TouchUserLogin(ctx, TouchUserLoginParams{
+			ID:          account.UserID,
+			LastLoginAt: timestamptz(identity.Now),
+		}); err != nil {
+			return OAuthUserRecord{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return OAuthUserRecord{}, err
+		}
+		return OAuthUserRecord{UserID: account.UserID, OAuthAccountID: account.ID}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return OAuthUserRecord{}, err
+	}
+
+	user, err := q.CreateOAuthUser(ctx, CreateOAuthUserParams{
+		Email:       identity.Email,
+		Name:        nonEmptyName(identity.Name, identity.Email),
+		AvatarUrl:   nullableText(identity.AvatarURL),
+		LastLoginAt: timestamptz(identity.Now),
+	})
+	if err != nil {
+		return OAuthUserRecord{}, err
+	}
+	account, err = q.CreateOAuthAccount(ctx, CreateOAuthAccountParams{
+		UserID:         user.ID,
+		Provider:       identity.Provider,
+		ProviderUserID: identity.ProviderUserID,
+		ProviderEmail:  identity.Email,
+		EmailVerified:  identity.EmailVerified,
+		LastLoginAt:    timestamptz(identity.Now),
+	})
+	if err != nil {
+		return OAuthUserRecord{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return OAuthUserRecord{}, err
+	}
+	return OAuthUserRecord{UserID: user.ID, OAuthAccountID: account.ID}, nil
+}
+
 func refreshTokenRecordFromRow(row GetRefreshTokenByHashRow) RefreshTokenRecord {
 	return RefreshTokenRecord{
 		ID:              row.ID,
@@ -198,4 +296,11 @@ func timePtr(value pgtype.Timestamptz) *time.Time {
 
 func rollbackTx(ctx context.Context, tx pgx.Tx) {
 	_ = tx.Rollback(ctx)
+}
+
+func nonEmptyName(name, fallback string) string {
+	if name != "" {
+		return name
+	}
+	return fallback
 }

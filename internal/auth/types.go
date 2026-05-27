@@ -24,6 +24,11 @@ const (
 
 var (
 	errRefreshTokenNotFound = errors.New("refresh token not found")
+	errOAuthStateNotFound   = errors.New("oauth state not found")
+	errOAuthNotConfigured   = errors.New("oauth provider not configured")
+	errInvalidOAuthState    = errors.New("invalid oauth state")
+	errInvalidRedirectURL   = errors.New("invalid redirect url")
+	errInvalidIDToken       = errors.New("invalid id token")
 	ErrRefreshReuseDetected = errors.New("refresh token reuse detected")
 )
 
@@ -69,4 +74,63 @@ type RotateRefreshTokenParams struct {
 	OldToken     RefreshTokenRecord
 	NewTokenHash []byte
 	Now          time.Time
+}
+
+type BeginOAuthParams struct {
+	Provider    string
+	RedirectURL string
+	IPAddress   string
+	UserAgent   string
+}
+
+type BeginOAuthResult struct {
+	AuthURL string
+}
+
+type CompleteOAuthParams struct {
+	Provider  string
+	Code      string
+	State     string
+	IPAddress string
+	UserAgent string
+}
+
+type CompleteOAuthResult struct {
+	Session     Session
+	RedirectURL string
+}
+
+type OAuthLoginStateRecord struct {
+	StateHash    []byte
+	Provider     string
+	CodeVerifier string
+	RedirectURL  string
+	ExpiresAt    time.Time
+	UsedAt       *time.Time
+}
+
+type CreateOAuthStateParams struct {
+	StateHash    []byte
+	Provider     string
+	CodeVerifier string
+	RedirectURL  string
+	ExpiresAt    time.Time
+	IPAddress    string
+	UserAgent    string
+	Now          time.Time
+}
+
+type OAuthIdentity struct {
+	Provider       string
+	ProviderUserID string
+	Email          string
+	EmailVerified  bool
+	Name           string
+	AvatarURL      string
+	Now            time.Time
+}
+
+type OAuthUserRecord struct {
+	UserID         uuid.UUID
+	OAuthAccountID uuid.UUID
 }

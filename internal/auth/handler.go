@@ -14,6 +14,8 @@ import (
 )
 
 type HandlerService interface {
+	BeginOAuth(ctx context.Context, params BeginOAuthParams) (BeginOAuthResult, error)
+	CompleteOAuth(ctx context.Context, params CompleteOAuthParams) (CompleteOAuthResult, error)
 	Session(ctx context.Context, accessToken, refreshToken string) (Session, error)
 	Refresh(ctx context.Context, refreshToken string) (Session, error)
 	Logout(ctx context.Context, refreshToken string) error
@@ -50,6 +52,15 @@ func NewHandler(service HandlerService, cookies CookieConfig, logger *zap.Logger
 			if errors.Is(err, ErrRefreshReuseDetected) {
 				return problemutil.NewUnauthorizedProblem("You must be logged in to access this resource")
 			}
+			if errors.Is(err, errOAuthNotConfigured) {
+				return problemutil.NewInternalServerProblem("oauth provider is not configured")
+			}
+			if errors.Is(err, errInvalidOAuthState) || errors.Is(err, errInvalidRedirectURL) {
+				return problemutil.NewBadRequestProblem(err.Error())
+			}
+			if errors.Is(err, errInvalidIDToken) {
+				return problemutil.NewUnauthorizedProblem("You must be logged in to access this resource")
+			}
 			return problemutil.Problem{}
 		}),
 	}
@@ -66,6 +77,45 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil
 	handle("GET /api/auth/session", h.Session)
 	handle("POST /api/auth/refresh", h.Refresh)
 	handle("POST /api/auth/logout", h.Logout)
+	handle("GET /api/login/oauth/google", h.LoginGoogle)
+	handle("GET /api/auth/callback", h.Callback)
+}
+
+func (h *Handler) LoginGoogle(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+	result, err := h.service.BeginOAuth(ctx, BeginOAuthParams{
+		Provider:    "google",
+		RedirectURL: r.URL.Query().Get("r"),
+		IPAddress:   clientIP(r),
+		UserAgent:   r.UserAgent(),
+	})
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	http.Redirect(w, r, result.AuthURL, http.StatusFound)
+}
+
+func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+	result, err := h.service.CompleteOAuth(ctx, CompleteOAuthParams{
+		Provider:  "google",
+		Code:      r.URL.Query().Get("code"),
+		State:     r.URL.Query().Get("state"),
+		IPAddress: clientIP(r),
+		UserAgent: r.UserAgent(),
+	})
+	if err != nil {
+		h.clearSessionCookies(w)
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	h.setSessionCookies(w, result.Session)
+	http.Redirect(w, r, result.RedirectURL, http.StatusFound)
 }
 
 func (h *Handler) Session(w http.ResponseWriter, r *http.Request) {
@@ -181,4 +231,11 @@ func timeUntil(deadline time.Time) time.Duration {
 		return 0
 	}
 	return remaining
+}
+
+func clientIP(r *http.Request) string {
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		return forwarded
+	}
+	return r.RemoteAddr
 }

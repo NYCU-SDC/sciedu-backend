@@ -3,10 +3,12 @@ package auth
 import (
 	"context"
 	"errors"
+	"net/url"
 	"testing"
 	"time"
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -205,13 +207,108 @@ func TestServiceSession(t *testing.T) {
 	}
 }
 
+func TestServiceOAuthFlow(t *testing.T) {
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	userID := uuid.MustParse("88888888-8888-8888-8888-888888888888")
+	accountID := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	provider := &fakeOAuthProvider{
+		claims: GoogleIDTokenClaims{
+			Email:            "student@example.com",
+			EmailVerified:    true,
+			Name:             "Student",
+			RegisteredClaims: jwt.RegisteredClaims{Subject: "google-subject"},
+		},
+	}
+	repo := &fakeAuthRepository{
+		oauthUser: OAuthUserRecord{UserID: userID, OAuthAccountID: accountID},
+	}
+	svc := NewService(repo, ServiceConfig{
+		Secret:               "test-secret",
+		Environment:          EnvironmentDev,
+		Now:                  func() time.Time { return now },
+		OAuthProvider:        provider,
+		RedirectURLAllowlist: []string{"http://localhost:5173"},
+	}, nil)
+
+	begin, err := svc.BeginOAuth(t.Context(), BeginOAuthParams{
+		Provider:    "google",
+		RedirectURL: "http://localhost:5173/courses",
+	})
+	require.NoError(t, err)
+	require.True(t, repo.createdState)
+	require.Contains(t, begin.AuthURL, "state=")
+	require.Contains(t, begin.AuthURL, "code_challenge=")
+
+	complete, err := svc.CompleteOAuth(t.Context(), CompleteOAuthParams{
+		Provider: "google",
+		Code:     "auth-code",
+		State:    stateFromURL(t, begin.AuthURL),
+	})
+	require.NoError(t, err)
+	require.Equal(t, "http://localhost:5173/courses", complete.RedirectURL)
+	require.Equal(t, userID, complete.Session.UserID)
+	require.Equal(t, "auth-code", provider.exchangedCode)
+	require.Equal(t, repo.oauthState.CodeVerifier, provider.exchangedVerifier)
+	require.NotEmpty(t, complete.Session.AccessToken)
+	require.NotEmpty(t, complete.Session.RefreshToken)
+}
+
+func TestServiceBeginOAuthRejectsUnallowedRedirect(t *testing.T) {
+	svc := NewService(&fakeAuthRepository{}, ServiceConfig{
+		Secret:               "test-secret",
+		Environment:          EnvironmentDev,
+		OAuthProvider:        &fakeOAuthProvider{},
+		RedirectURLAllowlist: []string{"http://localhost:5173"},
+	}, nil)
+
+	_, err := svc.BeginOAuth(t.Context(), BeginOAuthParams{
+		Provider:    "google",
+		RedirectURL: "https://evil.example.com",
+	})
+	require.ErrorIs(t, err, errInvalidRedirectURL)
+}
+
+type fakeOAuthProvider struct {
+	claims            GoogleIDTokenClaims
+	exchangedCode     string
+	exchangedVerifier string
+}
+
+func (p *fakeOAuthProvider) Name() string { return "google" }
+
+func (p *fakeOAuthProvider) AuthCodeURL(state, codeVerifier string) string {
+	return "https://accounts.google.com/o/oauth2/v2/auth?state=" + state + "&code_challenge=" + codeVerifier
+}
+
+func (p *fakeOAuthProvider) ExchangeIDToken(ctx context.Context, code, codeVerifier string) (string, error) {
+	p.exchangedCode = code
+	p.exchangedVerifier = codeVerifier
+	return "id-token", nil
+}
+
+func (p *fakeOAuthProvider) VerifyIDToken(ctx context.Context, rawToken string) (GoogleIDTokenClaims, error) {
+	return p.claims, nil
+}
+
+func stateFromURL(t *testing.T, raw string) string {
+	t.Helper()
+	u, err := url.Parse(raw)
+	require.NoError(t, err)
+	return u.Query().Get("state")
+}
+
 type fakeAuthRepository struct {
 	record        RefreshTokenRecord
+	oauthState    OAuthLoginStateRecord
+	oauthUser     OAuthUserRecord
 	findErr       error
+	consumeErr    error
+	oauthUserErr  error
 	revokeErr     error
 	rotated       bool
 	revoked       bool
 	reuseDetected bool
+	createdState  bool
 }
 
 func (r *fakeAuthRepository) CreateRefreshSession(ctx context.Context, params CreateRefreshSessionParams) (RefreshTokenRecord, error) {
@@ -257,6 +354,38 @@ func (r *fakeAuthRepository) RevokeRefreshFamily(ctx context.Context, tokenHash 
 func (r *fakeAuthRepository) MarkReuseDetected(ctx context.Context, familyID uuid.UUID, now time.Time) error {
 	r.reuseDetected = true
 	return nil
+}
+
+func (r *fakeAuthRepository) CreateOAuthLoginState(ctx context.Context, params CreateOAuthStateParams) error {
+	r.createdState = true
+	r.oauthState = OAuthLoginStateRecord{
+		StateHash:    params.StateHash,
+		Provider:     params.Provider,
+		CodeVerifier: params.CodeVerifier,
+		RedirectURL:  params.RedirectURL,
+		ExpiresAt:    params.ExpiresAt,
+	}
+	return nil
+}
+
+func (r *fakeAuthRepository) ConsumeOAuthLoginState(ctx context.Context, stateHash []byte, now time.Time) (OAuthLoginStateRecord, error) {
+	if r.consumeErr != nil {
+		return OAuthLoginStateRecord{}, r.consumeErr
+	}
+	if string(stateHash) != string(r.oauthState.StateHash) {
+		return OAuthLoginStateRecord{}, errOAuthStateNotFound
+	}
+	return r.oauthState, nil
+}
+
+func (r *fakeAuthRepository) FindOrCreateOAuthUser(ctx context.Context, identity OAuthIdentity) (OAuthUserRecord, error) {
+	if r.oauthUserErr != nil {
+		return OAuthUserRecord{}, r.oauthUserErr
+	}
+	if r.oauthUser.UserID == uuid.Nil {
+		r.oauthUser = OAuthUserRecord{UserID: uuid.New(), OAuthAccountID: uuid.New()}
+	}
+	return r.oauthUser, nil
 }
 
 func ptrTime(v time.Time) *time.Time {

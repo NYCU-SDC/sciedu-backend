@@ -2,9 +2,13 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
@@ -19,12 +23,17 @@ type Repository interface {
 	RotateRefreshToken(ctx context.Context, params RotateRefreshTokenParams) (RefreshTokenRecord, error)
 	RevokeRefreshFamily(ctx context.Context, tokenHash []byte, now time.Time, reason string) error
 	MarkReuseDetected(ctx context.Context, familyID uuid.UUID, now time.Time) error
+	CreateOAuthLoginState(ctx context.Context, params CreateOAuthStateParams) error
+	ConsumeOAuthLoginState(ctx context.Context, stateHash []byte, now time.Time) (OAuthLoginStateRecord, error)
+	FindOrCreateOAuthUser(ctx context.Context, identity OAuthIdentity) (OAuthUserRecord, error)
 }
 
 type ServiceConfig struct {
-	Secret      string
-	Environment string
-	Now         func() time.Time
+	Secret               string
+	Environment          string
+	Now                  func() time.Time
+	OAuthProvider        OAuthProvider
+	RedirectURLAllowlist []string
 }
 
 type Service struct {
@@ -35,6 +44,13 @@ type Service struct {
 
 type accessClaims struct {
 	jwt.RegisteredClaims
+}
+
+type OAuthProvider interface {
+	Name() string
+	AuthCodeURL(state, codeVerifier string) string
+	ExchangeIDToken(ctx context.Context, code, codeVerifier string) (string, error)
+	VerifyIDToken(ctx context.Context, rawToken string) (GoogleIDTokenClaims, error)
 }
 
 func NewService(repo Repository, config ServiceConfig, logger *zap.Logger) *Service {
@@ -88,6 +104,95 @@ func (s *Service) IssueSession(ctx context.Context, params IssueSessionParams) (
 	}, nil
 }
 
+func (s *Service) BeginOAuth(ctx context.Context, params BeginOAuthParams) (BeginOAuthResult, error) {
+	provider, err := s.oauthProvider(params.Provider)
+	if err != nil {
+		return BeginOAuthResult{}, err
+	}
+	if !s.isRedirectAllowed(params.RedirectURL) {
+		return BeginOAuthResult{}, errInvalidRedirectURL
+	}
+
+	state, err := randomBase64URL(32)
+	if err != nil {
+		return BeginOAuthResult{}, err
+	}
+	codeVerifier, err := randomBase64URL(64)
+	if err != nil {
+		return BeginOAuthResult{}, err
+	}
+	now := s.now()
+	// Persist only the hashed state; the raw state is sent to the provider and consumed once on callback.
+	if err := s.repo.CreateOAuthLoginState(ctx, CreateOAuthStateParams{
+		StateHash:    oauthStateHash(state),
+		Provider:     provider.Name(),
+		CodeVerifier: codeVerifier,
+		RedirectURL:  params.RedirectURL,
+		ExpiresAt:    now.Add(10 * time.Minute),
+		IPAddress:    params.IPAddress,
+		UserAgent:    params.UserAgent,
+		Now:          now,
+	}); err != nil {
+		return BeginOAuthResult{}, err
+	}
+	return BeginOAuthResult{AuthURL: provider.AuthCodeURL(state, codeVerifier)}, nil
+}
+
+func (s *Service) CompleteOAuth(ctx context.Context, params CompleteOAuthParams) (CompleteOAuthResult, error) {
+	provider, err := s.oauthProvider(params.Provider)
+	if err != nil {
+		return CompleteOAuthResult{}, err
+	}
+	if params.Code == "" || params.State == "" {
+		return CompleteOAuthResult{}, errInvalidOAuthState
+	}
+
+	// Consuming the state also loads the PKCE verifier needed to exchange the authorization code.
+	state, err := s.repo.ConsumeOAuthLoginState(ctx, oauthStateHash(params.State), s.now())
+	if err != nil {
+		if errors.Is(err, errOAuthStateNotFound) {
+			return CompleteOAuthResult{}, errInvalidOAuthState
+		}
+		return CompleteOAuthResult{}, err
+	}
+	if state.Provider != provider.Name() {
+		return CompleteOAuthResult{}, errInvalidOAuthState
+	}
+
+	idToken, err := provider.ExchangeIDToken(ctx, params.Code, state.CodeVerifier)
+	if err != nil {
+		return CompleteOAuthResult{}, err
+	}
+	claims, err := provider.VerifyIDToken(ctx, idToken)
+	if err != nil {
+		return CompleteOAuthResult{}, err
+	}
+
+	user, err := s.repo.FindOrCreateOAuthUser(ctx, OAuthIdentity{
+		Provider:       provider.Name(),
+		ProviderUserID: claims.Subject,
+		Email:          claims.Email,
+		EmailVerified:  claims.EmailVerified,
+		Name:           claims.Name,
+		AvatarURL:      claims.Picture,
+		Now:            s.now(),
+	})
+	if err != nil {
+		return CompleteOAuthResult{}, err
+	}
+
+	session, err := s.IssueSession(ctx, IssueSessionParams{
+		UserID:         user.UserID,
+		OAuthAccountID: &user.OAuthAccountID,
+		IPAddress:      params.IPAddress,
+		UserAgent:      params.UserAgent,
+	})
+	if err != nil {
+		return CompleteOAuthResult{}, err
+	}
+	return CompleteOAuthResult{Session: session, RedirectURL: state.RedirectURL}, nil
+}
+
 func (s *Service) Session(ctx context.Context, accessToken, refreshToken string) (Session, error) {
 	claims, err := s.VerifyAccessToken(accessToken)
 	if err != nil {
@@ -115,6 +220,7 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (Session, er
 
 	now := s.now()
 	if record.UsedAt != nil || !record.IsCurrent {
+		// A non-current refresh token means the token chain may have been replayed, so revoke the whole family.
 		if markErr := s.repo.MarkReuseDetected(ctx, record.FamilyID, now); markErr != nil {
 			s.logger.Warn("failed to mark refresh token reuse", zap.Error(markErr))
 		}
@@ -246,4 +352,54 @@ func (s *Service) now() time.Time {
 func refreshTokenHash(raw string) []byte {
 	sum := sha256.Sum256([]byte(raw))
 	return sum[:]
+}
+
+func oauthStateHash(raw string) []byte {
+	sum := sha256.Sum256([]byte(raw))
+	return sum[:]
+}
+
+func randomBase64URL(size int) (string, error) {
+	buf := make([]byte, size)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func (s *Service) oauthProvider(name string) (OAuthProvider, error) {
+	if s.config.OAuthProvider == nil {
+		return nil, errOAuthNotConfigured
+	}
+	if name == "" || name == s.config.OAuthProvider.Name() {
+		return s.config.OAuthProvider, nil
+	}
+	return nil, errOAuthNotConfigured
+}
+
+func (s *Service) isRedirectAllowed(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return false
+	}
+
+	allowlist := s.config.RedirectURLAllowlist
+	if len(allowlist) == 0 {
+		if s.config.Environment == EnvironmentDev {
+			allowlist = []string{"http://localhost", "http://127.0.0.1"}
+		} else {
+			allowlist = []string{"https://sciedu.sdc.nycu.club"}
+		}
+	}
+
+	for _, allowed := range allowlist {
+		allowed = strings.TrimSpace(allowed)
+		if allowed == "" {
+			continue
+		}
+		if raw == allowed || strings.HasPrefix(raw, strings.TrimRight(allowed, "/")+"/") {
+			return true
+		}
+	}
+	return false
 }

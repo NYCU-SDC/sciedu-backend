@@ -187,12 +187,30 @@ func TestHandlerLogout(t *testing.T) {
 
 type fakeHandlerService struct {
 	session      Session
+	begin        BeginOAuthResult
+	complete     CompleteOAuthResult
+	beginErr     error
+	completeErr  error
 	sessionErr   error
 	refreshErr   error
 	logoutErr    error
 	accessToken  string
 	refreshToken string
 	logoutToken  string
+}
+
+func (s *fakeHandlerService) BeginOAuth(ctx context.Context, params BeginOAuthParams) (BeginOAuthResult, error) {
+	if s.beginErr != nil {
+		return BeginOAuthResult{}, s.beginErr
+	}
+	return s.begin, nil
+}
+
+func (s *fakeHandlerService) CompleteOAuth(ctx context.Context, params CompleteOAuthParams) (CompleteOAuthResult, error) {
+	if s.completeErr != nil {
+		return CompleteOAuthResult{}, s.completeErr
+	}
+	return s.complete, nil
 }
 
 func (s *fakeHandlerService) Session(ctx context.Context, accessToken, refreshToken string) (Session, error) {

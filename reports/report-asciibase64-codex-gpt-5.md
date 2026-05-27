@@ -661,3 +661,40 @@
 
 ### Next Steps
 - Add Google OAuth provider configuration, PKCE state persistence, callback exchange, and verified user linking on top of the auth tables.
+
+## [2026-05-27 14:04] Task Record
+
+### Task Description
+- Complete Google `id_token` verification using Google OAuth client secret JSON without committing or exposing the secret.
+
+### Actions Taken
+- Added Google OAuth config fields, credentials-file loading, PKCE auth URL generation, code exchange, and RS256 Google `id_token` verification.
+- Extended auth flow with `/api/login/oauth/google` and `/api/auth/callback`, OAuth state persistence, verified user/account creation, and session issuance.
+- Added tests for Google ID token verification, OAuth credentials loading, and OAuth begin/complete service flows.
+
+### Attempted Methods
+- Avoided writing real client secret values to tracked files; the implementation loads credentials at runtime from an ignored file path.
+- Fixed lint findings around unchecked closes, staticcheck conversion, and unused OAuth error state during the original implementation.
+
+### Issues & Blockers
+- Local runtime still needs `.env` or config pointing `GOOGLE_OAUTH_CREDENTIALS_FILE` at the real secret JSON path.
+
+### Next Steps
+- Run an end-to-end browser OAuth login once the Google redirect URI and backend callback URL are configured.
+
+## [2026-05-27 14:25] Task Record
+
+### Task Description
+- Add English comments clarifying security-sensitive auth flows.
+
+### Actions Taken
+- Added concise comments around hashed OAuth state persistence, one-time PKCE state consumption, refresh-token replay handling, provider-subject account lookup, and lazy JWKS refresh.
+
+### Attempted Methods
+- Kept comments minimal and only added them where they explain cross-file security assumptions.
+
+### Issues & Blockers
+- No unresolved blocker.
+
+### Next Steps
+- Review broader auth implementation changes before staging or committing.
