@@ -64,7 +64,7 @@ func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
-	handlerutil.WriteJSONResponse(w, http.StatusCreated, map[string]uuid.UUID{"chat_id": chatID})
+	handlerutil.WriteJSONResponse(w, http.StatusCreated, map[string]uuid.UUID{"chatID": chatID})
 }
 
 func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request) {
