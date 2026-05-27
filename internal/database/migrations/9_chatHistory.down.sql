@@ -1,3 +1,0 @@
-ALTER TABLE chats
-    DROP COLUMN IF EXISTS user_id,
-    DROP COLUMN IF EXISTS title;
