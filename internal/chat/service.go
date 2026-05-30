@@ -170,7 +170,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 			Role:       MessageRole(userMessage.Role),
 			Status:     MessageStatus(userMessage.Status),
 			CreatedAt:  userMessage.CreatedAt.Time,
-			PreviousID: previousID,
+			PreviousID: previousID, //!
 		},
 		ReplyMessageID: llmMessage.ID,
 	}, nil
