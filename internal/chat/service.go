@@ -165,11 +165,12 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 
 	return CreateMessageReturn{
 		Message: MessageReturn{
-			ID:        userMessage.ID,
-			Content:   userMessage.Content.String,
-			Role:      MessageRole(userMessage.Role),
-			Status:    MessageStatus(userMessage.Status),
-			CreatedAt: userMessage.CreatedAt.Time,
+			ID:         userMessage.ID,
+			Content:    userMessage.Content.String,
+			Role:       MessageRole(userMessage.Role),
+			Status:     MessageStatus(userMessage.Status),
+			CreatedAt:  userMessage.CreatedAt.Time,
+			PreviousID: previousID, //!
 		},
 		ReplyMessageID: llmMessage.ID,
 	}, nil
