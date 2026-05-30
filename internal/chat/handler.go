@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
@@ -13,14 +14,18 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"sciedu-backend/internal/middleware"
 )
 
 type Store interface {
-	CreateChat(ctx context.Context) (uuid.UUID, error)
+	CreateChat(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
 	GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageReturn, error)
 	CreateMessage(ctx context.Context, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error)
 	Stream(ctx context.Context, messageID uuid.UUID) (bool, <-chan StreamDelta, <-chan error, func())
 	ValidatePreviousID(ctx context.Context, previousID uuid.UUID, chatID uuid.UUID) error
+	ListChats(ctx context.Context, userID uuid.UUID, page, pageSize int32) (ChatPage, error)
+	DeleteChat(ctx context.Context, chatID uuid.UUID, userID uuid.UUID) error
 }
 
 type Handler struct {
@@ -59,7 +64,13 @@ func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := logutil.WithContext(ctx, h.logger)
 
-	chatID, err := h.store.CreateChat(ctx)
+	userID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
+	chatID, err := h.store.CreateChat(ctx, userID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -181,6 +192,80 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+}
+
+func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+
+	userID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
+	page, pageSize, err := parsePaginationParams(r)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	result, err := h.store.ListChats(ctx, userID, page, pageSize)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	handlerutil.WriteJSONResponse(w, http.StatusOK, result)
+}
+
+func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+
+	chatID, err := handlerutil.ParseUUID(r.PathValue("chatID"))
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	userID, err := middleware.GetUserID(ctx)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
+	err = h.store.DeleteChat(ctx, chatID, userID)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	handlerutil.WriteJSONResponse(w, http.StatusNoContent, nil)
+}
+
+func parsePaginationParams(r *http.Request) (int32, int32, error) {
+	var page, pageSize int32
+
+	pageRaw := r.URL.Query().Get("page")
+	if pageRaw != "" {
+		parsed, err := strconv.ParseInt(pageRaw, 10, 32)
+		if err != nil || parsed < 1 {
+			return 0, 0, bodyParseError{fmt.Errorf("invalid page: %s", pageRaw)}
+		}
+		page = int32(parsed)
+	}
+
+	pageSizeRaw := r.URL.Query().Get("pageSize")
+	if pageSizeRaw != "" {
+		parsed, err := strconv.ParseInt(pageSizeRaw, 10, 32)
+		if err != nil || parsed < 1 {
+			return 0, 0, bodyParseError{fmt.Errorf("invalid pageSize: %s", pageSizeRaw)}
+		}
+		pageSize = int32(parsed)
+	}
+
+	return page, pageSize, nil
 }
 
 func writeSSEData(w http.ResponseWriter, flusher http.Flusher, chunk StreamDelta) error {

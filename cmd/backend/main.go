@@ -10,11 +10,13 @@ import (
 	"sciedu-backend/internal/config"
 	"sciedu-backend/internal/content"
 	"sciedu-backend/internal/cors"
+	"sciedu-backend/internal/middleware"
 	"sciedu-backend/internal/question"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -78,9 +80,13 @@ func main() {
 
 	questionHandler.RegisterRoutes(mux, middlewareSet)
 	contentHandler.RegisterRoutes(mux, middlewareSet)
-	mux.HandleFunc("POST /api/chat", chatHandler.CreateChat)
+	mockUserID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+	chatAuth := middleware.MockAuthMiddleware(mockUserID)
+	mux.HandleFunc("GET /api/chat", chatAuth(chatHandler.ListChats))
+	mux.HandleFunc("POST /api/chat", chatAuth(chatHandler.CreateChat))
 	mux.HandleFunc("GET /api/chat/stream/{messageID}", chatHandler.Stream)
 	mux.HandleFunc("GET /api/chat/{chatID}", chatHandler.GetChat)
+	mux.HandleFunc("DELETE /api/chat/{chatID}", chatAuth(chatHandler.DeleteChat))
 	mux.HandleFunc("POST /api/chat/{chatID}", chatHandler.CreateMessage)
 
 	logger.Info("Start listening on port: 8080")

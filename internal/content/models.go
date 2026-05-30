@@ -59,6 +59,7 @@ type Chat struct {
 	CreatedAt pgtype.Timestamptz
 	UserID    uuid.UUID
 	Title     string
+	UpdatedAt pgtype.Timestamptz
 }
 
 type Content struct {

@@ -5,9 +5,9 @@ WHERE id = $1;
 INSERT INTO chats (user_id, title)
 VALUES ($1, $2)
 RETURNING *;
--- name: UpdateChatTitle :one
+-- name: UpdateChat :one
 UPDATE chats
-SET title = $2
+SET title = $2, updated_at = now()
 WHERE id = $1
 RETURNING *;
 -- name: GetMessage :one
@@ -31,3 +31,12 @@ DELETE FROM chats
 WHERE id = $1;
 DELETE FROM messages
 WHERE chat_id = $1;
+-- name: ListChatsByUser :many
+SELECT * FROM chats
+WHERE user_id = $1
+ORDER BY updated_at DESC
+LIMIT $2
+OFFSET $3;
+-- name: CountChatsByUser :one
+SELECT COUNT(*) FROM chats
+WHERE user_id = $1;
