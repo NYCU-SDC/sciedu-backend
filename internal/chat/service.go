@@ -250,10 +250,12 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 		newTitle = content
 		createTitle = true
 	}
-	_, err = s.querier.UpdateChat(ctx, UpdateChatParams{
+	if _, err = s.querier.UpdateChat(ctx, UpdateChatParams{
 		ID:    chatID,
 		Title: newTitle,
-	})
+	}); err != nil {
+		return CreateMessageReturn{}, databaseutil.WrapDBError(err, s.logger, "update chat title")
+	}
 
 	// create provider request
 	providerReq := CreateChatCompletionRequest{
