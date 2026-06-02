@@ -113,19 +113,19 @@ func (s *ChatService) fetchMessages(ctx context.Context, chatID uuid.UUID) ([]Me
 	return result, nil
 }
 
-func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageReturn, error) {
+func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID) (Chat, []MessageReturn, error) {
 	chat, err := s.querier.GetChat(ctx, chatID)
 	if err != nil {
-		return nil, databaseutil.WrapDBErrorWithKeyValue(err, "chat", "chat_id", chatID.String(), s.logger, "get chat")
+		return Chat{}, nil, databaseutil.WrapDBErrorWithKeyValue(err, "chat", "chat_id", chatID.String(), s.logger, "get chat")
 	}
 	if chat.ID == uuid.Nil {
-		return nil, handlerutil.NewNotFoundError("chat", "chat_id", chatID.String(), "")
+		return Chat{}, nil, handlerutil.NewNotFoundError("chat", "chat_id", chatID.String(), "")
 	}
 	result, err := s.fetchMessages(ctx, chatID)
 	if err != nil {
-		return nil, err
+		return Chat{}, nil, err
 	}
-	return result, nil
+	return chat, result, nil
 }
 
 func (s *ChatService) ListChats(ctx context.Context, userID uuid.UUID, page, pageSize int32) (ChatPage, error) {

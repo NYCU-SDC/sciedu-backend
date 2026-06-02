@@ -20,7 +20,7 @@ import (
 
 type Store interface {
 	CreateChat(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
-	GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageReturn, error)
+	GetChat(ctx context.Context, chatID uuid.UUID) (Chat, []MessageReturn, error)
 	CreateMessage(ctx context.Context, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error)
 	Stream(ctx context.Context, messageID uuid.UUID) (bool, <-chan StreamDelta, <-chan error, func())
 	ValidatePreviousID(ctx context.Context, previousID uuid.UUID, chatID uuid.UUID) error
@@ -90,7 +90,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request) {
 
 	status := http.StatusOK
 
-	messages, err := h.store.GetChat(ctx, chatID)
+	chat, messages, err := h.store.GetChat(ctx, chatID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -101,7 +101,13 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request) {
 		messages = []MessageReturn{}
 	}
 
-	handlerutil.WriteJSONResponse(w, status, map[string][]MessageReturn{"messages": messages})
+	handlerutil.WriteJSONResponse(w, status, map[string]interface{}{
+		"id":        chat.ID,
+		"title":     chat.Title,
+		"createdAt": chat.CreatedAt,
+		"updatedAt": chat.UpdatedAt,
+		"messages":  messages,
+	})
 }
 
 func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request) {

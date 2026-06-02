@@ -29,8 +29,6 @@ RETURNING *;
 -- name: DeleteChat :exec
 DELETE FROM chats
 WHERE id = $1;
-DELETE FROM messages
-WHERE chat_id = $1;
 -- name: ListChatsByUser :many
 SELECT * FROM chats
 WHERE user_id = $1
