@@ -2,7 +2,7 @@ name: sciedu-stage
 
 services:
   backend:
-    image: "ghcr.io/nycu-sdc/sciedu-backend:stage"
+    image: "nycusdc/sciedu-backend:stage"
     networks:
       - internal
       - traefik
@@ -12,14 +12,14 @@ services:
     environment:
       - ENV=stage
       - HOST=0.0.0.0
-      - BASE_URL=https://api.dev.sciedu.sdc.nycu.club
+      - BASE_URL=https://stage.sciedu.sdc.nycu.club
       - DATABASE_URL=postgres://postgres:password@postgres:5432/sciedu?sslmode=disable
       - LLM_URL=https://llm.dev.sciedu.sdc.nycu.club
       - MIGRATION_SOURCE=file:///app/migrations
       - ALLOW_ORIGINS=*.sciedu.sdc.nycu.club
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.sciedu-backend-stage.rule=Host(`api.stage.sciedu.sdc.nycu.club`)"
+      - "traefik.http.routers.sciedu-backend-stage.rule=Host(`stage.sciedu.sdc.nycu.club`) && PathPrefix(`/api`)"
       - "traefik.http.routers.sciedu-backend-stage.entrypoints=websecure"
       - "traefik.http.routers.sciedu-backend-stage.tls=true"
       - "traefik.http.routers.sciedu-backend-stage.tls.certresolver=cloudflare"
@@ -28,7 +28,7 @@ services:
   postgres:
     image: postgres:18.1
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -38,7 +38,6 @@ services:
       POSTGRES_DB: sciedu
     networks:
       - internal
-
 
 networks:
   internal:
