@@ -128,7 +128,7 @@ INSERT INTO users (
     updated_at
 )
 VALUES ($1, $2, $3, ARRAY['STUDENT']::user_role[], $4, $4, $4)
-RETURNING id, email, name, avatar_url, roles, last_login_at, disabled_at, created_at, updated_at;
+RETURNING id, email, name, avatar_url, roles::text[] AS roles, last_login_at, disabled_at, created_at, updated_at;
 
 -- name: CreateOAuthAccount :one
 INSERT INTO oauth_accounts (

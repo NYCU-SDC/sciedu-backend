@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -129,17 +130,21 @@ func (h *Handler) Session(w http.ResponseWriter, r *http.Request) {
 	logger := logutil.WithContext(ctx, h.logger)
 	accessToken, err := cookieValue(r, accessTokenCookieName)
 	if err != nil {
-		h.problemWriter.WriteError(ctx, w, err, logger)
+		h.writeUnauthorizedProblem(w)
 		return
 	}
 	refreshToken, err := cookieValue(r, refreshTokenCookieName)
 	if err != nil {
-		h.problemWriter.WriteError(ctx, w, err, logger)
+		h.writeUnauthorizedProblem(w)
 		return
 	}
 
 	session, err := h.service.Session(ctx, accessToken, refreshToken)
 	if err != nil {
+		if errors.Is(err, handlerutil.ErrUnauthorized) {
+			h.writeUnauthorizedProblem(w)
+			return
+		}
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
@@ -153,7 +158,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	refreshToken, err := cookieValue(r, refreshTokenCookieName)
 	if err != nil {
 		h.clearSessionCookies(w)
-		h.problemWriter.WriteError(ctx, w, err, logger)
+		h.writeUnauthorizedProblem(w)
 		return
 	}
 
@@ -161,6 +166,8 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, ErrRefreshReuseDetected) || errors.Is(err, handlerutil.ErrUnauthorized) {
 			h.clearSessionCookies(w)
+			h.writeUnauthorizedProblem(w)
+			return
 		}
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -195,6 +202,19 @@ func (h *Handler) setSessionCookies(w http.ResponseWriter, session Session) {
 func (h *Handler) clearSessionCookies(w http.ResponseWriter) {
 	http.SetCookie(w, h.accessCookie("", -1))
 	http.SetCookie(w, h.refreshCookie("", -1))
+}
+
+func (h *Handler) writeUnauthorizedProblem(w http.ResponseWriter) {
+	problem := problemutil.NewUnauthorizedProblem("You must be logged in to access this resource")
+	data, err := json.Marshal(problem)
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(problem.Status)
+	_, _ = w.Write(data)
 }
 
 func (h *Handler) accessCookie(value string, maxAge int) *http.Cookie {

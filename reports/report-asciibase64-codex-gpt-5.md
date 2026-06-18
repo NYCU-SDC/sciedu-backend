@@ -219,6 +219,30 @@
   - `git config user.name`
   - `date '+%Y-%m-%d %H:%M'`
 
+  ## [2026-06-18 23:19] Task Record
+
+  ### Task Description
+  - Debug the auth warning log `Handling Unauthorized` emitted from `internal/auth/handler.go:137`.
+
+  ### Actions Taken
+  - Checked git status and confirmed the worktree already contains an unrelated modification in `internal/auth/queries.sql`.
+  - Verified `git config user.name` for report tracking.
+  - Read `internal/auth/handler.go`, `internal/auth/service.go`, `internal/auth/middleware.go`, `internal/auth/handler_test.go`, and the shared `summer` problem writer implementation from the module cache.
+  - Ran `go test ./internal/auth -run 'TestHandlerSession|TestHandlerRefresh'` to validate the auth paths.
+  - Appended this report entry to `reports/report-asciibase64-codex-gpt-5.md`.
+
+  ### Attempted Methods
+  - Traced the warning to `h.problemWriter.WriteError(ctx, w, err, logger)` in `Handler.Session`, specifically the refresh-cookie lookup branch at line 137.
+  - Confirmed the service layer intentionally returns `handlerutil.ErrUnauthorized` for missing/invalid auth state and for refresh-token reuse.
+  - Verified that the shared `summer` problem writer logs every mapped problem at warning level, including `401 Unauthorized`, so the log line is expected behavior rather than a broken auth decision.
+
+  ### Issues & Blockers
+  - No code defect was found in the auth flow itself.
+  - The only noisy behavior is logging expected 401 responses as warnings, which comes from the shared `summer` writer rather than the auth handler.
+
+  ### Next Steps
+  - If the warning volume is a problem, the next change would be to bypass the shared warning logger for expected unauthenticated responses in the auth handler or to adjust the shared problem writer behavior.
+
 ### Attempted Methods
 - Tried `docker compose -f .deploy/local/compose.yaml ps -a`, but sandboxed Docker daemon access was denied.
 - Used `docker logs --tail 120 sciedu-backend-local`, which was permitted and exposed the actual backend failure.
