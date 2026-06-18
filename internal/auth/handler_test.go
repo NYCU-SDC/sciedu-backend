@@ -193,6 +193,46 @@ func TestHandlerLogout(t *testing.T) {
 	}
 }
 
+func TestHandlerCallbackOAuthExchangeError(t *testing.T) {
+	svc := &fakeHandlerService{completeErr: errOAuthCodeExchange}
+	handler := NewHandler(svc, CookieConfig{Environment: EnvironmentDev}, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=bad-code&state=state", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Callback(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "oauth code exchange failed")
+	requireClearedCookie(t, rec.Result().Cookies(), accessTokenCookieName)
+	requireClearedCookie(t, rec.Result().Cookies(), refreshTokenCookieName)
+}
+
+func TestClientIP(t *testing.T) {
+	tests := []struct {
+		name       string
+		remoteAddr string
+		forwarded  string
+		want       string
+	}{
+		{name: "remote ipv4 host port", remoteAddr: "127.0.0.1:54321", want: "127.0.0.1"},
+		{name: "remote ipv6 host port", remoteAddr: "[::1]:54321", want: "::1"},
+		{name: "forwarded first ip", remoteAddr: "127.0.0.1:54321", forwarded: "203.0.113.10, 198.51.100.1", want: "203.0.113.10"},
+		{name: "invalid forwarded is dropped", remoteAddr: "127.0.0.1:54321", forwarded: "unknown", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
+			req.RemoteAddr = tt.remoteAddr
+			if tt.forwarded != "" {
+				req.Header.Set("X-Forwarded-For", tt.forwarded)
+			}
+
+			require.Equal(t, tt.want, clientIP(req))
+		})
+	}
+}
+
 type fakeHandlerService struct {
 	session      Session
 	begin        BeginOAuthResult

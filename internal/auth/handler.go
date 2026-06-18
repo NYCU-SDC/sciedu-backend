@@ -3,7 +3,9 @@ package auth
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
@@ -58,6 +60,9 @@ func NewHandler(service HandlerService, cookies CookieConfig, logger *zap.Logger
 			if errors.Is(err, errInvalidOAuthState) || errors.Is(err, errInvalidRedirectURL) {
 				return problemutil.NewBadRequestProblem(err.Error())
 			}
+			if errors.Is(err, errOAuthCodeExchange) {
+				return problemutil.NewBadRequestProblem("oauth code exchange failed")
+			}
 			if errors.Is(err, errInvalidIDToken) {
 				return problemutil.NewUnauthorizedProblem("You must be logged in to access this resource")
 			}
@@ -110,6 +115,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.clearSessionCookies(w)
+		logger.Error("failed to complete oauth callback", zap.Error(err))
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
@@ -235,7 +241,21 @@ func timeUntil(deadline time.Time) time.Duration {
 
 func clientIP(r *http.Request) string {
 	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-		return forwarded
+		ip := strings.TrimSpace(strings.Split(forwarded, ",")[0])
+		if net.ParseIP(ip) != nil {
+			return ip
+		}
+		return ""
 	}
-	return r.RemoteAddr
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		if net.ParseIP(r.RemoteAddr) != nil {
+			return r.RemoteAddr
+		}
+		return ""
+	}
+	if net.ParseIP(host) == nil {
+		return ""
+	}
+	return host
 }

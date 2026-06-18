@@ -163,11 +163,11 @@ func (s *Service) CompleteOAuth(ctx context.Context, params CompleteOAuthParams)
 
 	idToken, err := provider.ExchangeIDToken(ctx, params.Code, state.CodeVerifier)
 	if err != nil {
-		return CompleteOAuthResult{}, err
+		return CompleteOAuthResult{}, fmt.Errorf("%w: %w", errOAuthCodeExchange, err)
 	}
 	claims, err := provider.VerifyIDToken(ctx, idToken)
 	if err != nil {
-		return CompleteOAuthResult{}, err
+		return CompleteOAuthResult{}, fmt.Errorf("verify oauth id token: %w", err)
 	}
 
 	user, err := s.repo.FindOrCreateOAuthUser(ctx, OAuthIdentity{
@@ -180,7 +180,7 @@ func (s *Service) CompleteOAuth(ctx context.Context, params CompleteOAuthParams)
 		Now:            s.now(),
 	})
 	if err != nil {
-		return CompleteOAuthResult{}, err
+		return CompleteOAuthResult{}, fmt.Errorf("find or create oauth user: %w", err)
 	}
 
 	session, err := s.IssueSession(ctx, IssueSessionParams{
@@ -190,7 +190,7 @@ func (s *Service) CompleteOAuth(ctx context.Context, params CompleteOAuthParams)
 		UserAgent:      params.UserAgent,
 	})
 	if err != nil {
-		return CompleteOAuthResult{}, err
+		return CompleteOAuthResult{}, fmt.Errorf("issue oauth session: %w", err)
 	}
 	return CompleteOAuthResult{Session: session, RedirectURL: state.RedirectURL}, nil
 }

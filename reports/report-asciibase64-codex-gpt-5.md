@@ -765,3 +765,180 @@
 
 ### Next Steps
 - Drop `stash@{0}` only after confirming the reapplied local changes are satisfactory.
+
+## [2026-06-18 21:42] Task Record
+
+### Task Description
+- Explain how to prove the correctness of the auth system.
+
+### Actions Taken
+- Checked git status, Git username, `.gitignore`, existing reports, auth design/ERD docs, and the auth implementation/tests.
+- Reviewed `docs/AUTH_DESIGN.md`, `docs/auth_ERD.md`, `internal/auth/service.go`, `internal/auth/handler.go`, `internal/auth/middleware.go`, `internal/auth/queries.sql`, and auth unit tests.
+- Ran `go test ./internal/auth`.
+- Modified only this report file.
+
+### Attempted Methods
+- Used the auth design document as the source of proof obligations, then mapped those obligations to implementation and tests.
+- No failed technical attempts.
+
+### Issues & Blockers
+- No blocker. Auth package tests pass.
+- Current proof is strongest at unit level; full correctness would still benefit from DB-backed integration tests, OpenAPI/Prism contract tests, and browser-level cookie/CORS checks.
+
+### Next Steps
+- Add integration tests for refresh-token rotation/reuse under PostgreSQL transactions and contract tests against the published TypeSpec OpenAPI output.
+
+## [2026-06-18 21:44] Task Record
+
+### Task Description
+- Explain whether and how the developer can manually verify the auth system using real Google OAuth.
+
+### Actions Taken
+- Checked git status, Git username, and existing report context.
+- Reviewed OAuth/config wiring in `cmd/backend/main.go`, `internal/config/config.go`, `internal/auth/oauth.go`, `internal/auth/oauth_credentials.go`, and local compose documentation.
+- Identified required local env/config keys and the `ENVIRONMENT=dev` caveat for localhost cookie testing.
+- Modified only this report file.
+
+### Attempted Methods
+- Mapped the manual Google OAuth flow to the current backend routes and config keys.
+- No failed technical attempts.
+
+### Issues & Blockers
+- Did not run a live OAuth test because no Google OAuth client credentials were provided.
+- Local compose currently sets `ENV=local`, while auth code checks `ENVIRONMENT`; manual local cookie testing should set `ENVIRONMENT=dev`.
+
+### Next Steps
+- If live verification is needed, create a Google OAuth Web client with callback `http://localhost:8080/api/auth/callback`, configure backend OAuth env vars, start the stack, and test login through `/api/login/oauth/google`.
+
+## [2026-06-18 22:04] Task Record
+
+### Task Description
+- Diagnose why Google OAuth returned to `/api/oauth/google/callback` and whether that is handled correctly.
+
+### Actions Taken
+- Used previously reviewed auth route wiring and OAuth config behavior to identify a callback path mismatch.
+- Explained that the backend registers `GET /api/auth/callback`, while the observed Google redirect target was `/api/oauth/google/callback`.
+- Modified only this report file.
+
+### Attempted Methods
+- Compared the observed callback URL with the backend auth route contract.
+- No failed technical attempts.
+
+### Issues & Blockers
+- The observed callback URL is not handled by the current backend unless an additional route exists outside the reviewed auth handler.
+- The exposed OAuth `code` in the user message should be treated as sensitive even though it is short-lived and single-use.
+
+### Next Steps
+- Set both Google Console and backend `GOOGLE_OAUTH_REDIRECT_URL` to `http://localhost:8080/api/auth/callback`, restart the backend, and retry from the login endpoint with a fresh OAuth flow.
+
+## [2026-06-18 22:31] Task Record
+
+### Task Description
+- Diagnose Google OAuth `redirect_uri_mismatch` shown in the browser screenshot.
+
+### Actions Taken
+- Interpreted the Google OAuth error page as a provider-side redirect URI mismatch before backend callback handling.
+- Explained that the redirect URI sent by the backend must exactly match a Google Cloud Console Authorized redirect URI.
+- Modified only this report file.
+
+### Attempted Methods
+- Used the previously reviewed backend route/config wiring to distinguish Google-side redirect URI mismatch from backend callback route handling.
+- No failed technical attempts.
+
+### Issues & Blockers
+- Live backend state and Google Console settings were not directly inspectable from this session.
+- The likely remaining causes are stale backend config/container, a credentials JSON whose first `redirect_uris` entry points at `/api/oauth/google/callback`, or Google Console missing the exact callback URI used by the backend.
+
+### Next Steps
+- Decode the generated Google authorization URL's `redirect_uri` parameter, then make Google Console and backend config match that value exactly, preferably `http://localhost:8080/api/auth/callback`.
+
+## [2026-06-18 22:34] Task Record
+
+### Task Description
+- Explain why `http://localhost:8080/api/oauth/google/callback` returns 404 during OAuth testing.
+
+### Actions Taken
+- Explained that `/api/oauth/google/callback` is not a registered route in the current backend.
+- Clarified that the configured Google redirect URI must be changed to the registered route `/api/auth/callback`, or the backend must add a compatibility route.
+- Modified only this report file.
+
+### Attempted Methods
+- Used prior route inspection from `internal/auth/handler.go` to diagnose the 404.
+- No failed technical attempts.
+
+### Issues & Blockers
+- No blocker. The 404 is consistent with current route registration.
+
+### Next Steps
+- Prefer configuring Google/backend to use `http://localhost:8080/api/auth/callback`; alternatively add a route alias for `/api/oauth/google/callback` if backward compatibility is required.
+
+## [2026-06-18 22:36] Task Record
+
+### Task Description
+- Explain why directly visiting `/api/auth/callback` returns `invalid oauth state`.
+
+### Actions Taken
+- Explained that `/api/auth/callback` requires a one-time state previously created by `/api/login/oauth/google`.
+- Clarified that direct callback access, stale callback URLs, reused OAuth codes, or backend restarts that clear state can all produce `invalid oauth state`.
+- Modified only this report file.
+
+### Attempted Methods
+- Used existing auth flow knowledge from `BeginOAuth`/`CompleteOAuth` to diagnose the error.
+- No failed technical attempts.
+
+### Issues & Blockers
+- No blocker. The error is expected when the callback is not reached through a fresh OAuth login flow.
+
+### Next Steps
+- Start OAuth only from `/api/login/oauth/google?r=...`, ensure Google redirects to `/api/auth/callback`, and do not reuse old callback URLs.
+
+## [2026-06-18 22:40] Task Record
+
+### Task Description
+- Diagnose `500 Internal Server Error` after Google successfully redirects to `/api/auth/callback` with `code` and `state`.
+
+### Actions Taken
+- Checked git status and Git username.
+- Read backend and PostgreSQL Docker logs.
+- Checked Docker PostgreSQL availability with `docker exec` queries.
+- Confirmed the configured Docker PostgreSQL container was not running, while the backend callback was returning a generic 500.
+- Modified only this report file.
+
+### Attempted Methods
+- Tried to inspect OAuth state/user DB rows via `docker exec`; this failed because the PostgreSQL container is not running.
+- Checked Codex app terminal state; no attached app terminal was available.
+
+### Issues & Blockers
+- Could not inspect the exact live backend process/environment serving port 8080 from this thread.
+- The likely cause of the callback 500 is a backend-side failure after state validation, especially DB unavailability/misconfiguration. Other possible causes include token exchange failure, ID token verification failure, or user creation conflict.
+
+### Next Steps
+- Ensure the DB used by the backend is running, restart backend with `ENVIRONMENT=dev` and correct Google OAuth env vars, then retry a fresh OAuth flow. Do not reuse old callback URLs/codes.
+
+## [2026-06-18 22:47] Task Record
+
+### Task Description
+- Fix/debug the Google OAuth callback `500` during local verification with the running PostgreSQL container named `SciEdu`.
+
+### Actions Taken
+- Checked git status and confirmed the working tree already had unrelated changes in `internal/auth/models.go` and this report.
+- Inspected `SciEdu` Docker logs and environment, confirming it is the PostgreSQL container.
+- Confirmed the local backend was served by a local Go binary on port 8080, not by the compose backend container.
+- Inspected `.env` runtime settings and verified the backend uses the `postgres` database, where auth tables exist.
+- Queried OAuth state/user/session tables; recent OAuth states were consumed, but no users, OAuth accounts, refresh families, or refresh tokens were created.
+- Confirmed Google JWKS is reachable from the machine.
+- Updated auth code to wrap OAuth callback failures by phase, log callback completion failures, map OAuth code-exchange failures to `400 Bad Request`, and sanitize client IP extraction.
+- Added tests for OAuth callback exchange-error mapping and client IP parsing.
+- Ran `gofmt`, `go test ./internal/auth`, and `go test ./...`.
+
+### Attempted Methods
+- Initially queried the `sciedu` database and found no tables; corrected the target after reading `.env`, which points the backend at the `postgres` database.
+- Attempted to manually exchange the already-pasted OAuth code with Google; it returned `invalid_grant`, which is expected for an expired/used code and does not prove the original callback failure cause.
+- Could not read the local Go server terminal logs from this Codex thread, so added explicit callback logging for the next retry.
+
+### Issues & Blockers
+- The exact original backend error cannot be recovered because the running server logs were not attached to this thread and the OAuth code/state are one-time-use.
+- `internal/auth/models.go` remains modified from prior/generated work and was intentionally not changed as part of this fix.
+
+### Next Steps
+- Restart the local Go backend so the logging/error-mapping changes are active, run a fresh OAuth flow, and check the backend log line `failed to complete oauth callback` if the callback still fails.

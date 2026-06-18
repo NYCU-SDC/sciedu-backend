@@ -28,6 +28,7 @@ var (
 	errOAuthNotConfigured   = errors.New("oauth provider not configured")
 	errInvalidOAuthState    = errors.New("invalid oauth state")
 	errInvalidRedirectURL   = errors.New("invalid redirect url")
+	errOAuthCodeExchange    = errors.New("oauth code exchange failed")
 	errInvalidIDToken       = errors.New("invalid id token")
 	ErrRefreshReuseDetected = errors.New("refresh token reuse detected")
 )
