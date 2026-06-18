@@ -1167,3 +1167,28 @@
 
 ### Next Steps
 - Run `make build` in an environment with `sqlc` installed to exercise the full `gen -> test -> build` chain.
+
+## [2026-06-19 01:20] Task Record
+
+### Task Description
+- Change the default `ENVIRONMENT` to `dev` so deployments without an explicit environment do not fail the production-secret validation.
+
+### Actions Taken
+- Updated `internal/config/config.go` so `Load()` defaults `Environment` to `dev`.
+- Updated `.env.example` to include `ENVIRONMENT=dev`.
+- Added `TestLoadDefaultsToDevEnvironment` in `internal/config/config_test.go`.
+- Added `resetFlags` helper in config tests because multiple `Load()` calls register global flags.
+- Ran `gofmt -w internal/config/config.go internal/config/config_test.go`.
+- Ran `go test ./internal/config`.
+- Ran `go test ./...`.
+
+### Attempted Methods
+- First ran tests after adding the new default test; this exposed a `flag redefined: debug` panic from repeated `Load()` calls in the same test binary.
+- Fixed the test isolation by resetting `flag.CommandLine` around tests that call `Load()`.
+
+### Issues & Blockers
+- No blocker remains. The full Go test suite passes.
+- Production deployments now need to explicitly set `ENVIRONMENT=prod` to get production cookie/security defaults and enforce non-default `SECRET`.
+
+### Next Steps
+- Ensure GitHub/deploy runtime envs explicitly set `ENVIRONMENT=prod` for real production deployments.

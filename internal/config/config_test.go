@@ -1,6 +1,7 @@
 package config
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,6 +46,7 @@ func TestFromEnvUsesENVAndNormalizesLocal(t *testing.T) {
 }
 
 func TestLoadNormalizesLocalEnvironmentFromEnvFileFallback(t *testing.T) {
+	resetFlags(t)
 	workdir := t.TempDir()
 	oldwd, err := os.Getwd()
 	require.NoError(t, err)
@@ -58,6 +60,24 @@ func TestLoadNormalizesLocalEnvironmentFromEnvFileFallback(t *testing.T) {
 
 	config, _ := Load()
 	require.Equal(t, "dev", config.Environment)
+}
+
+func TestLoadDefaultsToDevEnvironment(t *testing.T) {
+	resetFlags(t)
+	workdir := t.TempDir()
+	oldwd, err := os.Getwd()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, os.Chdir(oldwd))
+	}()
+	require.NoError(t, os.Chdir(workdir))
+
+	t.Setenv("ENVIRONMENT", "")
+	t.Setenv("ENV", "")
+
+	config, _ := Load()
+	require.Equal(t, "dev", config.Environment)
+	require.NoError(t, config.Validate())
 }
 
 func TestValidateRejectsDefaultProductionSecret(t *testing.T) {
@@ -95,4 +115,13 @@ func TestValidateRejectsDefaultProductionSecret(t *testing.T) {
 			require.NoError(t, err)
 		})
 	}
+}
+
+func resetFlags(t *testing.T) {
+	t.Helper()
+	oldCommandLine := flag.CommandLine
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	t.Cleanup(func() {
+		flag.CommandLine = oldCommandLine
+	})
 }
