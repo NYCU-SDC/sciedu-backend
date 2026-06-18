@@ -30,6 +30,9 @@ func main() {
 
 	cfg, configLogger := config.Load()
 	configLogger.FlushToZap(logger)
+	if err := cfg.Validate(); err != nil {
+		logger.Fatal("Invalid configuration", zap.Error(err))
+	}
 
 	err = databaseutil.MigrationUp(cfg.MigrationSource, cfg.DatabaseURL, logger)
 	if err != nil {

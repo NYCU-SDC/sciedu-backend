@@ -80,11 +80,24 @@ func (s *Store) RotateRefreshToken(ctx context.Context, params RotateRefreshToke
 	defer rollbackTx(ctx, tx)
 
 	q := s.queries.WithTx(tx)
-	if err := q.MarkRefreshTokenUsed(ctx, MarkRefreshTokenUsedParams{
+	rowsAffected, err := q.MarkRefreshTokenUsed(ctx, MarkRefreshTokenUsedParams{
 		ID:     params.OldToken.ID,
 		UsedAt: timestamptz(params.Now),
-	}); err != nil {
+	})
+	if err != nil {
 		return RefreshTokenRecord{}, err
+	}
+	if rowsAffected != 1 {
+		if err := q.MarkRefreshFamilyReuseDetected(ctx, MarkRefreshFamilyReuseDetectedParams{
+			ID:        params.OldToken.FamilyID,
+			RevokedAt: timestamptz(params.Now),
+		}); err != nil {
+			return RefreshTokenRecord{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return RefreshTokenRecord{}, err
+		}
+		return RefreshTokenRecord{}, ErrRefreshReuseDetected
 	}
 
 	token, err := q.InsertRotatedRefreshToken(ctx, InsertRotatedRefreshTokenParams{

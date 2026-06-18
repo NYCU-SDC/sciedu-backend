@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"flag"
 	"os"
 	"strings"
@@ -12,6 +13,8 @@ import (
 )
 
 const DefaultSecret = "default-secret"
+
+var ErrInsecureProductionSecret = errors.New("production secret must be configured")
 
 type Config struct {
 	Debug                      bool   `yaml:"debug"              envconfig:"DEBUG"`
@@ -181,6 +184,13 @@ func FromFlags(config *Config) (*Config, error) {
 	flag.Parse()
 
 	return configutil.Merge[Config](config, flagConfig)
+}
+
+func (c Config) Validate() error {
+	if normalizeEnvironment(c.Environment) != "dev" && strings.TrimSpace(c.Secret) == DefaultSecret {
+		return ErrInsecureProductionSecret
+	}
+	return nil
 }
 
 func normalizeEnvironment(environment string) string {

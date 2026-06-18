@@ -1036,3 +1036,134 @@
 
 ### Next Steps
 - Restart the local backend stack so the updated environment takes effect, then retry the OAuth login flow and `/api/auth/session`.
+
+## [2026-06-19 00:39] Task Record
+
+### Task Description
+- Review branch `feat/SCIEDU-81-AUTH-System` against merge base `89e8a2253a50166d2a6d711c838cdfc9a70928fd` and provide concise actionable feedback.
+
+### Actions Taken
+- Checked Git status and confirmed current branch is `feat/SCIEDU-81-AUTH-System`.
+- Verified Git username with `git config user.name`.
+- Verified `.gitignore` exists and includes common sensitive/local artifacts.
+- Read recent report context from `reports/report-asciibase64-codex-gpt-5.md`.
+- Inspected the branch diff with `git diff --stat`, `git diff --name-only`, and targeted diffs/file reads for auth, config, deploy, and workflow changes.
+- Ran `go test ./...`; it failed because `internal/config/config_test.go` references undefined `EnvironmentDev` and `EnvironmentProd`.
+- Ran `go test ./internal/auth -run TestServiceRefresh -count=1`; it passed.
+- Modified only this report file.
+
+### Attempted Methods
+- Reviewed auth handler, service, store, SQL query, OAuth provider, middleware, and generated model code with line numbers.
+- Checked migration files as schema context; the auth migration files themselves were not part of the diff against the supplied merge base.
+- Used the test run to confirm the config package compile failure before reporting it.
+
+### Issues & Blockers
+- The full Go test suite does not compile due to undefined config test constants.
+- Refresh-token rotation has a race: `MarkRefreshTokenUsed` can update zero rows, but `RotateRefreshToken` proceeds to insert a new current token and can return a database unique-index error instead of the intended reuse/unauthorized behavior.
+
+### Next Steps
+- Fix config tests to use constants visible to the config package or define package-local environment constants.
+- Make refresh rotation atomic by detecting zero rows affected or using a guarded `UPDATE ... RETURNING`/row lock before inserting the rotated token.
+
+## [2026-06-19 00:43] Task Record
+
+### Task Description
+- Fix the two review findings: config tests failing to compile and refresh-token rotation not detecting a lost guarded update.
+
+### Actions Taken
+- Updated `internal/config/config_test.go` to use package-local string expectations instead of undefined auth package constants.
+- Updated `internal/auth/queries.sql` so `MarkRefreshTokenUsed` uses sqlc `:execrows`.
+- Updated generated local `internal/auth/queries.sql.go` accordingly so local tests compile with the ignored generated file present.
+- Updated `internal/auth/store.go` so refresh rotation checks affected rows; when the old token cannot be claimed, it marks the refresh family as reuse-detected, commits that revocation, and returns `ErrRefreshReuseDetected`.
+- Updated `internal/auth/service.go` so rotate-time `ErrRefreshReuseDetected` maps to the same unauthorized path as pre-rotation reuse.
+- Added a service test case in `internal/auth/service_test.go` for rotate-time reuse.
+- Ran `gofmt -w internal/config/config_test.go internal/auth/store.go internal/auth/service.go internal/auth/service_test.go internal/auth/queries.sql.go`.
+- Ran `go test ./internal/config ./internal/auth`.
+- Ran `go test ./...`.
+
+### Attempted Methods
+- Chose sqlc `:execrows` over adding a separate select because it preserves the current single guarded update and exposes whether this transaction actually claimed the old token.
+- Kept reuse-family revocation in the store transaction so concurrent refresh races produce the intended security response instead of a unique-index database error.
+
+### Issues & Blockers
+- No blockers remain. The full Go test suite passes.
+- `internal/auth/queries.sql.go` is ignored by Git but present locally and needed by `go test`; the tracked source of truth is `internal/auth/queries.sql`.
+
+### Next Steps
+- If CI regenerates sqlc output, `make gen` should reproduce the `MarkRefreshTokenUsed` `RowsAffected` signature from the `:execrows` annotation.
+
+## [2026-06-19 00:49] Task Record
+
+### Task Description
+- Review branch `feat/SCIEDU-81-AUTH-System` against `origin/main` merge base `ecdb3eb8337c9534c637e3ef5688501b1690bd7a`.
+
+### Actions Taken
+- Checked Git status and confirmed current branch plus existing local modifications.
+- Verified Git username with `git config user.name`.
+- Re-read recent report context and `.gitignore`.
+- Inspected `git diff --stat ecdb3eb8337c9534c637e3ef5688501b1690bd7a` and changed file list.
+- Reviewed auth, config, route registration, sqlc, migration/schema, and local deployment changes.
+- Checked available docs under `docs/`; `service/` and `docs/API.md` were not present in this workspace.
+- Ran `go test ./...`; it passes in the current workspace.
+- Modified only this report file for this review record.
+
+### Attempted Methods
+- Verified that `internal/auth/queries.sql.go` is ignored and untracked even though the tracked auth store depends on generated query methods from it.
+- Checked production secret defaults because this branch introduces JWT signing with `cfg.Secret`.
+- Considered middleware double-wrapping, but did not report it because it appears mostly redundant and the CORS middleware uses `Set` for most headers.
+
+### Issues & Blockers
+- Clean checkout risk: the generated auth query implementation file is not tracked due to the existing `queries.sql.go` ignore pattern.
+- Security risk: production auth can sign JWTs with the known `default-secret` when `SECRET` is omitted.
+
+### Next Steps
+- Track or rename the generated auth query output so direct Go builds/tests work from a clean checkout.
+- Require a non-default signing secret for non-dev environments before enabling auth.
+
+## [2026-06-19 00:55] Task Record
+
+### Task Description
+- Fix the production JWT secret issue by preventing non-dev startup with the known default signing secret.
+
+### Actions Taken
+- Updated `internal/config/config.go`:
+  - Added `ErrInsecureProductionSecret`.
+  - Added `Config.Validate()` to reject `DefaultSecret` when normalized environment is not `dev`.
+- Updated `cmd/backend/main.go` to call `cfg.Validate()` after config loading and fail fast with `logger.Fatal` on invalid config.
+- Updated `internal/config/config_test.go` with table-driven validation coverage for prod/dev/local secret behavior.
+- Updated `.env.example` to document `SECRET` as required outside `ENVIRONMENT=dev`.
+- Ran `gofmt -w cmd/backend/main.go internal/config/config.go internal/config/config_test.go`.
+- Ran `go test ./internal/config ./internal/auth`.
+- Ran `go test ./cmd/backend`.
+- Ran `go test ./...`.
+
+### Attempted Methods
+- Kept validation in the config package instead of auth so startup policy is centralized and testable.
+- Preserved local/dev usability by allowing the default secret only when `Environment` normalizes to `dev`.
+
+### Issues & Blockers
+- No blockers remain. The full Go test suite passes in the current workspace.
+
+### Next Steps
+- Ensure deployment environments set `SECRET` to a long random value before this branch is deployed outside dev.
+
+## [2026-06-19 00:59] Task Record
+
+### Task Description
+- Update `Makefile` so it also checks tests as part of the build workflow.
+
+### Actions Taken
+- Updated `Makefile`:
+  - Added a concrete `test` target that runs `go test ./...`.
+  - Changed `build` to depend on `gen test`, so build runs tests before compiling the backend binary.
+- Ran `make test`.
+
+### Attempted Methods
+- Kept the Makefile style consistent with the existing echo/status pattern and failure handling.
+
+### Issues & Blockers
+- No blocker. `make test` passes.
+- Did not run `make build` because it invokes `make gen`, which depends on local `sqlc` availability; the requested test check itself was verified through `make test`.
+
+### Next Steps
+- Run `make build` in an environment with `sqlc` installed to exercise the full `gen -> test -> build` chain.

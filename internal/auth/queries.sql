@@ -43,7 +43,7 @@ FROM refresh_tokens rt
 JOIN refresh_token_families rtf ON rtf.id = rt.family_id
 WHERE rt.token_hash = $1;
 
--- name: MarkRefreshTokenUsed :exec
+-- name: MarkRefreshTokenUsed :execrows
 UPDATE refresh_tokens
 SET used_at = $2,
     is_current = false

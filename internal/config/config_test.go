@@ -14,10 +14,10 @@ func TestNormalizeEnvironment(t *testing.T) {
 		in   string
 		want string
 	}{
-		{name: "local maps to dev", in: "local", want: EnvironmentDev},
-		{name: "local with spaces maps to dev", in: "  local  ", want: EnvironmentDev},
-		{name: "prod stays prod", in: EnvironmentProd, want: EnvironmentProd},
-		{name: "already dev stays dev", in: EnvironmentDev, want: EnvironmentDev},
+		{name: "local maps to dev", in: "local", want: "dev"},
+		{name: "local with spaces maps to dev", in: "  local  ", want: "dev"},
+		{name: "prod stays prod", in: "prod", want: "prod"},
+		{name: "already dev stays dev", in: "dev", want: "dev"},
 	}
 
 	for _, tt := range tests {
@@ -39,9 +39,9 @@ func TestFromEnvUsesENVAndNormalizesLocal(t *testing.T) {
 	t.Setenv("ENVIRONMENT", "")
 	t.Setenv("ENV", "local")
 
-	config, err := FromEnv(&Config{Environment: EnvironmentProd}, NewConfigLogger())
+	config, err := FromEnv(&Config{Environment: "prod"}, NewConfigLogger())
 	require.NoError(t, err)
-	require.Equal(t, EnvironmentDev, config.Environment)
+	require.Equal(t, "dev", config.Environment)
 }
 
 func TestLoadNormalizesLocalEnvironmentFromEnvFileFallback(t *testing.T) {
@@ -57,5 +57,42 @@ func TestLoadNormalizesLocalEnvironmentFromEnvFileFallback(t *testing.T) {
 	require.NoError(t, os.WriteFile(configPath, []byte("environment: local\n"), 0o600))
 
 	config, _ := Load()
-	require.Equal(t, EnvironmentDev, config.Environment)
+	require.Equal(t, "dev", config.Environment)
+}
+
+func TestValidateRejectsDefaultProductionSecret(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  Config
+		wantErr bool
+	}{
+		{
+			name:    "prod default secret rejected",
+			config:  Config{Environment: "prod", Secret: DefaultSecret},
+			wantErr: true,
+		},
+		{
+			name:   "dev default secret allowed",
+			config: Config{Environment: "dev", Secret: DefaultSecret},
+		},
+		{
+			name:   "prod custom secret allowed",
+			config: Config{Environment: "prod", Secret: "strong-random-secret"},
+		},
+		{
+			name:   "local default secret allowed",
+			config: Config{Environment: "local", Secret: DefaultSecret},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantErr {
+				require.ErrorIs(t, err, ErrInsecureProductionSecret)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }

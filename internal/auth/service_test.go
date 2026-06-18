@@ -24,6 +24,7 @@ func TestServiceRefresh(t *testing.T) {
 		name       string
 		record     RefreshTokenRecord
 		findErr    error
+		rotateErr  error
 		wantErr    error
 		wantRotate bool
 		wantReuse  bool
@@ -88,11 +89,26 @@ func TestServiceRefresh(t *testing.T) {
 			},
 			wantErr: handlerutil.ErrUnauthorized,
 		},
+		{
+			name: "concurrent rotation reuse is unauthorized",
+			record: RefreshTokenRecord{
+				ID:              tokenID,
+				FamilyID:        familyID,
+				UserID:          userID,
+				Hash:            refreshTokenHash(rawToken),
+				IsCurrent:       true,
+				IssuedAt:        now.Add(-time.Minute),
+				FamilyExpiresAt: now.Add(30 * 24 * time.Hour),
+			},
+			rotateErr:  ErrRefreshReuseDetected,
+			wantErr:    handlerutil.ErrUnauthorized,
+			wantRotate: true,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := &fakeAuthRepository{record: tt.record, findErr: tt.findErr, profile: testUserProfile(userID)}
+			repo := &fakeAuthRepository{record: tt.record, findErr: tt.findErr, rotateErr: tt.rotateErr, profile: testUserProfile(userID)}
 			svc := NewService(repo, ServiceConfig{
 				Secret:      "test-secret",
 				Environment: EnvironmentDev,
@@ -104,7 +120,7 @@ func TestServiceRefresh(t *testing.T) {
 				require.ErrorIs(t, err, tt.wantErr)
 				require.Empty(t, session.AccessToken)
 				require.Equal(t, tt.wantReuse, repo.reuseDetected)
-				require.False(t, repo.rotated)
+				require.Equal(t, tt.wantRotate, repo.rotated)
 				return
 			}
 
@@ -314,6 +330,7 @@ type fakeAuthRepository struct {
 	consumeErr    error
 	oauthUserErr  error
 	revokeErr     error
+	rotateErr     error
 	rotated       bool
 	revoked       bool
 	reuseDetected bool
@@ -344,6 +361,9 @@ func (r *fakeAuthRepository) FindRefreshToken(ctx context.Context, tokenHash []b
 
 func (r *fakeAuthRepository) RotateRefreshToken(ctx context.Context, params RotateRefreshTokenParams) (RefreshTokenRecord, error) {
 	r.rotated = true
+	if r.rotateErr != nil {
+		return RefreshTokenRecord{}, r.rotateErr
+	}
 	return RefreshTokenRecord{
 		ID:              uuid.New(),
 		FamilyID:        params.OldToken.FamilyID,

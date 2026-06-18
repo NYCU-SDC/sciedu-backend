@@ -240,6 +240,9 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (Session, er
 		Now:          now,
 	})
 	if err != nil {
+		if errors.Is(err, ErrRefreshReuseDetected) {
+			return Session{}, fmt.Errorf("%w: %w", ErrRefreshReuseDetected, handlerutil.ErrUnauthorized)
+		}
 		return Session{}, err
 	}
 
