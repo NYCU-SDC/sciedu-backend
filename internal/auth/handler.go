@@ -116,6 +116,10 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.clearSessionCookies(w)
+		if errors.Is(err, errInvalidOAuthState) {
+			h.writeUnauthorizedProblem(w)
+			return
+		}
 		logger.Error("failed to complete oauth callback", zap.Error(err))
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return

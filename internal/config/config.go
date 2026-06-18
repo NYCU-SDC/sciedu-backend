@@ -3,6 +3,7 @@ package config
 import (
 	"flag"
 	"os"
+	"strings"
 
 	configutil "github.com/NYCU-SDC/summer/pkg/config"
 	"github.com/joho/godotenv"
@@ -99,6 +100,8 @@ func Load() (Config, *LogBuffer) {
 		logger.Warn("Failed to load config from flags", err, map[string]string{"path": "flags"})
 	}
 
+	config.Environment = normalizeEnvironment(config.Environment)
+
 	return *config, logger
 }
 
@@ -136,7 +139,7 @@ func FromEnv(config *Config, logger *LogBuffer) (*Config, error) {
 		Host:                       os.Getenv("HOST"),
 		Port:                       os.Getenv("PORT"),
 		Secret:                     os.Getenv("SECRET"),
-		Environment:                os.Getenv("ENVIRONMENT"),
+		Environment:                firstNonEmpty(os.Getenv("ENVIRONMENT"), os.Getenv("ENV")),
 		DatabaseURL:                os.Getenv("DATABASE_URL"),
 		MigrationSource:            os.Getenv("MIGRATION_SOURCE"),
 		LLMURL:                     os.Getenv("LLM_URL"),
@@ -148,7 +151,13 @@ func FromEnv(config *Config, logger *LogBuffer) (*Config, error) {
 		AuthRedirectAllowlist:      os.Getenv("AUTH_REDIRECT_ALLOWLIST"),
 	}
 
-	return configutil.Merge[Config](config, envConfig)
+	merged, err := configutil.Merge[Config](config, envConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	merged.Environment = normalizeEnvironment(merged.Environment)
+	return merged, nil
 }
 
 func FromFlags(config *Config) (*Config, error) {
@@ -172,4 +181,21 @@ func FromFlags(config *Config) (*Config, error) {
 	flag.Parse()
 
 	return configutil.Merge[Config](config, flagConfig)
+}
+
+func normalizeEnvironment(environment string) string {
+	environment = strings.ToLower(strings.TrimSpace(environment))
+	if environment == "local" {
+		return "dev"
+	}
+	return environment
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

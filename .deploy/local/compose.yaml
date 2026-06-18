@@ -12,7 +12,7 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      - ENV=local
+      - ENVIRONMENT=dev
       - DEBUG=true
       - HOST=0.0.0.0
       - PORT=8080

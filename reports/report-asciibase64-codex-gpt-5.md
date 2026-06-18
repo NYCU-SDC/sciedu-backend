@@ -966,3 +966,73 @@
 
 ### Next Steps
 - Restart the local Go backend so the logging/error-mapping changes are active, run a fresh OAuth flow, and check the backend log line `failed to complete oauth callback` if the callback still fails.
+
+## [2026-06-18 23:29] Task Record
+
+### Task Description
+- Fix the OAuth callback response for invalid state so it matches the API contract instead of returning `400 Bad Request`.
+
+### Actions Taken
+- Updated `internal/auth/handler.go` so `/api/auth/callback` now treats `errInvalidOAuthState` as an unauthorized callback and returns the existing 401 problem response helper.
+- Added `TestHandlerCallbackInvalidOAuthState` in `internal/auth/handler_test.go` to cover the callback invalid-state path.
+- Ran `gofmt -w internal/auth/handler.go internal/auth/handler_test.go`.
+- Ran `go test ./internal/auth -run 'TestHandlerCallbackOAuthExchangeError|TestHandlerCallbackInvalidOAuthState|TestHandlerSession|TestHandlerRefresh|TestHandlerLogout'`.
+- Ran `go test ./internal/auth`.
+
+### Attempted Methods
+- Checked the auth design docs and the generated OpenAPI spec to confirm the callback endpoint is documented as a `401` unauthorized path rather than a `400` bad request path for auth failures.
+- Verified the existing OAuth flow still consumes one-time state server-side and that the new branch only changes the invalid-state response shape, not the security behavior.
+
+### Issues & Blockers
+- No blocker. The change is limited to the callback response handling and the auth package tests pass.
+
+### Next Steps
+- If the browser UX should do something other than show a 401 problem response for invalid OAuth state, wire a frontend redirect target and update the callback failure branch accordingly.
+
+## [2026-06-18 15:39] Task Record
+
+### Task Description
+- Verify whether the live OAuth callback 401 was caused by missing OAuth state or a different callback failure.
+
+### Actions Taken
+- Fetched a fresh `/api/login/oauth/google?r=http://localhost:8080/api/auth/session` redirect from the live backend.
+- Confirmed the returned authorization URL contained a fresh `state` value and `redirect_uri=http://localhost:8080/api/auth/callback`.
+- Queried the live Postgres container `SciEdu` and confirmed the fresh state row exists in `oauth_login_states`.
+- Called `/api/auth/callback` with that exact fresh state and a dummy code.
+- Observed the callback returned `400 Bad Request` with `detail: oauth code exchange failed`, not `invalid oauth state`.
+
+### Attempted Methods
+- Used the state hash from the live redirect to look up the exact row in the database and prove whether BeginOAuth persisted it.
+- Exercised the callback with the exact live state to discriminate state lookup failure from Google code-exchange failure.
+
+### Issues & Blockers
+- No backend state bug was found.
+- The live 401 `invalid oauth state` path is therefore coming from a callback that does not carry the fresh state or is reusing a stale one.
+
+### Next Steps
+- Retry with a completely fresh login flow and do not refresh or reuse the callback URL.
+- If the 401 still appears on a fresh flow, capture the exact callback URL after Google redirects back and compare its `state` query value with the fresh login redirect.
+
+## [2026-06-18 23:51] Task Record
+
+### Task Description
+- Fix the local Google OAuth login flow so `http://localhost:8080/api/login/oauth/google?r=http://localhost:8080/api/auth/session` works with the backend in local development.
+
+### Actions Taken
+- Updated `internal/config/config.go` so runtime configuration now reads `ENVIRONMENT` with `ENV` as a fallback and normalizes `local` to `dev`.
+- Added `internal/config/config_test.go` to verify `local` maps to `dev` and that `FromEnv` honors the local `ENV` fallback.
+- Updated `.deploy/local/compose.yaml` to use `ENVIRONMENT=dev` instead of `ENV=local`.
+- Ran `gofmt -w internal/config/config.go internal/config/config_test.go internal/auth/handler.go internal/auth/handler_test.go`.
+- Ran `go test ./internal/config ./internal/auth` via the test runner.
+- Ran `docker compose -f .deploy/local/compose.yaml config | sed -n '/environment:/,/networks:/p'` to verify the rendered compose environment contains `ENVIRONMENT: dev`.
+- Ran `go test ./...` to validate the full workspace.
+
+### Attempted Methods
+- Initially the full test suite failed because `internal/config/config.go` referenced `EnvironmentDev` from the auth package, which would have created a package build error; replaced it with a self-contained string-based normalization.
+- Verified the fix at the compose level rather than assuming the runtime environment, because the previous local stack was using `ENV=local` and leaving auth cookies in prod mode.
+
+### Issues & Blockers
+- No blocker remains. The config package and auth package tests pass, and the rendered compose config now exposes `ENVIRONMENT: dev` for the backend service.
+
+### Next Steps
+- Restart the local backend stack so the updated environment takes effect, then retry the OAuth login flow and `/api/auth/session`.

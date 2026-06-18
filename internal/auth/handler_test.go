@@ -207,6 +207,21 @@ func TestHandlerCallbackOAuthExchangeError(t *testing.T) {
 	requireClearedCookie(t, rec.Result().Cookies(), refreshTokenCookieName)
 }
 
+func TestHandlerCallbackInvalidOAuthState(t *testing.T) {
+	svc := &fakeHandlerService{completeErr: errInvalidOAuthState}
+	handler := NewHandler(svc, CookieConfig{Environment: EnvironmentDev}, nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=bad-code&state=state", nil)
+	rec := httptest.NewRecorder()
+
+	handler.Callback(rec, req)
+
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	require.Equal(t, "application/problem+json", rec.Header().Get("Content-Type"))
+	require.Contains(t, rec.Body.String(), "You must be logged in to access this resource")
+	requireClearedCookie(t, rec.Result().Cookies(), accessTokenCookieName)
+	requireClearedCookie(t, rec.Result().Cookies(), refreshTokenCookieName)
+}
+
 func TestClientIP(t *testing.T) {
 	tests := []struct {
 		name       string
