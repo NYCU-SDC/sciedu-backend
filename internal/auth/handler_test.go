@@ -17,6 +17,8 @@ func TestHandlerSession(t *testing.T) {
 	now := time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC)
 	validSession := Session{
 		UserID:                uuid.MustParse("11111111-1111-1111-1111-111111111111"),
+		Username:              "Student",
+		Email:                 "student@example.com",
 		AccessTokenExpiresAt:  now.Add(accessTokenLifetime),
 		RefreshTokenExpiresAt: now.Add(refreshTokenLifetime),
 	}
@@ -64,6 +66,8 @@ func TestHandlerSession(t *testing.T) {
 
 			require.Equal(t, tt.wantStatus, rec.Code)
 			if tt.wantStatus == http.StatusOK {
+				require.Contains(t, rec.Body.String(), `"username":"Student"`)
+				require.Contains(t, rec.Body.String(), `"email":"student@example.com"`)
 				require.Contains(t, rec.Body.String(), "accessTokenExpiresAt")
 				require.Contains(t, rec.Body.String(), "refreshTokenExpiresAt")
 				require.Equal(t, "access", svc.accessToken)
@@ -81,6 +85,8 @@ func TestHandlerRefresh(t *testing.T) {
 		UserID:                uuid.MustParse("22222222-2222-2222-2222-222222222222"),
 		AccessToken:           "new-access",
 		RefreshToken:          "new-refresh",
+		Username:              "Student",
+		Email:                 "student@example.com",
 		AccessTokenExpiresAt:  now.Add(accessTokenLifetime),
 		RefreshTokenExpiresAt: now.Add(refreshTokenLifetime),
 	}
@@ -128,6 +134,8 @@ func TestHandlerRefresh(t *testing.T) {
 			require.Equal(t, tt.wantStatus, rec.Code)
 			cookies := rec.Result().Cookies()
 			if tt.wantSet {
+				require.Contains(t, rec.Body.String(), `"username":"Student"`)
+				require.Contains(t, rec.Body.String(), `"email":"student@example.com"`)
 				requireCookie(t, cookies, accessTokenCookieName, "new-access", true)
 				requireCookie(t, cookies, refreshTokenCookieName, "new-refresh", true)
 			}

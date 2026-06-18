@@ -92,7 +92,7 @@ func TestServiceRefresh(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := &fakeAuthRepository{record: tt.record, findErr: tt.findErr}
+			repo := &fakeAuthRepository{record: tt.record, findErr: tt.findErr, profile: testUserProfile(userID)}
 			svc := NewService(repo, ServiceConfig{
 				Secret:      "test-secret",
 				Environment: EnvironmentDev,
@@ -112,6 +112,8 @@ func TestServiceRefresh(t *testing.T) {
 			require.NotEmpty(t, session.AccessToken)
 			require.NotEmpty(t, session.RefreshToken)
 			require.Equal(t, userID, session.UserID)
+			require.Equal(t, "Student", session.Username)
+			require.Equal(t, "student@example.com", session.Email)
 			require.Equal(t, now.Add(accessTokenLifetime), session.AccessTokenExpiresAt)
 			require.Equal(t, tt.record.FamilyExpiresAt, session.RefreshTokenExpiresAt)
 			require.Equal(t, tt.wantRotate, repo.rotated)
@@ -161,6 +163,7 @@ func TestServiceSession(t *testing.T) {
 	refreshToken := uuid.MustParse("77777777-7777-7777-7777-777777777777").String()
 
 	repo := &fakeAuthRepository{
+		profile: testUserProfile(userID),
 		record: RefreshTokenRecord{
 			ID:              uuid.New(),
 			FamilyID:        uuid.New(),
@@ -201,6 +204,8 @@ func TestServiceSession(t *testing.T) {
 
 			require.NoError(t, err)
 			require.Equal(t, userID, session.UserID)
+			require.Equal(t, "Student", session.Username)
+			require.Equal(t, "student@example.com", session.Email)
 			require.Equal(t, now.Add(accessTokenLifetime), session.AccessTokenExpiresAt)
 			require.Equal(t, now.Add(refreshTokenLifetime), session.RefreshTokenExpiresAt)
 		})
@@ -221,6 +226,7 @@ func TestServiceOAuthFlow(t *testing.T) {
 	}
 	repo := &fakeAuthRepository{
 		oauthUser: OAuthUserRecord{UserID: userID, OAuthAccountID: accountID},
+		profile:   testUserProfile(userID),
 	}
 	svc := NewService(repo, ServiceConfig{
 		Secret:               "test-secret",
@@ -247,6 +253,8 @@ func TestServiceOAuthFlow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "http://localhost:5173/courses", complete.RedirectURL)
 	require.Equal(t, userID, complete.Session.UserID)
+	require.Equal(t, "Student", complete.Session.Username)
+	require.Equal(t, "student@example.com", complete.Session.Email)
 	require.Equal(t, "auth-code", provider.exchangedCode)
 	require.Equal(t, repo.oauthState.CodeVerifier, provider.exchangedVerifier)
 	require.NotEmpty(t, complete.Session.AccessToken)
@@ -301,6 +309,7 @@ type fakeAuthRepository struct {
 	record        RefreshTokenRecord
 	oauthState    OAuthLoginStateRecord
 	oauthUser     OAuthUserRecord
+	profile       UserProfile
 	findErr       error
 	consumeErr    error
 	oauthUserErr  error
@@ -386,6 +395,21 @@ func (r *fakeAuthRepository) FindOrCreateOAuthUser(ctx context.Context, identity
 		r.oauthUser = OAuthUserRecord{UserID: uuid.New(), OAuthAccountID: uuid.New()}
 	}
 	return r.oauthUser, nil
+}
+
+func (r *fakeAuthRepository) GetUserProfile(ctx context.Context, userID uuid.UUID) (UserProfile, error) {
+	if r.profile.ID == uuid.Nil {
+		r.profile = testUserProfile(userID)
+	}
+	return r.profile, nil
+}
+
+func testUserProfile(userID uuid.UUID) UserProfile {
+	return UserProfile{
+		ID:       userID,
+		Username: "Student",
+		Email:    "student@example.com",
+	}
 }
 
 func ptrTime(v time.Time) *time.Time {

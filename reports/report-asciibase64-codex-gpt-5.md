@@ -698,3 +698,70 @@
 
 ### Next Steps
 - Review broader auth implementation changes before staging or committing.
+- Review the broader existing auth implementation changes separately before staging or committing, since this task only documented/analyzed the folder and added explanatory comments.
+
+## [2026-06-18 19:19] Task Record
+
+### Task Description
+- Ensure the auth system matches the published OpenAPI spec at `https://nycu-sdc.github.io/sciedu-api/tsp-output/schema/openapi.1.0.0.yaml`, without modifying non-auth implementation files.
+
+### Actions Taken
+- Checked Git status, Git username, `.gitignore`, and existing reports before editing.
+- Fetched and reviewed the published OpenAPI YAML auth paths and `Auth.SessionResponse` schema.
+- Confirmed auth routes already matched the spec paths:
+  - `GET /api/login/oauth/google`
+  - `GET /api/auth/callback`
+  - `GET /api/auth/session`
+  - `POST /api/auth/refresh`
+  - `POST /api/auth/logout`
+- Fixed the response-schema mismatch where session-producing auth paths returned only expiry metadata instead of required `username`, `email`, `accessTokenExpiresAt`, and `refreshTokenExpiresAt`.
+- Modified auth files only for implementation:
+  - `internal/auth/types.go`
+  - `internal/auth/service.go`
+  - `internal/auth/store.go`
+  - `internal/auth/queries.sql`
+  - `internal/auth/handler_test.go`
+  - `internal/auth/service_test.go`
+- Ran `sqlc generate` so the ignored local generated auth query method exists for testing.
+- Reverted unintended generated-model churn from non-auth packages after `sqlc generate`.
+- Ran `gofmt`, `go test ./internal/auth`, `go test ./...`, `golangci-lint run ./...`, and `git diff --check`.
+
+### Attempted Methods
+- First auth test run failed because this branch lacked `Session.Username`, `Session.Email`, `UserProfile`, and `Repository.GetUserProfile`; added those auth types/interface pieces.
+- `sqlc generate` rewrote non-auth generated files and briefly caused unrelated content package type errors. Reverted tracked non-auth generated files and restored the ignored local content query artifact so full verification could run without expanding the implementation diff beyond auth.
+
+### Issues & Blockers
+- No unresolved auth blocker. Full tests, lint, and whitespace checks pass.
+- The implementation diff is auth-only; this report update is separate and required by workspace protocol.
+
+### Next Steps
+- Before committing, run `sqlc generate` in a clean environment if generated ignored query files are absent locally.
+
+## [2026-06-18 19:28] Task Record
+
+### Task Description
+- Sync `feat/SCIEDU-81-AUTH-System` with the latest main branch.
+
+### Actions Taken
+- Checked Git status, Git username, and existing report context before syncing.
+- Ran `git fetch origin`.
+- Confirmed local `main` was stale compared with `origin/main`.
+- Rebased the current branch onto `origin/main` using `git rebase --autostash origin/main`.
+- Resolved rebase conflicts in generated sqlc model files by combining required imports from main and the auth branch.
+- Resolved report-file conflicts by preserving main-side report history and appending compact auth records from the rebased commits.
+- Resolved the autostash report conflict and reapplied the local auth spec-alignment changes.
+- Restored the ignored local `internal/content/queries.sql.go` generated artifact to match rebased main's string-based content service signatures.
+- Unstaged reapplied local changes so the worktree remains in a normal uncommitted-edit state.
+- Ran `go test ./...`, `golangci-lint run ./...`, and `git diff --check`; all passed.
+
+### Attempted Methods
+- Initial `git rebase --autostash origin/main` failed in the sandbox because Git could not create `.git/index.lock`; reran with approved Git metadata access.
+- `git rebase --continue` initially failed because no editor was available; continued with `GIT_EDITOR=true`.
+- Autostash application conflicted only in the report file; resolved manually and kept the stash entry for safety.
+
+### Issues & Blockers
+- No unresolved blocker. Branch is rebased onto `origin/main` at `ecdb3eb`.
+- `stash@{0}: autostash` still exists as a safety copy of the pre-rebase local changes. The working tree has those changes reapplied.
+
+### Next Steps
+- Drop `stash@{0}` only after confirming the reapplied local changes are satisfactory.

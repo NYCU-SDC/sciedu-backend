@@ -160,3 +160,9 @@ SET last_login_at = $2,
     updated_at = $2
 WHERE id = $1
   AND disabled_at IS NULL;
+
+-- name: GetUserProfile :one
+SELECT id, name, email
+FROM users
+WHERE id = $1
+  AND disabled_at IS NULL;

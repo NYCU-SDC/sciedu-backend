@@ -23,6 +23,7 @@ type Repository interface {
 	RotateRefreshToken(ctx context.Context, params RotateRefreshTokenParams) (RefreshTokenRecord, error)
 	RevokeRefreshFamily(ctx context.Context, tokenHash []byte, now time.Time, reason string) error
 	MarkReuseDetected(ctx context.Context, familyID uuid.UUID, now time.Time) error
+	GetUserProfile(ctx context.Context, userID uuid.UUID) (UserProfile, error)
 	CreateOAuthLoginState(ctx context.Context, params CreateOAuthStateParams) error
 	ConsumeOAuthLoginState(ctx context.Context, stateHash []byte, now time.Time) (OAuthLoginStateRecord, error)
 	FindOrCreateOAuthUser(ctx context.Context, identity OAuthIdentity) (OAuthUserRecord, error)
@@ -95,13 +96,14 @@ func (s *Service) IssueSession(ctx context.Context, params IssueSessionParams) (
 		return Session{}, err
 	}
 
-	return Session{
+	session := Session{
 		UserID:                record.UserID,
 		AccessToken:           accessToken,
 		RefreshToken:          refreshToken,
 		AccessTokenExpiresAt:  accessExpiresAt,
 		RefreshTokenExpiresAt: record.FamilyExpiresAt,
-	}, nil
+	}
+	return s.attachUserProfile(ctx, session)
 }
 
 func (s *Service) BeginOAuth(ctx context.Context, params BeginOAuthParams) (BeginOAuthResult, error) {
@@ -205,11 +207,12 @@ func (s *Service) Session(ctx context.Context, accessToken, refreshToken string)
 	if claims.UserID != record.UserID {
 		return Session{}, handlerutil.ErrUnauthorized
 	}
-	return Session{
+	session := Session{
 		UserID:                claims.UserID,
 		AccessTokenExpiresAt:  claims.ExpiresAt,
 		RefreshTokenExpiresAt: record.FamilyExpiresAt,
-	}, nil
+	}
+	return s.attachUserProfile(ctx, session)
 }
 
 func (s *Service) Refresh(ctx context.Context, refreshToken string) (Session, error) {
@@ -244,13 +247,24 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (Session, er
 	if err != nil {
 		return Session{}, err
 	}
-	return Session{
+	session := Session{
 		UserID:                rotated.UserID,
 		AccessToken:           accessToken,
 		RefreshToken:          newRefreshToken,
 		AccessTokenExpiresAt:  accessExpiresAt,
 		RefreshTokenExpiresAt: rotated.FamilyExpiresAt,
-	}, nil
+	}
+	return s.attachUserProfile(ctx, session)
+}
+
+func (s *Service) attachUserProfile(ctx context.Context, session Session) (Session, error) {
+	profile, err := s.repo.GetUserProfile(ctx, session.UserID)
+	if err != nil {
+		return Session{}, err
+	}
+	session.Username = profile.Username
+	session.Email = profile.Email
+	return session, nil
 }
 
 func (s *Service) Logout(ctx context.Context, refreshToken string) error {

@@ -36,8 +36,16 @@ type Session struct {
 	UserID                uuid.UUID `json:"-"`
 	AccessToken           string    `json:"-"`
 	RefreshToken          string    `json:"-"`
+	Username              string    `json:"username"`
+	Email                 string    `json:"email"`
 	AccessTokenExpiresAt  time.Time `json:"accessTokenExpiresAt"`
 	RefreshTokenExpiresAt time.Time `json:"refreshTokenExpiresAt"`
+}
+
+type UserProfile struct {
+	ID       uuid.UUID
+	Username string
+	Email    string
 }
 
 type IssueSessionParams struct {

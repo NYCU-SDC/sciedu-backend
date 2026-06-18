@@ -227,6 +227,18 @@ func (s *Store) FindOrCreateOAuthUser(ctx context.Context, identity OAuthIdentit
 	return OAuthUserRecord{UserID: user.ID, OAuthAccountID: account.ID}, nil
 }
 
+func (s *Store) GetUserProfile(ctx context.Context, userID uuid.UUID) (UserProfile, error) {
+	row, err := s.queries.GetUserProfile(ctx, userID)
+	if err != nil {
+		return UserProfile{}, err
+	}
+	return UserProfile{
+		ID:       row.ID,
+		Username: row.Name,
+		Email:    string(row.Email),
+	}, nil
+}
+
 func refreshTokenRecordFromRow(row GetRefreshTokenByHashRow) RefreshTokenRecord {
 	return RefreshTokenRecord{
 		ID:              row.ID,
