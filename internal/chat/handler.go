@@ -10,6 +10,7 @@ import (
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
+	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
 	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
@@ -58,6 +59,22 @@ func NewHandler(store Store, logger *zap.Logger) *Handler {
 		store:     store,
 		validator: validator.New(),
 	}
+}
+
+func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil.Set) {
+	handle := func(pattern string, fn http.HandlerFunc) {
+		if middlewares != nil {
+			fn = middlewares.HandlerFunc(fn)
+		}
+		mux.HandleFunc(pattern, fn)
+	}
+
+	handle("GET /api/chat", h.ListChats)
+	handle("POST /api/chat", h.CreateChat)
+	handle("GET /api/chat/stream/{messageID}", h.Stream)
+	handle("GET /api/chat/{chatID}", h.GetChat)
+	handle("DELETE /api/chat/{chatID}", h.DeleteChat)
+	handle("POST /api/chat/{chatID}", h.CreateMessage)
 }
 
 func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +264,7 @@ func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	handlerutil.WriteJSONResponse(w, http.StatusNoContent, nil)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func parsePaginationParams(r *http.Request) (int32, int32, error) {

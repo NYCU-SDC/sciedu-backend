@@ -82,12 +82,8 @@ func main() {
 	contentHandler.RegisterRoutes(mux, middlewareSet)
 	mockUserID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
 	chatAuth := middleware.MockAuthMiddleware(mockUserID)
-	mux.HandleFunc("GET /api/chat", chatAuth(chatHandler.ListChats))
-	mux.HandleFunc("POST /api/chat", chatAuth(chatHandler.CreateChat))
-	mux.HandleFunc("GET /api/chat/stream/{messageID}", chatHandler.Stream)
-	mux.HandleFunc("GET /api/chat/{chatID}", chatHandler.GetChat)
-	mux.HandleFunc("DELETE /api/chat/{chatID}", chatAuth(chatHandler.DeleteChat))
-	mux.HandleFunc("POST /api/chat/{chatID}", chatHandler.CreateMessage)
+	chatMiddlewareSet := middlewareutil.NewSet(chatAuth)
+	chatHandler.RegisterRoutes(mux, chatMiddlewareSet)
 
 	logger.Info("Start listening on port: 8080")
 
