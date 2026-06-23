@@ -71,6 +71,49 @@
 ### Next Steps
 - None.
 
+## [2026-06-23 18:51] Task Record
+
+### Task Description
+- Verify whether the reported Google OAuth re-login behavior after logout is plausibly caused by dev cookie `SameSite`/`Secure` attributes.
+
+### Actions Taken
+- Checked git status and verified `.gitignore` contents before diagnosis.
+- Read prior Codex report context.
+- Inspected auth handler cookie attribute logic, logout handler behavior, auth service logout behavior, handler tests, and auth design documentation.
+- Modified only this report file:
+  - `reports/report-asciibase64-codex-gpt-5.md`
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `git config user.name`
+  - `ls`
+  - `find reports -maxdepth 1 -type f -name 'report-*.md' -print`
+  - `sed -n '1,220p' .gitignore`
+  - `sed -n '1,220p' reports/report-asciibase64-codex-gpt-5.md`
+  - `rg -n "SameSite|Secure|Cookie|SetCookie|logout|google|oauth|session|access token|access_token" internal cmd service docs -S`
+  - `find service -type f -name '*.tsp' -maxdepth 3 -print`
+  - `sed -n '1,330p' internal/auth/handler.go`
+  - `sed -n '140,220p' docs/AUTH_DESIGN.md`
+  - `sed -n '220,270p' docs/AUTH_DESIGN.md`
+  - `sed -n '225,320p' internal/auth/handler_test.go`
+  - `sed -n '250,290p' internal/auth/service.go`
+  - `sed -n '150,200p' internal/auth/handler_test.go`
+  - `sed -n '60,130p' internal/auth/queries.sql`
+  - `sed -n '1,140p' cmd/backend/main.go`
+  - `date '+%Y-%m-%d %H:%M'`
+
+### Attempted Methods
+- Confirmed from `internal/auth/handler.go` that dev HTTPS backend plus localhost frontend is intended to emit `SameSite=None; Secure=true` for both access and refresh cookies.
+- Confirmed from `internal/auth/service.go` that `Logout` with an empty refresh token is a no-op, so a logout request that arrives without cookies cannot revoke the server-side refresh family.
+- Confirmed from `docs/AUTH_DESIGN.md` that `SameSite=Lax` does not attach cookies to cross-site fetch/XHR or cross-site POST contexts.
+- Initial `rg`/`find` commands included a nonexistent `service/` path and returned an error for that path while still producing useful matches from existing paths.
+
+### Issues & Blockers
+- No code blocker; this was a diagnosis-only task.
+- Important nuance: Google may skip its visible account/login page because of Google's own SSO cookies even after the application session is fully cleared. That symptom alone is not definitive proof the app logout failed.
+
+### Next Steps
+- If this issue is still active, verify in browser DevTools whether `POST /api/auth/logout` includes the `refresh_token` cookie and whether the response's clearing `Set-Cookie` uses the exact same `Path`, `Domain`, `SameSite`, and `Secure` attributes as the login cookie.
+
 ## [2026-05-13 14:35] Task Record
 
 ### Task Description
@@ -1426,3 +1469,82 @@
 
 ### Next Steps
 - Restart the target backend after deployment/config changes, then test from localhost frontend with `credentials: "include"` against both local HTTP and PR/dev HTTPS backend URLs.
+
+## [2026-06-23 18:53] Task Record
+
+### Task Description
+- Explain the implementation approach for reliable logout and re-login behavior in localhost frontend to backend OAuth flows, without modifying code.
+
+### Actions Taken
+- Checked git status and verified git username.
+- Read recent report context for the existing auth cookie fixes.
+- Inspected `internal/auth/handler.go` cookie attribute selection and logout flow.
+- Modified only this report file:
+  - `reports/report-asciibase64-codex-gpt-5.md`
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `git config user.name`
+  - `tail -n 80 reports/report-asciibase64-codex-gpt-5.md`
+  - `date '+%Y-%m-%d %H:%M'`
+  - `sed -n '1,260p' internal/auth/handler.go`
+  - `sed -n '260,360p' internal/auth/handler.go`
+
+### Attempted Methods
+- Provided design guidance only, centered on cookie attributes, CORS credentials, logout semantics, and browser/Google SSO verification.
+- No application code changes were attempted per user request.
+
+### Issues & Blockers
+- No blocker. The remaining risk is operational/browser verification: DevTools must confirm cookies are sent on logout and cleared with matching attributes.
+
+### Next Steps
+- If implementation proceeds, update tests around cookie attrs, logout no-cookie behavior, and localhost CORS credentialed requests before browser retesting.
+
+## [2026-06-23 18:57] Task Record
+
+### Task Description
+- Implement the backend-side change requested for the post-logout Google OAuth re-login behavior.
+
+### Actions Taken
+- Checked git status, git username, `.gitignore`, and recent report context before editing.
+- Confirmed existing backend cookie logic already supports dev HTTPS backend plus localhost frontend with `SameSite=None; Secure`.
+- Updated `internal/auth/oauth.go` so Google OAuth authorization URLs include `prompt=select_account`.
+- Updated `internal/auth/service_test.go` with a unit test asserting Google OAuth authorization URLs include `prompt=select_account`.
+- Ran `gofmt` on modified Go files.
+- Ran `go test ./internal/auth`.
+- Ran `go test ./...`.
+- Modified files:
+  - `internal/auth/oauth.go`
+  - `internal/auth/service_test.go`
+  - `reports/report-asciibase64-codex-gpt-5.md`
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `git config user.name`
+  - `sed -n '1,220p' .gitignore`
+  - `tail -n 100 reports/report-asciibase64-codex-gpt-5.md`
+  - `sed -n '1,220p' internal/auth/oauth.go`
+  - `sed -n '1,260p' internal/config/config.go`
+  - `sed -n '1,220p' internal/cors/middleware.go`
+  - `sed -n '1,360p' internal/auth/handler_test.go`
+  - `sed -n '360,460p' internal/auth/handler_test.go`
+  - `rg -n "AuthCodeURL|prompt|select_account|BeginOAuth|fakeOAuthProvider" internal/auth -S`
+  - `sed -n '80,160p' internal/auth/service.go`
+  - `sed -n '280,330p' internal/auth/service_test.go`
+  - `sed -n '220,280p' internal/auth/service_test.go`
+  - `gofmt -w internal/auth/oauth.go internal/auth/service_test.go`
+  - `git diff -- internal/auth/oauth.go internal/auth/service_test.go`
+  - `go test ./internal/auth`
+  - `go test ./...`
+  - `git diff --stat`
+  - `date '+%Y-%m-%d %H:%M'`
+
+### Attempted Methods
+- Chose `prompt=select_account` rather than `prompt=login` because it reliably shows Google's account chooser without forcing password re-entry every time.
+- Kept the existing OAuth provider interface unchanged because the behavior is Google-specific and can be handled inside `GoogleOAuthProvider.AuthCodeURL`.
+- Did not change frontend code; browser credential inclusion still depends on the frontend using `credentials: "include"` for session/logout/refresh requests.
+
+### Issues & Blockers
+- No blocker. `go test ./internal/auth` and `go test ./...` both pass.
+- This change affects Google OAuth UX only. The backend cannot clear Google's own SSO cookies; it can only ask Google to show account selection.
+
+### Next Steps
+- Restart/redeploy the backend, then verify the browser flow from localhost: login, logout, and click login again. The Google authorization redirect should include `prompt=select_account`.

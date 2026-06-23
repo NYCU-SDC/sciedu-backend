@@ -292,6 +292,23 @@ func TestServiceBeginOAuthRejectsUnallowedRedirect(t *testing.T) {
 	require.ErrorIs(t, err, errInvalidRedirectURL)
 }
 
+func TestGoogleOAuthProviderAuthCodeURLPromptsAccountSelection(t *testing.T) {
+	provider, err := NewGoogleOAuthProvider(GoogleOAuthConfig{
+		ClientID:     "client-id.apps.googleusercontent.com",
+		ClientSecret: "client-secret",
+		RedirectURL:  "https://api.example.com/api/auth/callback",
+		Verifier:     &GoogleIDTokenVerifier{},
+	})
+	require.NoError(t, err)
+
+	authURL := provider.AuthCodeURL("state", "code-verifier")
+
+	u, err := url.Parse(authURL)
+	require.NoError(t, err)
+	require.Equal(t, googleAuthURL, u.Scheme+"://"+u.Host+u.Path)
+	require.Equal(t, "select_account", u.Query().Get("prompt"))
+}
+
 type fakeOAuthProvider struct {
 	claims            GoogleIDTokenClaims
 	exchangedCode     string

@@ -13,6 +13,7 @@ const (
 	googleProviderName = "google"
 	googleAuthURL      = "https://accounts.google.com/o/oauth2/v2/auth"
 	googleTokenURL     = "https://oauth2.googleapis.com/token"
+	googlePrompt       = "select_account"
 )
 
 type GoogleOAuthConfig struct {
@@ -63,6 +64,7 @@ func (p *GoogleOAuthProvider) AuthCodeURL(state, codeVerifier string) string {
 		state,
 		oauth2.AccessTypeOffline,
 		oauth2.S256ChallengeOption(codeVerifier),
+		oauth2.SetAuthURLParam("prompt", googlePrompt),
 	)
 }
 
