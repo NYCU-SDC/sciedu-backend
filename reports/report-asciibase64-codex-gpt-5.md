@@ -641,3 +641,82 @@
 
 ### Next Steps
 - Review the generated model diffs and migration/schema change before committing.
+
+## [2026-06-23 13:52] Task Record
+
+### Task Description
+- Review branch `ci/Backend-Secret` against main merge base `89e8a2253a50166d2a6d711c838cdfc9a70928fd`, focusing on CI workflow changes.
+
+### Actions Taken
+- Checked Git status, Git username, `.gitignore`, and prior Codex report context.
+- Inspected diffs for:
+  - `.github/workflows/main.yml`
+  - `.github/workflows/pull-request.yml`
+  - `.github/workflows/stage.yml`
+- Verified `jq` rejects trailing commas in array literals, matching the new `secrets` array syntax in the PR workflow.
+- Ran `git diff --check 89e8a2253a50166d2a6d711c838cdfc9a70928fd` and found whitespace issues in two workflow files.
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `git config user.name`
+  - `ls -la reports`
+  - `test -f .gitignore && sed -n '1,220p' .gitignore || true`
+  - `git diff 89e8a2253a50166d2a6d711c838cdfc9a70928fd -- .github/workflows/main.yml`
+  - `git diff 89e8a2253a50166d2a6d711c838cdfc9a70928fd -- .github/workflows/pull-request.yml`
+  - `git diff 89e8a2253a50166d2a6d711c838cdfc9a70928fd -- .github/workflows/stage.yml`
+  - `tail -n 80 reports/report-asciibase64-codex-gpt-5.md`
+  - `nl -ba .github/workflows/main.yml | sed -n '115,175p'`
+  - `nl -ba .github/workflows/pull-request.yml | sed -n '145,205p'`
+  - `nl -ba .github/workflows/stage.yml | sed -n '115,175p'`
+  - `rg -n "inject_secret|setup:|setup\\"|environment\\": \\"staging\\"|environment\\": \\"stage\\"|environment: \\"snapshot\\"|environment\\": \\"dev\\"" .github/workflows`
+  - `jq -n '[{a:1},]'`
+  - `git diff --name-only 89e8a2253a50166d2a6d711c838cdfc9a70928fd`
+  - `git diff --check 89e8a2253a50166d2a6d711c838cdfc9a70928fd`
+  - `date '+%Y-%m-%d %H:%M'`
+
+### Attempted Methods
+- Checked whether the trailing comma was acceptable in `jq`; it failed with `syntax error, unexpected ']'`, confirming the pull-request workflow would fail before sending the webhook.
+- Inspected the raw `curl --data-raw` payloads in main and stage; the same trailing comma makes their JSON payloads invalid for webhook consumers.
+
+### Issues & Blockers
+- Found a blocking CI/deploy issue: the added `secrets` arrays contain trailing commas in all three workflow payloads.
+- Found non-blocking whitespace issues via `git diff --check` in `.github/workflows/main.yml` and `.github/workflows/stage.yml`.
+
+### Next Steps
+- Remove the trailing comma after the final secret object in each workflow.
+- Clean the trailing whitespace reported by `git diff --check`.
+
+## [2026-06-23 13:54] Task Record
+
+### Task Description
+- Fix the CI workflow issues identified in the review for branch `ci/Backend-Secret`.
+
+### Actions Taken
+- Removed trailing commas after the final `GOOGLE_OAUTH_CLIENT_SECRET` secret object in:
+  - `.github/workflows/main.yml`
+  - `.github/workflows/pull-request.yml`
+  - `.github/workflows/stage.yml`
+- Removed trailing whitespace in:
+  - `.github/workflows/main.yml`
+  - `.github/workflows/stage.yml`
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `git config user.name`
+  - `nl -ba .github/workflows/main.yml | sed -n '142,162p'`
+  - `nl -ba .github/workflows/pull-request.yml | sed -n '173,191p'`
+  - `nl -ba .github/workflows/stage.yml | sed -n '138,160p'`
+  - `git diff --check 89e8a2253a50166d2a6d711c838cdfc9a70928fd`
+  - `jq -n '[{a:1}]'`
+  - `git diff 89e8a2253a50166d2a6d711c838cdfc9a70928fd -- .github/workflows/main.yml .github/workflows/pull-request.yml .github/workflows/stage.yml`
+  - `date '+%Y-%m-%d %H:%M'`
+  - `git status --short`
+
+### Attempted Methods
+- Applied a minimal patch only to the invalid trailing commas and whitespace, preserving the existing deployment payload structure.
+- Re-ran `git diff --check`; it passed with no output.
+
+### Issues & Blockers
+- No unresolved blockers.
+- Workflow execution was not run locally; validation was limited to diff inspection, whitespace checks, and confirming the jq trailing-comma syntax class is fixed.
+
+### Next Steps
+- Commit the workflow fixes after review if desired.
