@@ -233,20 +233,41 @@ func TestHandlerSessionCookieAttrs(t *testing.T) {
 	tests := []struct {
 		name            string
 		config          CookieConfig
+		request         *http.Request
+		redirectURL     string
 		wantDomain      string
 		wantSecure      bool
 		wantAccessSite  http.SameSite
 		wantRefreshSite http.SameSite
 	}{
 		{
-			name:            "dev uses host-only SameSite=None cookies",
+			name:            "dev https backend with localhost redirect uses cross-site secure cookies",
 			config:          CookieConfig{Environment: EnvironmentDev},
+			request:         requestWithForwardedProto("https"),
+			redirectURL:     "http://localhost:5173/auth/callback",
+			wantSecure:      true,
 			wantAccessSite:  http.SameSiteNoneMode,
 			wantRefreshSite: http.SameSiteNoneMode,
 		},
 		{
+			name:            "dev https backend with localhost origin uses cross-site secure cookies",
+			config:          CookieConfig{Environment: EnvironmentDev},
+			request:         requestWithOriginAndForwardedProto("http://localhost:3000", "https"),
+			wantSecure:      true,
+			wantAccessSite:  http.SameSiteNoneMode,
+			wantRefreshSite: http.SameSiteNoneMode,
+		},
+		{
+			name:            "dev http localhost backend uses same-site cookies without secure",
+			config:          CookieConfig{Environment: EnvironmentDev},
+			request:         requestWithOriginAndForwardedProto("http://localhost:5173", "http"),
+			wantAccessSite:  http.SameSiteLaxMode,
+			wantRefreshSite: http.SameSiteStrictMode,
+		},
+		{
 			name:            "prod uses shared domain and stricter SameSite cookies",
 			config:          CookieConfig{Environment: EnvironmentProd},
+			request:         httptest.NewRequest(http.MethodPost, "/api/auth/refresh", nil),
 			wantDomain:      defaultCookieDomain,
 			wantSecure:      true,
 			wantAccessSite:  http.SameSiteLaxMode,
@@ -257,8 +278,9 @@ func TestHandlerSessionCookieAttrs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			handler := NewHandler(&fakeHandlerService{}, tt.config, nil)
-			accessCookie := handler.accessCookie(session.AccessToken, int(accessTokenLifetime.Seconds()))
-			refreshCookie := handler.refreshCookie(session.RefreshToken, int(timeUntil(session.RefreshTokenExpiresAt).Seconds()))
+			attrs := handler.cookieAttrs(tt.request, tt.redirectURL)
+			accessCookie := handler.accessCookie(session.AccessToken, int(accessTokenLifetime.Seconds()), attrs)
+			refreshCookie := handler.refreshCookie(session.RefreshToken, int(timeUntil(session.RefreshTokenExpiresAt).Seconds()), attrs)
 
 			require.Equal(t, tt.wantDomain, accessCookie.Domain)
 			require.Equal(t, tt.wantDomain, refreshCookie.Domain)
@@ -268,6 +290,28 @@ func TestHandlerSessionCookieAttrs(t *testing.T) {
 			require.Equal(t, tt.wantRefreshSite, refreshCookie.SameSite)
 		})
 	}
+}
+
+func TestHandlerClearSessionCookieAttrs(t *testing.T) {
+	handler := NewHandler(&fakeHandlerService{}, CookieConfig{Environment: EnvironmentDev}, nil)
+	req := requestWithOriginAndForwardedProto("http://localhost:5173", "https")
+	rec := httptest.NewRecorder()
+
+	handler.clearSessionCookies(rec, req)
+
+	cookies := rec.Result().Cookies()
+	accessCookie := findCookie(t, cookies, accessTokenCookieName)
+	refreshCookie := findCookie(t, cookies, refreshTokenCookieName)
+	require.Empty(t, accessCookie.Domain)
+	require.Empty(t, refreshCookie.Domain)
+	require.Equal(t, "/", accessCookie.Path)
+	require.Equal(t, "/api/auth", refreshCookie.Path)
+	require.Equal(t, http.SameSiteNoneMode, accessCookie.SameSite)
+	require.Equal(t, http.SameSiteNoneMode, refreshCookie.SameSite)
+	require.True(t, accessCookie.Secure)
+	require.True(t, refreshCookie.Secure)
+	require.LessOrEqual(t, accessCookie.MaxAge, -1)
+	require.LessOrEqual(t, refreshCookie.MaxAge, -1)
 }
 
 func TestClientIP(t *testing.T) {
@@ -367,4 +411,30 @@ func requireClearedCookie(t *testing.T, cookies []*http.Cookie, name string) {
 		}
 	}
 	t.Fatalf("missing cleared cookie %s", name)
+}
+
+func requestWithForwardedProto(proto string) *http.Request {
+	return requestWithOriginAndForwardedProto("", proto)
+}
+
+func requestWithOriginAndForwardedProto(origin, proto string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/refresh", nil)
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+	if proto != "" {
+		req.Header.Set("X-Forwarded-Proto", proto)
+	}
+	return req
+}
+
+func findCookie(t *testing.T, cookies []*http.Cookie, name string) *http.Cookie {
+	t.Helper()
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	t.Fatalf("missing cookie %s", name)
+	return nil
 }

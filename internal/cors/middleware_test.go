@@ -54,6 +54,20 @@ func TestCORSMiddleware(t *testing.T) {
 			description:   "Should allow exact match localhost:5173",
 		},
 		{
+			name:          "Exact match - localhost 3000",
+			allowOrigins:  []string{"http://localhost:5173", "http://localhost:3000"},
+			requestOrigin: "http://localhost:3000",
+			expectAllowed: true,
+			description:   "Should allow explicitly configured localhost:3000",
+		},
+		{
+			name:          "Unlisted localhost port rejected",
+			allowOrigins:  []string{"http://localhost:5173"},
+			requestOrigin: "http://localhost:3000",
+			expectAllowed: false,
+			description:   "Should reject localhost ports that are not explicitly configured",
+		},
+		{
 			name:          "Multiple origins - first match",
 			allowOrigins:  []string{"*.sciedu.sdc.nycu.club", "http://localhost:5173"},
 			requestOrigin: "https://dev.sciedu.sdc.nycu.club",

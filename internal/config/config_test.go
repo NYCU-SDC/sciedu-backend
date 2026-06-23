@@ -62,7 +62,7 @@ func TestLoadNormalizesLocalEnvironmentFromEnvFileFallback(t *testing.T) {
 	require.Equal(t, "dev", config.Environment)
 }
 
-func TestLoadDefaultsToDevEnvironment(t *testing.T) {
+func TestLoadDefaultsToProdEnvironment(t *testing.T) {
 	resetFlags(t)
 	workdir := t.TempDir()
 	oldwd, err := os.Getwd()
@@ -76,9 +76,9 @@ func TestLoadDefaultsToDevEnvironment(t *testing.T) {
 	t.Setenv("ENV", "")
 
 	config, _ := Load()
-	require.Equal(t, "dev", config.Environment)
-	require.Equal(t, "http://localhost:5173", config.AllowOrigins)
-	require.NoError(t, config.Validate())
+	require.Equal(t, "prod", config.Environment)
+	require.Equal(t, "*.sciedu.sdc.nycu.club", config.AllowOrigins)
+	require.ErrorIs(t, config.Validate(), ErrInsecureProductionSecret)
 }
 
 func TestValidateRejectsDefaultProductionSecret(t *testing.T) {
@@ -111,6 +111,63 @@ func TestValidateRejectsDefaultProductionSecret(t *testing.T) {
 			err := tt.config.Validate()
 			if tt.wantErr {
 				require.ErrorIs(t, err, ErrInsecureProductionSecret)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateLocalhostRequiresDev(t *testing.T) {
+	tests := []struct {
+		name    string
+		config  Config
+		wantErr bool
+	}{
+		{
+			name: "dev allows localhost cors and redirect",
+			config: Config{
+				Environment:           "dev",
+				Secret:                DefaultSecret,
+				AllowOrigins:          "http://localhost:5173,http://localhost:3000",
+				AuthRedirectAllowlist: "http://localhost:5173",
+			},
+		},
+		{
+			name: "prod rejects localhost cors",
+			config: Config{
+				Environment:  "prod",
+				Secret:       "strong-random-secret",
+				AllowOrigins: "https://sciedu.sdc.nycu.club,http://localhost:5173",
+			},
+			wantErr: true,
+		},
+		{
+			name: "stage rejects localhost redirect",
+			config: Config{
+				Environment:           "stage",
+				Secret:                "strong-random-secret",
+				AllowOrigins:          "*.sciedu.sdc.nycu.club",
+				AuthRedirectAllowlist: "https://stage.sciedu.sdc.nycu.club,http://127.0.0.1:3000",
+			},
+			wantErr: true,
+		},
+		{
+			name: "prod allows sciedu origins",
+			config: Config{
+				Environment:           "prod",
+				Secret:                "strong-random-secret",
+				AllowOrigins:          "*.sciedu.sdc.nycu.club",
+				AuthRedirectAllowlist: "https://sciedu.sdc.nycu.club",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.config.Validate()
+			if tt.wantErr {
+				require.ErrorIs(t, err, ErrLocalhostRequiresDev)
 				return
 			}
 			require.NoError(t, err)

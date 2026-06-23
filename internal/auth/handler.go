@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -115,7 +116,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		UserAgent: r.UserAgent(),
 	})
 	if err != nil {
-		h.clearSessionCookies(w)
+		h.clearSessionCookies(w, r)
 		if errors.Is(err, errInvalidOAuthState) {
 			h.writeUnauthorizedProblem(w)
 			return
@@ -125,7 +126,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.setSessionCookies(w, result.Session)
+	h.setSessionCookies(w, r, result.Session, result.RedirectURL)
 	http.Redirect(w, r, result.RedirectURL, http.StatusFound)
 }
 
@@ -161,7 +162,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	logger := logutil.WithContext(ctx, h.logger)
 	refreshToken, err := cookieValue(r, refreshTokenCookieName)
 	if err != nil {
-		h.clearSessionCookies(w)
+		h.clearSessionCookies(w, r)
 		h.writeUnauthorizedProblem(w)
 		return
 	}
@@ -169,7 +170,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	session, err := h.service.Refresh(ctx, refreshToken)
 	if err != nil {
 		if errors.Is(err, ErrRefreshReuseDetected) || errors.Is(err, handlerutil.ErrUnauthorized) {
-			h.clearSessionCookies(w)
+			h.clearSessionCookies(w, r)
 			h.writeUnauthorizedProblem(w)
 			return
 		}
@@ -177,7 +178,7 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.setSessionCookies(w, session)
+	h.setSessionCookies(w, r, session, "")
 	handlerutil.WriteJSONResponse(w, http.StatusOK, session)
 }
 
@@ -194,18 +195,20 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.clearSessionCookies(w)
+	h.clearSessionCookies(w, r)
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *Handler) setSessionCookies(w http.ResponseWriter, session Session) {
-	http.SetCookie(w, h.accessCookie(session.AccessToken, int(accessTokenLifetime.Seconds())))
-	http.SetCookie(w, h.refreshCookie(session.RefreshToken, int(timeUntil(session.RefreshTokenExpiresAt).Seconds())))
+func (h *Handler) setSessionCookies(w http.ResponseWriter, r *http.Request, session Session, redirectURL string) {
+	attrs := h.cookieAttrs(r, redirectURL)
+	http.SetCookie(w, h.accessCookie(session.AccessToken, int(accessTokenLifetime.Seconds()), attrs))
+	http.SetCookie(w, h.refreshCookie(session.RefreshToken, int(timeUntil(session.RefreshTokenExpiresAt).Seconds()), attrs))
 }
 
-func (h *Handler) clearSessionCookies(w http.ResponseWriter) {
-	http.SetCookie(w, h.accessCookie("", -1))
-	http.SetCookie(w, h.refreshCookie("", -1))
+func (h *Handler) clearSessionCookies(w http.ResponseWriter, r *http.Request) {
+	attrs := h.cookieAttrs(r, "")
+	http.SetCookie(w, h.accessCookie("", -1, attrs))
+	http.SetCookie(w, h.refreshCookie("", -1, attrs))
 }
 
 func (h *Handler) writeUnauthorizedProblem(w http.ResponseWriter) {
@@ -221,37 +224,59 @@ func (h *Handler) writeUnauthorizedProblem(w http.ResponseWriter) {
 	_, _ = w.Write(data)
 }
 
-func (h *Handler) accessCookie(value string, maxAge int) *http.Cookie {
+type cookieAttrs struct {
+	secure      bool
+	accessSite  http.SameSite
+	refreshSite http.SameSite
+}
+
+func (h *Handler) accessCookie(value string, maxAge int, attrs cookieAttrs) *http.Cookie {
 	return &http.Cookie{
 		Name:     accessTokenCookieName,
 		Value:    value,
 		Path:     "/",
 		Domain:   h.cookies.Domain,
 		HttpOnly: true,
-		SameSite: h.cookieSameSite(http.SameSiteLaxMode),
-		Secure:   h.cookies.Environment != EnvironmentDev,
+		SameSite: attrs.accessSite,
+		Secure:   attrs.secure,
 		MaxAge:   maxAge,
 	}
 }
 
-func (h *Handler) refreshCookie(value string, maxAge int) *http.Cookie {
+func (h *Handler) refreshCookie(value string, maxAge int, attrs cookieAttrs) *http.Cookie {
 	return &http.Cookie{
 		Name:     refreshTokenCookieName,
 		Value:    value,
 		Path:     "/api/auth",
 		Domain:   h.cookies.Domain,
 		HttpOnly: true,
-		SameSite: h.cookieSameSite(http.SameSiteStrictMode),
-		Secure:   h.cookies.Environment != EnvironmentDev,
+		SameSite: attrs.refreshSite,
+		Secure:   attrs.secure,
 		MaxAge:   maxAge,
 	}
 }
 
-func (h *Handler) cookieSameSite(prodMode http.SameSite) http.SameSite {
-	if h.cookies.Environment == EnvironmentDev {
-		return http.SameSiteNoneMode
+func (h *Handler) cookieAttrs(r *http.Request, redirectURL string) cookieAttrs {
+	if h.cookies.Environment != EnvironmentDev {
+		return cookieAttrs{
+			secure:      true,
+			accessSite:  http.SameSiteLaxMode,
+			refreshSite: http.SameSiteStrictMode,
+		}
 	}
-	return prodMode
+
+	if requestIsHTTPS(r) && (isLocalhostURL(redirectURL) || isLocalhostURL(r.Header.Get("Origin"))) {
+		return cookieAttrs{
+			secure:      true,
+			accessSite:  http.SameSiteNoneMode,
+			refreshSite: http.SameSiteNoneMode,
+		}
+	}
+
+	return cookieAttrs{
+		accessSite:  http.SameSiteLaxMode,
+		refreshSite: http.SameSiteStrictMode,
+	}
 }
 
 func cookieValue(r *http.Request, name string) (string, error) {
@@ -289,4 +314,34 @@ func clientIP(r *http.Request) string {
 		return ""
 	}
 	return host
+}
+
+func requestIsHTTPS(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	if r.TLS != nil || strings.EqualFold(r.URL.Scheme, "https") {
+		return true
+	}
+	if proto := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]); strings.EqualFold(proto, "https") {
+		return true
+	}
+	for _, part := range strings.Split(r.Header.Get("Forwarded"), ";") {
+		if strings.EqualFold(strings.TrimSpace(part), "proto=https") {
+			return true
+		}
+	}
+	return false
+}
+
+func isLocalhostURL(rawURL string) bool {
+	if rawURL == "" {
+		return false
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	host := parsed.Hostname()
+	return strings.EqualFold(host, "localhost") || host == "127.0.0.1" || host == "::1"
 }

@@ -3,6 +3,8 @@ package config
 import (
 	"errors"
 	"flag"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 
@@ -14,7 +16,10 @@ import (
 
 const DefaultSecret = "default-secret"
 
-var ErrInsecureProductionSecret = errors.New("production secret must be configured")
+var (
+	ErrInsecureProductionSecret = errors.New("production secret must be configured")
+	ErrLocalhostRequiresDev     = errors.New("localhost origins require dev environment")
+)
 
 type Config struct {
 	Debug                      bool   `yaml:"debug"              envconfig:"DEBUG"`
@@ -73,11 +78,11 @@ func Load() (Config, *LogBuffer) {
 		Host:                       "localhost",
 		Port:                       "8080",
 		Secret:                     DefaultSecret,
-		Environment:                "dev",
+		Environment:                "prod",
 		DatabaseURL:                "",
 		MigrationSource:            "file://internal/database/migrations",
 		LLMURL:                     "https://llm.dev.sciedu.sdc.nycu.club",
-		AllowOrigins:               "http://localhost:5173",
+		AllowOrigins:               "*.sciedu.sdc.nycu.club",
 		GoogleOAuthClientID:        "",
 		GoogleOAuthClientSecret:    "",
 		GoogleOAuthRedirectURL:     "",
@@ -187,8 +192,12 @@ func FromFlags(config *Config) (*Config, error) {
 }
 
 func (c Config) Validate() error {
-	if normalizeEnvironment(c.Environment) != "dev" && strings.TrimSpace(c.Secret) == DefaultSecret {
+	environment := normalizeEnvironment(c.Environment)
+	if environment != "dev" && strings.TrimSpace(c.Secret) == DefaultSecret {
 		return ErrInsecureProductionSecret
+	}
+	if environment != "dev" && containsLocalhostEntry(c.AllowOrigins, c.AuthRedirectAllowlist) {
+		return ErrLocalhostRequiresDev
 	}
 	return nil
 }
@@ -208,4 +217,38 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func containsLocalhostEntry(values ...string) bool {
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			if isLocalhostEntry(part) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isLocalhostEntry(value string) bool {
+	value = strings.TrimRight(strings.TrimSpace(value), "/")
+	if value == "" || strings.HasPrefix(value, "*.") {
+		return false
+	}
+
+	host := value
+	if parsed, err := url.Parse(value); err == nil && parsed.Host != "" {
+		host = parsed.Host
+	} else if idx := strings.Index(host, "/"); idx != -1 {
+		host = host[:idx]
+	}
+
+	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
+		host = parsedHost
+	} else if idx := strings.LastIndex(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+	host = strings.Trim(host, "[]")
+
+	return strings.EqualFold(host, "localhost") || host == "127.0.0.1" || host == "::1"
 }

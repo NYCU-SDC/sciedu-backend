@@ -1348,3 +1348,81 @@
 
 ### Next Steps
 - Restart the backend so it reloads the new default config, then test from the Vite frontend with `credentials: "include"`.
+
+## [2026-06-23 16:49] Task Record
+
+### Task Description
+- Fix dev cookie security attributes so `SameSite=None` cookies are always emitted with `Secure=true`.
+
+### Actions Taken
+- Updated `internal/auth/handler.go` so access and refresh cookies compute SameSite first and then derive Secure from environment or `SameSite=None`.
+- Added `cookieSecure` helper to guarantee `SameSite=None` implies `Secure=true`.
+- Updated `internal/auth/handler_test.go` so dev cookie attribute tests expect secure cookies.
+- Ran `gofmt -w internal/auth/handler.go internal/auth/handler_test.go`.
+- Ran `go test ./internal/auth`.
+- Ran `go test ./...`.
+
+### Attempted Methods
+- Kept the previous dev behavior of host-only cookies and `SameSite=None`.
+- Changed only the Secure derivation, rather than special-casing access and refresh cookies separately.
+
+### Issues & Blockers
+- No blocker remains. Auth package tests and the full Go test suite pass.
+
+### Next Steps
+- Re-test the browser login/session flow after restarting the backend so the updated Set-Cookie attributes are used.
+
+## [2026-06-23 16:54] Task Record
+
+### Task Description
+- Restore the previous dev auth/CORS fix while excluding the later change that forced `Secure=true` whenever `SameSite=None`.
+
+### Actions Taken
+- Reverted `internal/auth/handler.go` to use `Secure: h.cookies.Environment != EnvironmentDev` for access and refresh cookies.
+- Removed the `cookieSecure` helper introduced by the later Secure/SameSite change.
+- Reverted `internal/auth/handler_test.go` so dev cookie tests no longer expect `Secure=true`.
+- Preserved the earlier changes for default `Environment=dev`, default localhost CORS origin, origin trailing slash trimming, and dev `SameSite=None` cookies.
+- Ran `gofmt -w internal/auth/handler.go internal/auth/handler_test.go`.
+- Ran `go test ./...`.
+
+### Attempted Methods
+- Used a targeted patch instead of a broad git revert so the earlier requested fixes stayed intact.
+
+### Issues & Blockers
+- No blocker remains. The full Go test suite passes.
+
+### Next Steps
+- Restart the backend before re-testing the frontend credentialed request flow.
+
+## [2026-06-23 17:59] Task Record
+
+### Task Description
+- Implement dev-only localhost frontend support for cookie-based auth and CORS, covering localhost frontend to HTTPS PR/dev backend and HTTP local backend.
+
+### Actions Taken
+- Updated `internal/config/config.go` so unset `ENVIRONMENT` defaults to `prod`, default CORS origins exclude localhost, and non-dev validation rejects localhost/127.0.0.1/::1 entries in `ALLOW_ORIGINS` or `AUTH_REDIRECT_ALLOWLIST`.
+- Updated `internal/auth/handler.go` so dev cookies are host-only and choose attributes from request context: HTTPS dev backend plus localhost frontend uses `SameSite=None; Secure`, while HTTP local backend keeps same-site Lax/Strict cookies without `Secure`.
+- Updated `.env.example`, `.deploy/local/compose.yaml`, `.deploy/dev/compose.yaml`, and `.deploy/snapshot/compose.yaml` to explicitly allow `http://localhost:5173` and `http://localhost:3000` only in dev-oriented configs.
+- Updated tests in `internal/config/config_test.go`, `internal/cors/middleware_test.go`, and `internal/auth/handler_test.go`.
+- Executed:
+  - `git status --short --branch`
+  - `git config user.name`
+  - `sed -n '1,220p' .gitignore`
+  - `tail -n 80 reports/report-asciibase64-codex-gpt-5.md`
+  - `gofmt -w internal/config/config.go internal/config/config_test.go internal/auth/handler.go internal/auth/handler_test.go internal/cors/middleware_test.go`
+  - `go test ./internal/config ./internal/cors ./internal/auth ./cmd/backend`
+  - `go test ./...`
+  - `git diff --stat`
+  - `git diff -- ...`
+
+### Attempted Methods
+- Kept CORS origin matching exact rather than adding wildcard localhost support, so localhost ports must be explicitly configured.
+- Kept non-dev localhost blocking in config validation rather than CORS/auth handlers, so invalid deployments fail before serving traffic.
+- Used `Origin`, OAuth callback redirect URL, and `X-Forwarded-Proto`/`Forwarded` request metadata to select dev cookie mode.
+
+### Issues & Blockers
+- No blockers remain. Focused package tests and the full Go test suite pass.
+- The existing report file was already modified before this task; this task appended a new record without reverting previous report changes.
+
+### Next Steps
+- Restart the target backend after deployment/config changes, then test from localhost frontend with `credentials: "include"` against both local HTTP and PR/dev HTTPS backend URLs.
