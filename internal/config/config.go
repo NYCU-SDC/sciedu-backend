@@ -73,7 +73,7 @@ func Load() (Config, *LogBuffer) {
 		Host:                       "localhost",
 		Port:                       "8080",
 		Secret:                     DefaultSecret,
-		Environment:                "dev",
+		Environment:                "prod",
 		DatabaseURL:                "",
 		MigrationSource:            "file://internal/database/migrations",
 		LLMURL:                     "https://llm.dev.sciedu.sdc.nycu.club",

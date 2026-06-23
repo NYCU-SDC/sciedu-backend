@@ -134,12 +134,20 @@ func TestCORSMiddleware(t *testing.T) {
 				if rec.Header().Get("Vary") != "Origin" {
 					t.Errorf("%s: expected Vary=Origin, got %s", tt.description, rec.Header().Get("Vary"))
 				}
+				if rec.Header().Get("Access-Control-Allow-Credentials") != "true" {
+					t.Errorf("%s: expected Access-Control-Allow-Credentials=true, got %s",
+						tt.description, rec.Header().Get("Access-Control-Allow-Credentials"))
+				}
 			} else {
 				if allowOriginHeader != "" {
 					t.Errorf("%s: expected no CORS header, but got %s", tt.description, allowOriginHeader)
 				}
 				if rec.Header().Get("Vary") != "" {
 					t.Errorf("%s: expected no Vary header, got %s", tt.description, rec.Header().Get("Vary"))
+				}
+				if rec.Header().Get("Access-Control-Allow-Credentials") != "" {
+					t.Errorf("%s: expected no Access-Control-Allow-Credentials header, got %s",
+						tt.description, rec.Header().Get("Access-Control-Allow-Credentials"))
 				}
 			}
 		})
@@ -180,6 +188,10 @@ func TestCORSPreflightRequest(t *testing.T) {
 
 	if rec.Header().Get("Access-Control-Allow-Headers") == "" {
 		t.Error("Expected Access-Control-Allow-Headers header to be set")
+	}
+
+	if rec.Header().Get("Access-Control-Allow-Credentials") != "true" {
+		t.Errorf("Expected Access-Control-Allow-Credentials=true, got %s", rec.Header().Get("Access-Control-Allow-Credentials"))
 	}
 }
 

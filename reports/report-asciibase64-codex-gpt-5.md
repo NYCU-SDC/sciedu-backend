@@ -1192,3 +1192,52 @@
 
 ### Next Steps
 - Ensure GitHub/deploy runtime envs explicitly set `ENVIRONMENT=prod` for real production deployments.
+## [2026-06-23 10:29] Task Record
+
+### Task Description
+- Review `feat/SCIEDU-81-AUTH-System` against `origin/main` using merge base `ecdb3eb8337c9534c637e3ef5688501b1690bd7a`.
+
+### Actions Taken
+- Checked repository status, Git user, `.gitignore`, and existing reports before review.
+- Switched from the current `feat/SCIEDU-82-Implement-updated-chat-API` checkout to `feat/SCIEDU-81-AUTH-System`.
+- Reviewed the diff with `git diff ecdb3eb8337c9534c637e3ef5688501b1690bd7a`.
+- Read auth design documentation and inspected auth handler, service, middleware, config, OAuth provider, migrations, and CORS behavior.
+- Ran `go test ./...`; all packages passed.
+- Modified only this report file.
+
+### Attempted Methods
+- Attempted to read `docs/API.md`, but this branch does not contain that file. Used `docs/AUTH_DESIGN.md` and the changed auth implementation as the relevant local specification sources.
+- Used local git branch refs rather than GitHub metadata because the user supplied the branch and merge base directly.
+
+### Issues & Blockers
+- Review found that the new config default sets `Environment` to `dev`, contradicting the auth design default of production and allowing default-secret/insecure cookies unless production explicitly opts in.
+- Review found that cookie-based cross-origin auth cannot work with the current CORS response because the middleware does not emit `Access-Control-Allow-Credentials: true` while auth routes are now exposed for frontend cookie use.
+
+### Next Steps
+- Change the default environment back to production and require explicit `ENVIRONMENT=dev` for local/dev behavior.
+- Update CORS handling for credentialed auth requests, including tests that cover preflight and actual credentialed responses.
+
+## [2026-06-23 10:36] Task Record
+
+### Task Description
+- Fix the two auth review findings: production should be the default environment, and CORS must support credentialed cookie auth for allowlisted origins.
+
+### Actions Taken
+- Updated `internal/config/config.go` so `Load()` defaults `Environment` to `prod`.
+- Updated `internal/config/config_test.go` so the unset-environment case expects `prod` and default-secret validation failure.
+- Updated `internal/cors/middleware.go` to emit `Access-Control-Allow-Credentials: true` for allowlisted origins.
+- Updated `internal/cors/middleware_test.go` to assert credential headers are present for allowed normal/preflight requests and absent for rejected origins.
+- Ran `gofmt -w internal/config/config.go internal/config/config_test.go internal/cors/middleware.go internal/cors/middleware_test.go`.
+- Ran `go test ./internal/config ./internal/cors`.
+- Ran `go test ./...`.
+
+### Attempted Methods
+- Kept the local development path explicit through existing `.deploy/local/compose.yaml` and `.env.example` `ENVIRONMENT=dev` settings while restoring the secure production default.
+- Added credential support inside the existing CORS middleware rather than auth handlers so protected and auth endpoints share one browser policy.
+
+### Issues & Blockers
+- No blocker remains. Focused package tests and the full Go test suite pass.
+- Existing `ALLOW_ORIGINS=*` behavior still echoes the caller origin; this preserves current behavior but should be used carefully with credentialed requests.
+
+### Next Steps
+- Ensure deployed environments set a strong `SECRET`; with the restored `prod` default, missing production secrets fail startup as intended.
