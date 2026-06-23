@@ -219,6 +219,30 @@
   - `git config user.name`
   - `date '+%Y-%m-%d %H:%M'`
 
+  ## [2026-06-18 23:19] Task Record
+
+  ### Task Description
+  - Debug the auth warning log `Handling Unauthorized` emitted from `internal/auth/handler.go:137`.
+
+  ### Actions Taken
+  - Checked git status and confirmed the worktree already contains an unrelated modification in `internal/auth/queries.sql`.
+  - Verified `git config user.name` for report tracking.
+  - Read `internal/auth/handler.go`, `internal/auth/service.go`, `internal/auth/middleware.go`, `internal/auth/handler_test.go`, and the shared `summer` problem writer implementation from the module cache.
+  - Ran `go test ./internal/auth -run 'TestHandlerSession|TestHandlerRefresh'` to validate the auth paths.
+  - Appended this report entry to `reports/report-asciibase64-codex-gpt-5.md`.
+
+  ### Attempted Methods
+  - Traced the warning to `h.problemWriter.WriteError(ctx, w, err, logger)` in `Handler.Session`, specifically the refresh-cookie lookup branch at line 137.
+  - Confirmed the service layer intentionally returns `handlerutil.ErrUnauthorized` for missing/invalid auth state and for refresh-token reuse.
+  - Verified that the shared `summer` problem writer logs every mapped problem at warning level, including `401 Unauthorized`, so the log line is expected behavior rather than a broken auth decision.
+
+  ### Issues & Blockers
+  - No code defect was found in the auth flow itself.
+  - The only noisy behavior is logging expected 401 responses as warnings, which comes from the shared `summer` writer rather than the auth handler.
+
+  ### Next Steps
+  - If the warning volume is a problem, the next change would be to bypass the shared warning logger for expected unauthenticated responses in the auth handler or to adjust the shared problem writer behavior.
+
 ### Attempted Methods
 - Tried `docker compose -f .deploy/local/compose.yaml ps -a`, but sandboxed Docker daemon access was denied.
 - Used `docker logs --tail 120 sciedu-backend-local`, which was permitted and exposed the actual backend failure.
@@ -642,144 +666,578 @@
 ### Next Steps
 - Review the generated model diffs and migration/schema change before committing.
 
-## [2026-06-23 13:52] Task Record
+## [2026-05-25 21:59] Task Record
 
 ### Task Description
-- Review branch `ci/Backend-Secret` against main merge base `89e8a2253a50166d2a6d711c838cdfc9a70928fd`, focusing on CI workflow changes.
+- Implement the backend-managed HttpOnly cookie JWT auth flow from `docs/AUTH_DESIGN.md`.
 
 ### Actions Taken
-- Checked Git status, Git username, `.gitignore`, and prior Codex report context.
-- Inspected diffs for:
-  - `.github/workflows/main.yml`
-  - `.github/workflows/pull-request.yml`
-  - `.github/workflows/stage.yml`
-- Verified `jq` rejects trailing commas in array literals, matching the new `secrets` array syntax in the PR workflow.
-- Ran `git diff --check 89e8a2253a50166d2a6d711c838cdfc9a70928fd` and found whitespace issues in two workflow files.
-- Terminal commands executed:
-  - `git status --short --branch`
-  - `git config user.name`
-  - `ls -la reports`
-  - `test -f .gitignore && sed -n '1,220p' .gitignore || true`
-  - `git diff 89e8a2253a50166d2a6d711c838cdfc9a70928fd -- .github/workflows/main.yml`
-  - `git diff 89e8a2253a50166d2a6d711c838cdfc9a70928fd -- .github/workflows/pull-request.yml`
-  - `git diff 89e8a2253a50166d2a6d711c838cdfc9a70928fd -- .github/workflows/stage.yml`
-  - `tail -n 80 reports/report-asciibase64-codex-gpt-5.md`
-  - `nl -ba .github/workflows/main.yml | sed -n '115,175p'`
-  - `nl -ba .github/workflows/pull-request.yml | sed -n '145,205p'`
-  - `nl -ba .github/workflows/stage.yml | sed -n '115,175p'`
-  - `rg -n "inject_secret|setup:|setup\\"|environment\\": \\"staging\\"|environment\\": \\"stage\\"|environment: \\"snapshot\\"|environment\\": \\"dev\\"" .github/workflows`
-  - `jq -n '[{a:1},]'`
-  - `git diff --name-only 89e8a2253a50166d2a6d711c838cdfc9a70928fd`
-  - `git diff --check 89e8a2253a50166d2a6d711c838cdfc9a70928fd`
-  - `date '+%Y-%m-%d %H:%M'`
+- Added the `internal/auth` package with handlers, service logic, middleware, repository code, sqlc schema/queries, and table-driven tests.
+- Updated backend wiring and config for auth routes, auth middleware, JWT secret/environment handling, refresh token rotation, logout revocation, and access-token user context.
+- Added JWT dependency and regenerated sqlc code for the merged schema.
 
 ### Attempted Methods
-- Checked whether the trailing comma was acceptable in `jq`; it failed with `syntax error, unexpected ']'`, confirming the pull-request workflow would fail before sending the webhook.
-- Inspected the raw `curl --data-raw` payloads in main and stage; the same trailing comma makes their JSON payloads invalid for webhook consumers.
+- Wrote tests first for session, refresh, logout, and middleware unauthorized behavior.
+- Fixed refresh-token reuse handling to wrap the standard unauthorized error and normalized JWT expiry comparisons to UTC.
 
 ### Issues & Blockers
-- Found a blocking CI/deploy issue: the added `secrets` arrays contain trailing commas in all three workflow payloads.
-- Found non-blocking whitespace issues via `git diff --check` in `.github/workflows/main.yml` and `.github/workflows/stage.yml`.
+- Google OAuth provider exchange and id-token verification were left for a later auth pass.
 
 ### Next Steps
-- Remove the trailing comma after the final secret object in each workflow.
-- Clean the trailing whitespace reported by `git diff --check`.
+- Add Google OAuth provider configuration, PKCE state persistence, callback exchange, and verified user linking on top of the auth tables.
 
-## [2026-06-23 13:54] Task Record
+## [2026-05-27 14:04] Task Record
 
 ### Task Description
-- Fix the CI workflow issues identified in the review for branch `ci/Backend-Secret`.
+- Complete Google `id_token` verification using Google OAuth client secret JSON without committing or exposing the secret.
 
 ### Actions Taken
-- Removed trailing commas after the final `GOOGLE_OAUTH_CLIENT_SECRET` secret object in:
-  - `.github/workflows/main.yml`
-  - `.github/workflows/pull-request.yml`
-  - `.github/workflows/stage.yml`
-- Removed trailing whitespace in:
-  - `.github/workflows/main.yml`
-  - `.github/workflows/stage.yml`
-- Terminal commands executed:
-  - `git status --short --branch`
-  - `git config user.name`
-  - `nl -ba .github/workflows/main.yml | sed -n '142,162p'`
-  - `nl -ba .github/workflows/pull-request.yml | sed -n '173,191p'`
-  - `nl -ba .github/workflows/stage.yml | sed -n '138,160p'`
-  - `git diff --check 89e8a2253a50166d2a6d711c838cdfc9a70928fd`
-  - `jq -n '[{a:1}]'`
-  - `git diff 89e8a2253a50166d2a6d711c838cdfc9a70928fd -- .github/workflows/main.yml .github/workflows/pull-request.yml .github/workflows/stage.yml`
-  - `date '+%Y-%m-%d %H:%M'`
-  - `git status --short`
+- Added Google OAuth config fields, credentials-file loading, PKCE auth URL generation, code exchange, and RS256 Google `id_token` verification.
+- Extended auth flow with `/api/login/oauth/google` and `/api/auth/callback`, OAuth state persistence, verified user/account creation, and session issuance.
+- Added tests for Google ID token verification, OAuth credentials loading, and OAuth begin/complete service flows.
 
 ### Attempted Methods
-- Applied a minimal patch only to the invalid trailing commas and whitespace, preserving the existing deployment payload structure.
-- Re-ran `git diff --check`; it passed with no output.
+- Avoided writing real client secret values to tracked files; the implementation loads credentials at runtime from an ignored file path.
+- Fixed lint findings around unchecked closes, staticcheck conversion, and unused OAuth error state during the original implementation.
 
 ### Issues & Blockers
-- No unresolved blockers.
-- Workflow execution was not run locally; validation was limited to diff inspection, whitespace checks, and confirming the jq trailing-comma syntax class is fixed.
+- Local runtime still needs `.env` or config pointing `GOOGLE_OAUTH_CREDENTIALS_FILE` at the real secret JSON path.
 
 ### Next Steps
-- Commit the workflow fixes after review if desired.
+- Run an end-to-end browser OAuth login once the Google redirect URI and backend callback URL are configured.
 
-## [2026-06-23 14:25] Task Record
+## [2026-05-27 14:25] Task Record
 
 ### Task Description
-- Move the remaining `.env` runtime settings into Docker Compose while relying on existing GitHub workflow secret injection for Google OAuth client credentials.
+- Add English comments clarifying security-sensitive auth flows.
 
 ### Actions Taken
-- Reviewed Git status, Git username, `.gitignore`, existing reports, `.env`, `.env.example`, deployment compose files, and workflow secret setup.
-- Confirmed `.github/workflows/main.yml`, `.github/workflows/pull-request.yml`, and `.github/workflows/stage.yml` already inject `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`.
-- Added non-secret runtime environment variables to:
-  - `.deploy/dev/compose.yaml`
-  - `.deploy/stage/compose.yaml`
-  - `.deploy/snapshot/compose.yaml`
-  - `.deploy/local/compose.yaml`
-- Added stage-aware URL values:
-  - dev uses `https://dev.sciedu.sdc.nycu.club`
-  - stage uses `https://stage.sciedu.sdc.nycu.club`
-  - snapshot uses `https://${VERSION}.sciedu.sdc.nycu.club`
-  - local uses `http://localhost:8080`
-- Changed stage `LLM_URL` from the dev prefix to `https://llm.stage.sciedu.sdc.nycu.club`.
-- Terminal commands executed:
-  - `git status --short --branch`
-  - `git config user.name`
-  - `ls`
-  - `rg --files -g '.gitignore' -g 'report-*.md' -g 'reports/**' -g '.env*' -g 'compose*.yml' -g 'compose*.yaml' -g '*.yaml' -g '*.yml'`
-  - `sed -n '1,220p' .gitignore`
-  - `sed -n '1,240p' .env`
-  - `sed -n '1,240p' .env.example`
-  - `rg --files .github .deploy . -g '!*vendor*' -g '!reports/**'`
-  - `sed -n '1,260p' .deploy/dev/compose.yaml`
-  - `sed -n '1,260p' .deploy/stage/compose.yaml`
-  - `sed -n '1,260p' .deploy/snapshot/compose.yaml`
-  - `sed -n '1,260p' .deploy/local/compose.yaml`
-  - `sed -n '1,260p' .github/workflows/main.yml`
-  - `sed -n '1,260p' .github/workflows/stage.yml`
-  - `sed -n '1,280p' .github/workflows/pull-request.yml`
-  - `sed -n '1,220p' .github/workflows/close.yml`
-  - `sed -n '1,260p' internal/config/config.go`
-  - `rg -n "BASE_URL|GOOGLE_OAUTH|AUTH_REDIRECT|ALLOW_ORIGINS|LLM_URL|ENVIRONMENT|\\bENV\\b" internal cmd docs .deploy .github README.md`
-  - `sed -n '1,220p' reports/report-asciibase64-codex-gpt-5.md`
-  - `rg -n "GOOGLE|OAUTH|BASE_URL|AUTH_REDIRECT|REDIRECT|ENVIRONMENT|os\\.Getenv|envconfig" . -g '!reports/**'`
-  - `sed -n '1,220p' docs/AUTH_DESIGN.md`
-  - `sed -n '1,220p' README.md`
-  - `sed -n '1,220p' .deploy/dev/deploy.sh`
-  - `sed -n '1,220p' .deploy/stage/deploy.sh`
-  - `sed -n '1,220p' .deploy/snapshot/deploy.sh`
-  - `docker compose -f .deploy/dev/compose.yaml config`
-  - `docker compose -f .deploy/stage/compose.yaml config`
-  - `VERSION=pr-0 docker compose -f .deploy/snapshot/compose.yaml config`
-  - `docker compose -f .deploy/local/compose.yaml config`
-  - `git diff -- .deploy/dev/compose.yaml .deploy/stage/compose.yaml .deploy/snapshot/compose.yaml .deploy/local/compose.yaml`
-  - `date '+%Y-%m-%d %H:%M'`
+- Added concise comments around hashed OAuth state persistence, one-time PKCE state consumption, refresh-token replay handling, provider-subject account lookup, and lazy JWKS refresh.
 
 ### Attempted Methods
-- Kept Google OAuth client id and secret out of compose values because workflow `inject_secret` already configures those secret names.
-- Used Docker Compose config rendering to validate all modified YAML files, including snapshot with `VERSION=pr-0`.
+- Kept comments minimal and only added them where they explain cross-file security assumptions.
 
 ### Issues & Blockers
-- No unresolved blockers.
-- Did not run the backend containers; verification was limited to compose syntax/rendering because the change is deployment configuration only.
+- No unresolved blocker.
 
 ### Next Steps
-- Confirm in the deployment platform that injected Google OAuth secrets are made available to the backend container alongside these compose-defined non-secret variables.
+- Review broader auth implementation changes before staging or committing.
+- Review the broader existing auth implementation changes separately before staging or committing, since this task only documented/analyzed the folder and added explanatory comments.
+
+## [2026-06-18 19:19] Task Record
+
+### Task Description
+- Ensure the auth system matches the published OpenAPI spec at `https://nycu-sdc.github.io/sciedu-api/tsp-output/schema/openapi.1.0.0.yaml`, without modifying non-auth implementation files.
+
+### Actions Taken
+- Checked Git status, Git username, `.gitignore`, and existing reports before editing.
+- Fetched and reviewed the published OpenAPI YAML auth paths and `Auth.SessionResponse` schema.
+- Confirmed auth routes already matched the spec paths:
+  - `GET /api/login/oauth/google`
+  - `GET /api/auth/callback`
+  - `GET /api/auth/session`
+  - `POST /api/auth/refresh`
+  - `POST /api/auth/logout`
+- Fixed the response-schema mismatch where session-producing auth paths returned only expiry metadata instead of required `username`, `email`, `accessTokenExpiresAt`, and `refreshTokenExpiresAt`.
+- Modified auth files only for implementation:
+  - `internal/auth/types.go`
+  - `internal/auth/service.go`
+  - `internal/auth/store.go`
+  - `internal/auth/queries.sql`
+  - `internal/auth/handler_test.go`
+  - `internal/auth/service_test.go`
+- Ran `sqlc generate` so the ignored local generated auth query method exists for testing.
+- Reverted unintended generated-model churn from non-auth packages after `sqlc generate`.
+- Ran `gofmt`, `go test ./internal/auth`, `go test ./...`, `golangci-lint run ./...`, and `git diff --check`.
+
+### Attempted Methods
+- First auth test run failed because this branch lacked `Session.Username`, `Session.Email`, `UserProfile`, and `Repository.GetUserProfile`; added those auth types/interface pieces.
+- `sqlc generate` rewrote non-auth generated files and briefly caused unrelated content package type errors. Reverted tracked non-auth generated files and restored the ignored local content query artifact so full verification could run without expanding the implementation diff beyond auth.
+
+### Issues & Blockers
+- No unresolved auth blocker. Full tests, lint, and whitespace checks pass.
+- The implementation diff is auth-only; this report update is separate and required by workspace protocol.
+
+### Next Steps
+- Before committing, run `sqlc generate` in a clean environment if generated ignored query files are absent locally.
+
+## [2026-06-18 19:28] Task Record
+
+### Task Description
+- Sync `feat/SCIEDU-81-AUTH-System` with the latest main branch.
+
+### Actions Taken
+- Checked Git status, Git username, and existing report context before syncing.
+- Ran `git fetch origin`.
+- Confirmed local `main` was stale compared with `origin/main`.
+- Rebased the current branch onto `origin/main` using `git rebase --autostash origin/main`.
+- Resolved rebase conflicts in generated sqlc model files by combining required imports from main and the auth branch.
+- Resolved report-file conflicts by preserving main-side report history and appending compact auth records from the rebased commits.
+- Resolved the autostash report conflict and reapplied the local auth spec-alignment changes.
+- Restored the ignored local `internal/content/queries.sql.go` generated artifact to match rebased main's string-based content service signatures.
+- Unstaged reapplied local changes so the worktree remains in a normal uncommitted-edit state.
+- Ran `go test ./...`, `golangci-lint run ./...`, and `git diff --check`; all passed.
+
+### Attempted Methods
+- Initial `git rebase --autostash origin/main` failed in the sandbox because Git could not create `.git/index.lock`; reran with approved Git metadata access.
+- `git rebase --continue` initially failed because no editor was available; continued with `GIT_EDITOR=true`.
+- Autostash application conflicted only in the report file; resolved manually and kept the stash entry for safety.
+
+### Issues & Blockers
+- No unresolved blocker. Branch is rebased onto `origin/main` at `ecdb3eb`.
+- `stash@{0}: autostash` still exists as a safety copy of the pre-rebase local changes. The working tree has those changes reapplied.
+
+### Next Steps
+- Drop `stash@{0}` only after confirming the reapplied local changes are satisfactory.
+
+## [2026-06-18 21:42] Task Record
+
+### Task Description
+- Explain how to prove the correctness of the auth system.
+
+### Actions Taken
+- Checked git status, Git username, `.gitignore`, existing reports, auth design/ERD docs, and the auth implementation/tests.
+- Reviewed `docs/AUTH_DESIGN.md`, `docs/auth_ERD.md`, `internal/auth/service.go`, `internal/auth/handler.go`, `internal/auth/middleware.go`, `internal/auth/queries.sql`, and auth unit tests.
+- Ran `go test ./internal/auth`.
+- Modified only this report file.
+
+### Attempted Methods
+- Used the auth design document as the source of proof obligations, then mapped those obligations to implementation and tests.
+- No failed technical attempts.
+
+### Issues & Blockers
+- No blocker. Auth package tests pass.
+- Current proof is strongest at unit level; full correctness would still benefit from DB-backed integration tests, OpenAPI/Prism contract tests, and browser-level cookie/CORS checks.
+
+### Next Steps
+- Add integration tests for refresh-token rotation/reuse under PostgreSQL transactions and contract tests against the published TypeSpec OpenAPI output.
+
+## [2026-06-18 21:44] Task Record
+
+### Task Description
+- Explain whether and how the developer can manually verify the auth system using real Google OAuth.
+
+### Actions Taken
+- Checked git status, Git username, and existing report context.
+- Reviewed OAuth/config wiring in `cmd/backend/main.go`, `internal/config/config.go`, `internal/auth/oauth.go`, `internal/auth/oauth_credentials.go`, and local compose documentation.
+- Identified required local env/config keys and the `ENVIRONMENT=dev` caveat for localhost cookie testing.
+- Modified only this report file.
+
+### Attempted Methods
+- Mapped the manual Google OAuth flow to the current backend routes and config keys.
+- No failed technical attempts.
+
+### Issues & Blockers
+- Did not run a live OAuth test because no Google OAuth client credentials were provided.
+- Local compose currently sets `ENV=local`, while auth code checks `ENVIRONMENT`; manual local cookie testing should set `ENVIRONMENT=dev`.
+
+### Next Steps
+- If live verification is needed, create a Google OAuth Web client with callback `http://localhost:8080/api/auth/callback`, configure backend OAuth env vars, start the stack, and test login through `/api/login/oauth/google`.
+
+## [2026-06-18 22:04] Task Record
+
+### Task Description
+- Diagnose why Google OAuth returned to `/api/oauth/google/callback` and whether that is handled correctly.
+
+### Actions Taken
+- Used previously reviewed auth route wiring and OAuth config behavior to identify a callback path mismatch.
+- Explained that the backend registers `GET /api/auth/callback`, while the observed Google redirect target was `/api/oauth/google/callback`.
+- Modified only this report file.
+
+### Attempted Methods
+- Compared the observed callback URL with the backend auth route contract.
+- No failed technical attempts.
+
+### Issues & Blockers
+- The observed callback URL is not handled by the current backend unless an additional route exists outside the reviewed auth handler.
+- The exposed OAuth `code` in the user message should be treated as sensitive even though it is short-lived and single-use.
+
+### Next Steps
+- Set both Google Console and backend `GOOGLE_OAUTH_REDIRECT_URL` to `http://localhost:8080/api/auth/callback`, restart the backend, and retry from the login endpoint with a fresh OAuth flow.
+
+## [2026-06-18 22:31] Task Record
+
+### Task Description
+- Diagnose Google OAuth `redirect_uri_mismatch` shown in the browser screenshot.
+
+### Actions Taken
+- Interpreted the Google OAuth error page as a provider-side redirect URI mismatch before backend callback handling.
+- Explained that the redirect URI sent by the backend must exactly match a Google Cloud Console Authorized redirect URI.
+- Modified only this report file.
+
+### Attempted Methods
+- Used the previously reviewed backend route/config wiring to distinguish Google-side redirect URI mismatch from backend callback route handling.
+- No failed technical attempts.
+
+### Issues & Blockers
+- Live backend state and Google Console settings were not directly inspectable from this session.
+- The likely remaining causes are stale backend config/container, a credentials JSON whose first `redirect_uris` entry points at `/api/oauth/google/callback`, or Google Console missing the exact callback URI used by the backend.
+
+### Next Steps
+- Decode the generated Google authorization URL's `redirect_uri` parameter, then make Google Console and backend config match that value exactly, preferably `http://localhost:8080/api/auth/callback`.
+
+## [2026-06-18 22:34] Task Record
+
+### Task Description
+- Explain why `http://localhost:8080/api/oauth/google/callback` returns 404 during OAuth testing.
+
+### Actions Taken
+- Explained that `/api/oauth/google/callback` is not a registered route in the current backend.
+- Clarified that the configured Google redirect URI must be changed to the registered route `/api/auth/callback`, or the backend must add a compatibility route.
+- Modified only this report file.
+
+### Attempted Methods
+- Used prior route inspection from `internal/auth/handler.go` to diagnose the 404.
+- No failed technical attempts.
+
+### Issues & Blockers
+- No blocker. The 404 is consistent with current route registration.
+
+### Next Steps
+- Prefer configuring Google/backend to use `http://localhost:8080/api/auth/callback`; alternatively add a route alias for `/api/oauth/google/callback` if backward compatibility is required.
+
+## [2026-06-18 22:36] Task Record
+
+### Task Description
+- Explain why directly visiting `/api/auth/callback` returns `invalid oauth state`.
+
+### Actions Taken
+- Explained that `/api/auth/callback` requires a one-time state previously created by `/api/login/oauth/google`.
+- Clarified that direct callback access, stale callback URLs, reused OAuth codes, or backend restarts that clear state can all produce `invalid oauth state`.
+- Modified only this report file.
+
+### Attempted Methods
+- Used existing auth flow knowledge from `BeginOAuth`/`CompleteOAuth` to diagnose the error.
+- No failed technical attempts.
+
+### Issues & Blockers
+- No blocker. The error is expected when the callback is not reached through a fresh OAuth login flow.
+
+### Next Steps
+- Start OAuth only from `/api/login/oauth/google?r=...`, ensure Google redirects to `/api/auth/callback`, and do not reuse old callback URLs.
+
+## [2026-06-18 22:40] Task Record
+
+### Task Description
+- Diagnose `500 Internal Server Error` after Google successfully redirects to `/api/auth/callback` with `code` and `state`.
+
+### Actions Taken
+- Checked git status and Git username.
+- Read backend and PostgreSQL Docker logs.
+- Checked Docker PostgreSQL availability with `docker exec` queries.
+- Confirmed the configured Docker PostgreSQL container was not running, while the backend callback was returning a generic 500.
+- Modified only this report file.
+
+### Attempted Methods
+- Tried to inspect OAuth state/user DB rows via `docker exec`; this failed because the PostgreSQL container is not running.
+- Checked Codex app terminal state; no attached app terminal was available.
+
+### Issues & Blockers
+- Could not inspect the exact live backend process/environment serving port 8080 from this thread.
+- The likely cause of the callback 500 is a backend-side failure after state validation, especially DB unavailability/misconfiguration. Other possible causes include token exchange failure, ID token verification failure, or user creation conflict.
+
+### Next Steps
+- Ensure the DB used by the backend is running, restart backend with `ENVIRONMENT=dev` and correct Google OAuth env vars, then retry a fresh OAuth flow. Do not reuse old callback URLs/codes.
+
+## [2026-06-18 22:47] Task Record
+
+### Task Description
+- Fix/debug the Google OAuth callback `500` during local verification with the running PostgreSQL container named `SciEdu`.
+
+### Actions Taken
+- Checked git status and confirmed the working tree already had unrelated changes in `internal/auth/models.go` and this report.
+- Inspected `SciEdu` Docker logs and environment, confirming it is the PostgreSQL container.
+- Confirmed the local backend was served by a local Go binary on port 8080, not by the compose backend container.
+- Inspected `.env` runtime settings and verified the backend uses the `postgres` database, where auth tables exist.
+- Queried OAuth state/user/session tables; recent OAuth states were consumed, but no users, OAuth accounts, refresh families, or refresh tokens were created.
+- Confirmed Google JWKS is reachable from the machine.
+- Updated auth code to wrap OAuth callback failures by phase, log callback completion failures, map OAuth code-exchange failures to `400 Bad Request`, and sanitize client IP extraction.
+- Added tests for OAuth callback exchange-error mapping and client IP parsing.
+- Ran `gofmt`, `go test ./internal/auth`, and `go test ./...`.
+
+### Attempted Methods
+- Initially queried the `sciedu` database and found no tables; corrected the target after reading `.env`, which points the backend at the `postgres` database.
+- Attempted to manually exchange the already-pasted OAuth code with Google; it returned `invalid_grant`, which is expected for an expired/used code and does not prove the original callback failure cause.
+- Could not read the local Go server terminal logs from this Codex thread, so added explicit callback logging for the next retry.
+
+### Issues & Blockers
+- The exact original backend error cannot be recovered because the running server logs were not attached to this thread and the OAuth code/state are one-time-use.
+- `internal/auth/models.go` remains modified from prior/generated work and was intentionally not changed as part of this fix.
+
+### Next Steps
+- Restart the local Go backend so the logging/error-mapping changes are active, run a fresh OAuth flow, and check the backend log line `failed to complete oauth callback` if the callback still fails.
+
+## [2026-06-18 23:29] Task Record
+
+### Task Description
+- Fix the OAuth callback response for invalid state so it matches the API contract instead of returning `400 Bad Request`.
+
+### Actions Taken
+- Updated `internal/auth/handler.go` so `/api/auth/callback` now treats `errInvalidOAuthState` as an unauthorized callback and returns the existing 401 problem response helper.
+- Added `TestHandlerCallbackInvalidOAuthState` in `internal/auth/handler_test.go` to cover the callback invalid-state path.
+- Ran `gofmt -w internal/auth/handler.go internal/auth/handler_test.go`.
+- Ran `go test ./internal/auth -run 'TestHandlerCallbackOAuthExchangeError|TestHandlerCallbackInvalidOAuthState|TestHandlerSession|TestHandlerRefresh|TestHandlerLogout'`.
+- Ran `go test ./internal/auth`.
+
+### Attempted Methods
+- Checked the auth design docs and the generated OpenAPI spec to confirm the callback endpoint is documented as a `401` unauthorized path rather than a `400` bad request path for auth failures.
+- Verified the existing OAuth flow still consumes one-time state server-side and that the new branch only changes the invalid-state response shape, not the security behavior.
+
+### Issues & Blockers
+- No blocker. The change is limited to the callback response handling and the auth package tests pass.
+
+### Next Steps
+- If the browser UX should do something other than show a 401 problem response for invalid OAuth state, wire a frontend redirect target and update the callback failure branch accordingly.
+
+## [2026-06-18 15:39] Task Record
+
+### Task Description
+- Verify whether the live OAuth callback 401 was caused by missing OAuth state or a different callback failure.
+
+### Actions Taken
+- Fetched a fresh `/api/login/oauth/google?r=http://localhost:8080/api/auth/session` redirect from the live backend.
+- Confirmed the returned authorization URL contained a fresh `state` value and `redirect_uri=http://localhost:8080/api/auth/callback`.
+- Queried the live Postgres container `SciEdu` and confirmed the fresh state row exists in `oauth_login_states`.
+- Called `/api/auth/callback` with that exact fresh state and a dummy code.
+- Observed the callback returned `400 Bad Request` with `detail: oauth code exchange failed`, not `invalid oauth state`.
+
+### Attempted Methods
+- Used the state hash from the live redirect to look up the exact row in the database and prove whether BeginOAuth persisted it.
+- Exercised the callback with the exact live state to discriminate state lookup failure from Google code-exchange failure.
+
+### Issues & Blockers
+- No backend state bug was found.
+- The live 401 `invalid oauth state` path is therefore coming from a callback that does not carry the fresh state or is reusing a stale one.
+
+### Next Steps
+- Retry with a completely fresh login flow and do not refresh or reuse the callback URL.
+- If the 401 still appears on a fresh flow, capture the exact callback URL after Google redirects back and compare its `state` query value with the fresh login redirect.
+
+## [2026-06-18 23:51] Task Record
+
+### Task Description
+- Fix the local Google OAuth login flow so `http://localhost:8080/api/login/oauth/google?r=http://localhost:8080/api/auth/session` works with the backend in local development.
+
+### Actions Taken
+- Updated `internal/config/config.go` so runtime configuration now reads `ENVIRONMENT` with `ENV` as a fallback and normalizes `local` to `dev`.
+- Added `internal/config/config_test.go` to verify `local` maps to `dev` and that `FromEnv` honors the local `ENV` fallback.
+- Updated `.deploy/local/compose.yaml` to use `ENVIRONMENT=dev` instead of `ENV=local`.
+- Ran `gofmt -w internal/config/config.go internal/config/config_test.go internal/auth/handler.go internal/auth/handler_test.go`.
+- Ran `go test ./internal/config ./internal/auth` via the test runner.
+- Ran `docker compose -f .deploy/local/compose.yaml config | sed -n '/environment:/,/networks:/p'` to verify the rendered compose environment contains `ENVIRONMENT: dev`.
+- Ran `go test ./...` to validate the full workspace.
+
+### Attempted Methods
+- Initially the full test suite failed because `internal/config/config.go` referenced `EnvironmentDev` from the auth package, which would have created a package build error; replaced it with a self-contained string-based normalization.
+- Verified the fix at the compose level rather than assuming the runtime environment, because the previous local stack was using `ENV=local` and leaving auth cookies in prod mode.
+
+### Issues & Blockers
+- No blocker remains. The config package and auth package tests pass, and the rendered compose config now exposes `ENVIRONMENT: dev` for the backend service.
+
+### Next Steps
+- Restart the local backend stack so the updated environment takes effect, then retry the OAuth login flow and `/api/auth/session`.
+
+## [2026-06-19 00:39] Task Record
+
+### Task Description
+- Review branch `feat/SCIEDU-81-AUTH-System` against merge base `89e8a2253a50166d2a6d711c838cdfc9a70928fd` and provide concise actionable feedback.
+
+### Actions Taken
+- Checked Git status and confirmed current branch is `feat/SCIEDU-81-AUTH-System`.
+- Verified Git username with `git config user.name`.
+- Verified `.gitignore` exists and includes common sensitive/local artifacts.
+- Read recent report context from `reports/report-asciibase64-codex-gpt-5.md`.
+- Inspected the branch diff with `git diff --stat`, `git diff --name-only`, and targeted diffs/file reads for auth, config, deploy, and workflow changes.
+- Ran `go test ./...`; it failed because `internal/config/config_test.go` references undefined `EnvironmentDev` and `EnvironmentProd`.
+- Ran `go test ./internal/auth -run TestServiceRefresh -count=1`; it passed.
+- Modified only this report file.
+
+### Attempted Methods
+- Reviewed auth handler, service, store, SQL query, OAuth provider, middleware, and generated model code with line numbers.
+- Checked migration files as schema context; the auth migration files themselves were not part of the diff against the supplied merge base.
+- Used the test run to confirm the config package compile failure before reporting it.
+
+### Issues & Blockers
+- The full Go test suite does not compile due to undefined config test constants.
+- Refresh-token rotation has a race: `MarkRefreshTokenUsed` can update zero rows, but `RotateRefreshToken` proceeds to insert a new current token and can return a database unique-index error instead of the intended reuse/unauthorized behavior.
+
+### Next Steps
+- Fix config tests to use constants visible to the config package or define package-local environment constants.
+- Make refresh rotation atomic by detecting zero rows affected or using a guarded `UPDATE ... RETURNING`/row lock before inserting the rotated token.
+
+## [2026-06-19 00:43] Task Record
+
+### Task Description
+- Fix the two review findings: config tests failing to compile and refresh-token rotation not detecting a lost guarded update.
+
+### Actions Taken
+- Updated `internal/config/config_test.go` to use package-local string expectations instead of undefined auth package constants.
+- Updated `internal/auth/queries.sql` so `MarkRefreshTokenUsed` uses sqlc `:execrows`.
+- Updated generated local `internal/auth/queries.sql.go` accordingly so local tests compile with the ignored generated file present.
+- Updated `internal/auth/store.go` so refresh rotation checks affected rows; when the old token cannot be claimed, it marks the refresh family as reuse-detected, commits that revocation, and returns `ErrRefreshReuseDetected`.
+- Updated `internal/auth/service.go` so rotate-time `ErrRefreshReuseDetected` maps to the same unauthorized path as pre-rotation reuse.
+- Added a service test case in `internal/auth/service_test.go` for rotate-time reuse.
+- Ran `gofmt -w internal/config/config_test.go internal/auth/store.go internal/auth/service.go internal/auth/service_test.go internal/auth/queries.sql.go`.
+- Ran `go test ./internal/config ./internal/auth`.
+- Ran `go test ./...`.
+
+### Attempted Methods
+- Chose sqlc `:execrows` over adding a separate select because it preserves the current single guarded update and exposes whether this transaction actually claimed the old token.
+- Kept reuse-family revocation in the store transaction so concurrent refresh races produce the intended security response instead of a unique-index database error.
+
+### Issues & Blockers
+- No blockers remain. The full Go test suite passes.
+- `internal/auth/queries.sql.go` is ignored by Git but present locally and needed by `go test`; the tracked source of truth is `internal/auth/queries.sql`.
+
+### Next Steps
+- If CI regenerates sqlc output, `make gen` should reproduce the `MarkRefreshTokenUsed` `RowsAffected` signature from the `:execrows` annotation.
+
+## [2026-06-19 00:49] Task Record
+
+### Task Description
+- Review branch `feat/SCIEDU-81-AUTH-System` against `origin/main` merge base `ecdb3eb8337c9534c637e3ef5688501b1690bd7a`.
+
+### Actions Taken
+- Checked Git status and confirmed current branch plus existing local modifications.
+- Verified Git username with `git config user.name`.
+- Re-read recent report context and `.gitignore`.
+- Inspected `git diff --stat ecdb3eb8337c9534c637e3ef5688501b1690bd7a` and changed file list.
+- Reviewed auth, config, route registration, sqlc, migration/schema, and local deployment changes.
+- Checked available docs under `docs/`; `service/` and `docs/API.md` were not present in this workspace.
+- Ran `go test ./...`; it passes in the current workspace.
+- Modified only this report file for this review record.
+
+### Attempted Methods
+- Verified that `internal/auth/queries.sql.go` is ignored and untracked even though the tracked auth store depends on generated query methods from it.
+- Checked production secret defaults because this branch introduces JWT signing with `cfg.Secret`.
+- Considered middleware double-wrapping, but did not report it because it appears mostly redundant and the CORS middleware uses `Set` for most headers.
+
+### Issues & Blockers
+- Clean checkout risk: the generated auth query implementation file is not tracked due to the existing `queries.sql.go` ignore pattern.
+- Security risk: production auth can sign JWTs with the known `default-secret` when `SECRET` is omitted.
+
+### Next Steps
+- Track or rename the generated auth query output so direct Go builds/tests work from a clean checkout.
+- Require a non-default signing secret for non-dev environments before enabling auth.
+
+## [2026-06-19 00:55] Task Record
+
+### Task Description
+- Fix the production JWT secret issue by preventing non-dev startup with the known default signing secret.
+
+### Actions Taken
+- Updated `internal/config/config.go`:
+  - Added `ErrInsecureProductionSecret`.
+  - Added `Config.Validate()` to reject `DefaultSecret` when normalized environment is not `dev`.
+- Updated `cmd/backend/main.go` to call `cfg.Validate()` after config loading and fail fast with `logger.Fatal` on invalid config.
+- Updated `internal/config/config_test.go` with table-driven validation coverage for prod/dev/local secret behavior.
+- Updated `.env.example` to document `SECRET` as required outside `ENVIRONMENT=dev`.
+- Ran `gofmt -w cmd/backend/main.go internal/config/config.go internal/config/config_test.go`.
+- Ran `go test ./internal/config ./internal/auth`.
+- Ran `go test ./cmd/backend`.
+- Ran `go test ./...`.
+
+### Attempted Methods
+- Kept validation in the config package instead of auth so startup policy is centralized and testable.
+- Preserved local/dev usability by allowing the default secret only when `Environment` normalizes to `dev`.
+
+### Issues & Blockers
+- No blockers remain. The full Go test suite passes in the current workspace.
+
+### Next Steps
+- Ensure deployment environments set `SECRET` to a long random value before this branch is deployed outside dev.
+
+## [2026-06-19 00:59] Task Record
+
+### Task Description
+- Update `Makefile` so it also checks tests as part of the build workflow.
+
+### Actions Taken
+- Updated `Makefile`:
+  - Added a concrete `test` target that runs `go test ./...`.
+  - Changed `build` to depend on `gen test`, so build runs tests before compiling the backend binary.
+- Ran `make test`.
+
+### Attempted Methods
+- Kept the Makefile style consistent with the existing echo/status pattern and failure handling.
+
+### Issues & Blockers
+- No blocker. `make test` passes.
+- Did not run `make build` because it invokes `make gen`, which depends on local `sqlc` availability; the requested test check itself was verified through `make test`.
+
+### Next Steps
+- Run `make build` in an environment with `sqlc` installed to exercise the full `gen -> test -> build` chain.
+
+## [2026-06-19 01:20] Task Record
+
+### Task Description
+- Change the default `ENVIRONMENT` to `dev` so deployments without an explicit environment do not fail the production-secret validation.
+
+### Actions Taken
+- Updated `internal/config/config.go` so `Load()` defaults `Environment` to `dev`.
+- Updated `.env.example` to include `ENVIRONMENT=dev`.
+- Added `TestLoadDefaultsToDevEnvironment` in `internal/config/config_test.go`.
+- Added `resetFlags` helper in config tests because multiple `Load()` calls register global flags.
+- Ran `gofmt -w internal/config/config.go internal/config/config_test.go`.
+- Ran `go test ./internal/config`.
+- Ran `go test ./...`.
+
+### Attempted Methods
+- First ran tests after adding the new default test; this exposed a `flag redefined: debug` panic from repeated `Load()` calls in the same test binary.
+- Fixed the test isolation by resetting `flag.CommandLine` around tests that call `Load()`.
+
+### Issues & Blockers
+- No blocker remains. The full Go test suite passes.
+- Production deployments now need to explicitly set `ENVIRONMENT=prod` to get production cookie/security defaults and enforce non-default `SECRET`.
+
+### Next Steps
+- Ensure GitHub/deploy runtime envs explicitly set `ENVIRONMENT=prod` for real production deployments.
+## [2026-06-23 10:29] Task Record
+
+### Task Description
+- Review `feat/SCIEDU-81-AUTH-System` against `origin/main` using merge base `ecdb3eb8337c9534c637e3ef5688501b1690bd7a`.
+
+### Actions Taken
+- Checked repository status, Git user, `.gitignore`, and existing reports before review.
+- Switched from the current `feat/SCIEDU-82-Implement-updated-chat-API` checkout to `feat/SCIEDU-81-AUTH-System`.
+- Reviewed the diff with `git diff ecdb3eb8337c9534c637e3ef5688501b1690bd7a`.
+- Read auth design documentation and inspected auth handler, service, middleware, config, OAuth provider, migrations, and CORS behavior.
+- Ran `go test ./...`; all packages passed.
+- Modified only this report file.
+
+### Attempted Methods
+- Attempted to read `docs/API.md`, but this branch does not contain that file. Used `docs/AUTH_DESIGN.md` and the changed auth implementation as the relevant local specification sources.
+- Used local git branch refs rather than GitHub metadata because the user supplied the branch and merge base directly.
+
+### Issues & Blockers
+- Review found that the new config default sets `Environment` to `dev`, contradicting the auth design default of production and allowing default-secret/insecure cookies unless production explicitly opts in.
+- Review found that cookie-based cross-origin auth cannot work with the current CORS response because the middleware does not emit `Access-Control-Allow-Credentials: true` while auth routes are now exposed for frontend cookie use.
+
+### Next Steps
+- Change the default environment back to production and require explicit `ENVIRONMENT=dev` for local/dev behavior.
+- Update CORS handling for credentialed auth requests, including tests that cover preflight and actual credentialed responses.
+
+## [2026-06-23 10:36] Task Record
+
+### Task Description
+- Fix the two auth review findings: production should be the default environment, and CORS must support credentialed cookie auth for allowlisted origins.
+
+### Actions Taken
+- Updated `internal/config/config.go` so `Load()` defaults `Environment` to `prod`.
+- Updated `internal/config/config_test.go` so the unset-environment case expects `prod` and default-secret validation failure.
+- Updated `internal/cors/middleware.go` to emit `Access-Control-Allow-Credentials: true` for allowlisted origins.
+- Updated `internal/cors/middleware_test.go` to assert credential headers are present for allowed normal/preflight requests and absent for rejected origins.
+- Ran `gofmt -w internal/config/config.go internal/config/config_test.go internal/cors/middleware.go internal/cors/middleware_test.go`.
+- Ran `go test ./internal/config ./internal/cors`.
+- Ran `go test ./...`.
+
+### Attempted Methods
+- Kept the local development path explicit through existing `.deploy/local/compose.yaml` and `.env.example` `ENVIRONMENT=dev` settings while restoring the secure production default.
+- Added credential support inside the existing CORS middleware rather than auth handlers so protected and auth endpoints share one browser policy.
+
+### Issues & Blockers
+- No blocker remains. Focused package tests and the full Go test suite pass.
+- Existing `ALLOW_ORIGINS=*` behavior still echoes the caller origin; this preserves current behavior but should be used carefully with credentialed requests.
+
+### Next Steps
+- Ensure deployed environments set a strong `SECRET`; with the restored `prod` default, missing production secrets fail startup as intended.
