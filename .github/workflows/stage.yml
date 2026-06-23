@@ -138,25 +138,25 @@ jobs:
               "environment": "stage",
               "component": "backend"
             },
-          "setup": {
-                "inject_secret": {
-                  "enable": true,
-                  "project": "sciedu",
-                  "environment": "staging",
-                  "secrets": [
-                    {
-                      "path": "/Backend",
-                      "secret_name": "GOOGLE_OAUTH_CLIENT_ID",
-                      "env_name": "GOOGLE_OAUTH_CLIENT_ID"
-                    },
-                    {
-                      "path": "/Backend",
-                      "secret_name": "GOOGLE_OAUTH_CLIENT_SECRET",
-                      "env_name": "GOOGLE_OAUTH_CLIENT_SECRET"
-                    }
-                  ]
-                }
-              },
+            "setup": {
+              "inject_secret": {
+                "enable": true,
+                "project": "sciedu",
+                "environment": "staging",
+                "secrets": [
+                  {
+                    "path": "/Backend",
+                    "secret_name": "GOOGLE_OAUTH_CLIENT_ID",
+                    "env_name": "GOOGLE_OAUTH_CLIENT_ID"
+                  },
+                  {
+                    "path": "/Backend",
+                    "secret_name": "GOOGLE_OAUTH_CLIENT_SECRET",
+                    "env_name": "GOOGLE_OAUTH_CLIENT_SECRET"
+                  }
+                ]
+              }
+            },
             "post": {
               "notify_discord": {
                 "enable": true,
