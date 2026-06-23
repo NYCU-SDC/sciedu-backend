@@ -1241,3 +1241,57 @@
 
 ### Next Steps
 - Ensure deployed environments set a strong `SECRET`; with the restored `prod` default, missing production secrets fail startup as intended.
+
+## [2026-06-23 14:50] Task Record
+
+### Task Description
+- Diagnose and fix backend startup fatal error: `Failed to initialize Google OAuth provider` with `oauth provider not configured`.
+
+### Actions Taken
+- Checked git status, Git user, `.gitignore`, and existing report context before making changes.
+- Inspected OAuth startup wiring in `cmd/backend/main.go`, config loading in `internal/config/config.go`, OAuth provider validation in `internal/auth/oauth.go`, and `.env.example`.
+- Updated `cmd/backend/main.go` so a redirect URL alone does not trigger Google OAuth provider initialization.
+- Preserved fail-fast behavior when real OAuth credential inputs are present through `GOOGLE_OAUTH_CREDENTIALS_FILE`, `GOOGLE_OAUTH_CLIENT_ID`, or `GOOGLE_OAUTH_CLIENT_SECRET`.
+- Ran `go test ./cmd/backend ./internal/auth ./internal/config`.
+- Ran `go test ./...`.
+
+### Attempted Methods
+- Traced the fatal error to `.env.example` containing a default `GOOGLE_OAUTH_REDIRECT_URL` while client ID and secret are blank. Copying this into `.env` caused `main.go` to attempt provider construction with incomplete credentials.
+- Chose a narrow startup condition change instead of removing the example redirect URL, because the redirect remains useful documentation for developers who later add credentials.
+
+### Issues & Blockers
+- No blocker remains. Focused tests and the full Go test suite pass.
+- OAuth login remains disabled unless credentials are provided; hitting OAuth routes without configured credentials will still return the service's configured error response.
+
+### Next Steps
+- For real Google OAuth login, configure either `GOOGLE_OAUTH_CREDENTIALS_FILE` or both `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` with `GOOGLE_OAUTH_REDIRECT_URL`.
+
+## [2026-06-23 14:53] Task Record
+
+### Task Description
+- Correct the OAuth startup fix to use the existing workflow secrets and Docker Compose runtime configuration instead of changing application initialization behavior.
+
+### Actions Taken
+- Reverted the previous `cmd/backend/main.go` OAuth initialization condition back to the original credential/redirect opt-in behavior.
+- Added `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` passthrough entries to:
+  - `.deploy/local/compose.yaml`
+  - `.deploy/dev/compose.yaml`
+  - `.deploy/stage/compose.yaml`
+  - `.deploy/snapshot/compose.yaml`
+- Verified the workflow files already request `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` secret injection.
+- Ran `go test ./cmd/backend ./internal/config ./internal/auth`.
+- Ran `go test ./...`.
+- Ran `docker compose -f .deploy/dev/compose.yaml config`.
+- Ran `GOOGLE_OAUTH_CLIENT_ID=client GOOGLE_OAUTH_CLIENT_SECRET=secret docker compose -f .deploy/dev/compose.yaml config` to confirm the compose output passes both values into the backend container.
+- Ran `docker compose -f .deploy/local/compose.yaml config`.
+
+### Attempted Methods
+- Initially changed application startup so redirect URL alone did not trigger OAuth provider initialization, but the user rejected that approach because OAuth credentials are already provided through workflow secrets and compose runtime configuration.
+- Reworked the fix to align environment variable propagation instead: workflow secret names and Go config names already match, but the compose files were missing the backend environment passthrough entries.
+
+### Issues & Blockers
+- No blocker remains. Focused tests, full tests, and compose config rendering pass.
+- Compose renders the passthrough variables as `null` when they are absent from the invoking environment; deployment/local startup still requires those variables to be present if `GOOGLE_OAUTH_REDIRECT_URL` is configured.
+
+### Next Steps
+- Ensure the deployment runner exports/injects `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` before running Docker Compose, which the current workflows request through `inject_secret`.

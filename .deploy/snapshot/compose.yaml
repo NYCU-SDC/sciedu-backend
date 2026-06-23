@@ -19,6 +19,8 @@ services:
       - DATABASE_URL=postgres://postgres:password@postgres:5432/sciedu?sslmode=disable
       - MIGRATION_SOURCE=file:///app/migrations
       - LLM_URL=https://llm.dev.sciedu.sdc.nycu.club
+      - GOOGLE_OAUTH_CLIENT_ID
+      - GOOGLE_OAUTH_CLIENT_SECRET
       - GOOGLE_OAUTH_REDIRECT_URL=https://${VERSION}.sciedu.sdc.nycu.club/api/auth/callback
       - AUTH_REDIRECT_ALLOWLIST=https://${VERSION}.sciedu.sdc.nycu.club,http://localhost:8080,http://localhost:5173
       - ALLOW_ORIGINS=*.sciedu.sdc.nycu.club,http://localhost:5173
