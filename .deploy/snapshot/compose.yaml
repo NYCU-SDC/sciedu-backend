@@ -12,12 +12,18 @@ services:
     environment:
       - DEV=true
       - ENV=snapshot
+      - ENVIRONMENT=dev
       - HOST=0.0.0.0
+      - PORT=8080
       - BASE_URL=https://${VERSION}.sciedu.sdc.nycu.club
       - DATABASE_URL=postgres://postgres:password@postgres:5432/sciedu?sslmode=disable
       - MIGRATION_SOURCE=file:///app/migrations
       - LLM_URL=https://llm.dev.sciedu.sdc.nycu.club
-      - ALLOW_ORIGINS=*.sciedu.sdc.nycu.club,http://localhost:5173
+      - GOOGLE_OAUTH_CLIENT_ID
+      - GOOGLE_OAUTH_CLIENT_SECRET
+      - GOOGLE_OAUTH_REDIRECT_URL=https://${VERSION}.sciedu.sdc.nycu.club/api/auth/callback
+      - AUTH_REDIRECT_ALLOWLIST=https://${VERSION}.sciedu.sdc.nycu.club,http://localhost:8080,http://localhost:5173,http://localhost:3000
+      - ALLOW_ORIGINS=*.sciedu.sdc.nycu.club,http://localhost:5173,http://localhost:3000
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.sciedu-backend-${VERSION}.rule=Host(`${VERSION}.sciedu.sdc.nycu.club`) && PathPrefix(`/api`)"

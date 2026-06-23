@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"sciedu-backend/internal/auth"
 	"sciedu-backend/internal/chat"
 	"sciedu-backend/internal/config"
 	"sciedu-backend/internal/content"
@@ -29,6 +30,9 @@ func main() {
 
 	cfg, configLogger := config.Load()
 	configLogger.FlushToZap(logger)
+	if err := cfg.Validate(); err != nil {
+		logger.Fatal("Invalid configuration", zap.Error(err))
+	}
 
 	err = databaseutil.MigrationUp(cfg.MigrationSource, cfg.DatabaseURL, logger)
 	if err != nil {
@@ -66,6 +70,49 @@ func main() {
 	middlewareSet := middlewareutil.NewSet(
 		corsMiddleware.HandlerFunc,
 	)
+	authStore := auth.NewStore(pool)
+	var oauthProvider auth.OAuthProvider
+	googleClientID := cfg.GoogleOAuthClientID
+	googleClientSecret := cfg.GoogleOAuthClientSecret
+	googleRedirectURL := cfg.GoogleOAuthRedirectURL
+	if cfg.GoogleOAuthCredentialsFile != "" {
+		credentials, err := auth.LoadGoogleOAuthCredentials(cfg.GoogleOAuthCredentialsFile)
+		if err != nil {
+			logger.Fatal("Failed to load Google OAuth credentials", zap.Error(err))
+		}
+		if googleClientID == "" {
+			googleClientID = credentials.ClientID
+		}
+		if googleClientSecret == "" {
+			googleClientSecret = credentials.ClientSecret
+		}
+		if googleRedirectURL == "" && len(credentials.RedirectURIs) > 0 {
+			googleRedirectURL = credentials.RedirectURIs[0]
+		}
+	}
+	if googleClientID != "" || googleClientSecret != "" || googleRedirectURL != "" {
+		googleProvider, err := auth.NewGoogleOAuthProvider(auth.GoogleOAuthConfig{
+			ClientID:     googleClientID,
+			ClientSecret: googleClientSecret,
+			RedirectURL:  googleRedirectURL,
+			HTTPClient:   http.DefaultClient,
+		})
+		if err != nil {
+			logger.Fatal("Failed to initialize Google OAuth provider", zap.Error(err))
+		}
+		oauthProvider = googleProvider
+	}
+	authService := auth.NewService(authStore, auth.ServiceConfig{
+		Secret:               cfg.Secret,
+		Environment:          cfg.Environment,
+		OAuthProvider:        oauthProvider,
+		RedirectURLAllowlist: parseAllowOrigins(cfg.AuthRedirectAllowlist),
+	}, logger)
+	authHandler := auth.NewHandler(authService, auth.CookieConfig{
+		Environment: cfg.Environment,
+	}, logger)
+	authMiddleware := auth.NewMiddleware(authService, logger)
+	protectedMiddlewareSet := middlewareSet.Append(authMiddleware.HandlerFunc)
 
 	// Health check route
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -76,12 +123,13 @@ func main() {
 		}
 	})
 
-	questionHandler.RegisterRoutes(mux, middlewareSet)
-	contentHandler.RegisterRoutes(mux, middlewareSet)
-	mux.HandleFunc("POST /api/chat", chatHandler.CreateChat)
-	mux.HandleFunc("GET /api/chat/stream/{messageID}", chatHandler.Stream)
-	mux.HandleFunc("GET /api/chat/{chatID}", chatHandler.GetChat)
-	mux.HandleFunc("POST /api/chat/{chatID}", chatHandler.CreateMessage)
+	authHandler.RegisterRoutes(mux, middlewareSet)
+	questionHandler.RegisterRoutes(mux, protectedMiddlewareSet)
+	contentHandler.RegisterRoutes(mux, protectedMiddlewareSet)
+	mux.HandleFunc("POST /api/chat", protectedMiddlewareSet.HandlerFunc(chatHandler.CreateChat))
+	mux.HandleFunc("GET /api/chat/stream/{messageID}", protectedMiddlewareSet.HandlerFunc(chatHandler.Stream))
+	mux.HandleFunc("GET /api/chat/{chatID}", protectedMiddlewareSet.HandlerFunc(chatHandler.GetChat))
+	mux.HandleFunc("POST /api/chat/{chatID}", protectedMiddlewareSet.HandlerFunc(chatHandler.CreateMessage))
 
 	logger.Info("Start listening on port: 8080")
 
@@ -116,7 +164,7 @@ func parseAllowOrigins(origins string) []string {
 	parts := strings.Split(origins, ",")
 	result := make([]string, 0, len(parts))
 	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
+		trimmed := strings.TrimRight(strings.TrimSpace(part), "/")
 		if trimmed != "" {
 			result = append(result, trimmed)
 		}
