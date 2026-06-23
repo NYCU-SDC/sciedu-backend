@@ -720,3 +720,66 @@
 
 ### Next Steps
 - Commit the workflow fixes after review if desired.
+
+## [2026-06-23 14:25] Task Record
+
+### Task Description
+- Move the remaining `.env` runtime settings into Docker Compose while relying on existing GitHub workflow secret injection for Google OAuth client credentials.
+
+### Actions Taken
+- Reviewed Git status, Git username, `.gitignore`, existing reports, `.env`, `.env.example`, deployment compose files, and workflow secret setup.
+- Confirmed `.github/workflows/main.yml`, `.github/workflows/pull-request.yml`, and `.github/workflows/stage.yml` already inject `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`.
+- Added non-secret runtime environment variables to:
+  - `.deploy/dev/compose.yaml`
+  - `.deploy/stage/compose.yaml`
+  - `.deploy/snapshot/compose.yaml`
+  - `.deploy/local/compose.yaml`
+- Added stage-aware URL values:
+  - dev uses `https://dev.sciedu.sdc.nycu.club`
+  - stage uses `https://stage.sciedu.sdc.nycu.club`
+  - snapshot uses `https://${VERSION}.sciedu.sdc.nycu.club`
+  - local uses `http://localhost:8080`
+- Changed stage `LLM_URL` from the dev prefix to `https://llm.stage.sciedu.sdc.nycu.club`.
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `git config user.name`
+  - `ls`
+  - `rg --files -g '.gitignore' -g 'report-*.md' -g 'reports/**' -g '.env*' -g 'compose*.yml' -g 'compose*.yaml' -g '*.yaml' -g '*.yml'`
+  - `sed -n '1,220p' .gitignore`
+  - `sed -n '1,240p' .env`
+  - `sed -n '1,240p' .env.example`
+  - `rg --files .github .deploy . -g '!*vendor*' -g '!reports/**'`
+  - `sed -n '1,260p' .deploy/dev/compose.yaml`
+  - `sed -n '1,260p' .deploy/stage/compose.yaml`
+  - `sed -n '1,260p' .deploy/snapshot/compose.yaml`
+  - `sed -n '1,260p' .deploy/local/compose.yaml`
+  - `sed -n '1,260p' .github/workflows/main.yml`
+  - `sed -n '1,260p' .github/workflows/stage.yml`
+  - `sed -n '1,280p' .github/workflows/pull-request.yml`
+  - `sed -n '1,220p' .github/workflows/close.yml`
+  - `sed -n '1,260p' internal/config/config.go`
+  - `rg -n "BASE_URL|GOOGLE_OAUTH|AUTH_REDIRECT|ALLOW_ORIGINS|LLM_URL|ENVIRONMENT|\\bENV\\b" internal cmd docs .deploy .github README.md`
+  - `sed -n '1,220p' reports/report-asciibase64-codex-gpt-5.md`
+  - `rg -n "GOOGLE|OAUTH|BASE_URL|AUTH_REDIRECT|REDIRECT|ENVIRONMENT|os\\.Getenv|envconfig" . -g '!reports/**'`
+  - `sed -n '1,220p' docs/AUTH_DESIGN.md`
+  - `sed -n '1,220p' README.md`
+  - `sed -n '1,220p' .deploy/dev/deploy.sh`
+  - `sed -n '1,220p' .deploy/stage/deploy.sh`
+  - `sed -n '1,220p' .deploy/snapshot/deploy.sh`
+  - `docker compose -f .deploy/dev/compose.yaml config`
+  - `docker compose -f .deploy/stage/compose.yaml config`
+  - `VERSION=pr-0 docker compose -f .deploy/snapshot/compose.yaml config`
+  - `docker compose -f .deploy/local/compose.yaml config`
+  - `git diff -- .deploy/dev/compose.yaml .deploy/stage/compose.yaml .deploy/snapshot/compose.yaml .deploy/local/compose.yaml`
+  - `date '+%Y-%m-%d %H:%M'`
+
+### Attempted Methods
+- Kept Google OAuth client id and secret out of compose values because workflow `inject_secret` already configures those secret names.
+- Used Docker Compose config rendering to validate all modified YAML files, including snapshot with `VERSION=pr-0`.
+
+### Issues & Blockers
+- No unresolved blockers.
+- Did not run the backend containers; verification was limited to compose syntax/rendering because the change is deployment configuration only.
+
+### Next Steps
+- Confirm in the deployment platform that injected Google OAuth secrets are made available to the backend container alongside these compose-defined non-secret variables.
