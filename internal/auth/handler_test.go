@@ -222,6 +222,54 @@ func TestHandlerCallbackInvalidOAuthState(t *testing.T) {
 	requireClearedCookie(t, rec.Result().Cookies(), refreshTokenCookieName)
 }
 
+func TestHandlerSessionCookieAttrs(t *testing.T) {
+	now := time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC)
+	session := Session{
+		AccessToken:           "access",
+		RefreshToken:          "refresh",
+		RefreshTokenExpiresAt: now.Add(refreshTokenLifetime),
+	}
+
+	tests := []struct {
+		name            string
+		config          CookieConfig
+		wantDomain      string
+		wantSecure      bool
+		wantAccessSite  http.SameSite
+		wantRefreshSite http.SameSite
+	}{
+		{
+			name:            "dev uses host-only SameSite=None cookies",
+			config:          CookieConfig{Environment: EnvironmentDev},
+			wantAccessSite:  http.SameSiteNoneMode,
+			wantRefreshSite: http.SameSiteNoneMode,
+		},
+		{
+			name:            "prod uses shared domain and stricter SameSite cookies",
+			config:          CookieConfig{Environment: EnvironmentProd},
+			wantDomain:      defaultCookieDomain,
+			wantSecure:      true,
+			wantAccessSite:  http.SameSiteLaxMode,
+			wantRefreshSite: http.SameSiteStrictMode,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := NewHandler(&fakeHandlerService{}, tt.config, nil)
+			accessCookie := handler.accessCookie(session.AccessToken, int(accessTokenLifetime.Seconds()))
+			refreshCookie := handler.refreshCookie(session.RefreshToken, int(timeUntil(session.RefreshTokenExpiresAt).Seconds()))
+
+			require.Equal(t, tt.wantDomain, accessCookie.Domain)
+			require.Equal(t, tt.wantDomain, refreshCookie.Domain)
+			require.Equal(t, tt.wantSecure, accessCookie.Secure)
+			require.Equal(t, tt.wantSecure, refreshCookie.Secure)
+			require.Equal(t, tt.wantAccessSite, accessCookie.SameSite)
+			require.Equal(t, tt.wantRefreshSite, refreshCookie.SameSite)
+		})
+	}
+}
+
 func TestClientIP(t *testing.T) {
 	tests := []struct {
 		name       string

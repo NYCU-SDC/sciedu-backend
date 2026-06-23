@@ -164,7 +164,7 @@ func parseAllowOrigins(origins string) []string {
 	parts := strings.Split(origins, ",")
 	result := make([]string, 0, len(parts))
 	for _, part := range parts {
-		trimmed := strings.TrimSpace(part)
+		trimmed := strings.TrimRight(strings.TrimSpace(part), "/")
 		if trimmed != "" {
 			result = append(result, trimmed)
 		}

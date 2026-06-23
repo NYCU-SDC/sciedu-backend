@@ -62,7 +62,7 @@ func TestLoadNormalizesLocalEnvironmentFromEnvFileFallback(t *testing.T) {
 	require.Equal(t, "dev", config.Environment)
 }
 
-func TestLoadDefaultsToProdEnvironment(t *testing.T) {
+func TestLoadDefaultsToDevEnvironment(t *testing.T) {
 	resetFlags(t)
 	workdir := t.TempDir()
 	oldwd, err := os.Getwd()
@@ -76,8 +76,9 @@ func TestLoadDefaultsToProdEnvironment(t *testing.T) {
 	t.Setenv("ENV", "")
 
 	config, _ := Load()
-	require.Equal(t, "prod", config.Environment)
-	require.ErrorIs(t, config.Validate(), ErrInsecureProductionSecret)
+	require.Equal(t, "dev", config.Environment)
+	require.Equal(t, "http://localhost:5173", config.AllowOrigins)
+	require.NoError(t, config.Validate())
 }
 
 func TestValidateRejectsDefaultProductionSecret(t *testing.T) {

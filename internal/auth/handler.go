@@ -228,7 +228,7 @@ func (h *Handler) accessCookie(value string, maxAge int) *http.Cookie {
 		Path:     "/",
 		Domain:   h.cookies.Domain,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: h.cookieSameSite(http.SameSiteLaxMode),
 		Secure:   h.cookies.Environment != EnvironmentDev,
 		MaxAge:   maxAge,
 	}
@@ -241,10 +241,17 @@ func (h *Handler) refreshCookie(value string, maxAge int) *http.Cookie {
 		Path:     "/api/auth",
 		Domain:   h.cookies.Domain,
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
+		SameSite: h.cookieSameSite(http.SameSiteStrictMode),
 		Secure:   h.cookies.Environment != EnvironmentDev,
 		MaxAge:   maxAge,
 	}
+}
+
+func (h *Handler) cookieSameSite(prodMode http.SameSite) http.SameSite {
+	if h.cookies.Environment == EnvironmentDev {
+		return http.SameSiteNoneMode
+	}
+	return prodMode
 }
 
 func cookieValue(r *http.Request, name string) (string, error) {

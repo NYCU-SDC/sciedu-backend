@@ -1295,3 +1295,56 @@
 
 ### Next Steps
 - Ensure the deployment runner exports/injects `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET` before running Docker Compose, which the current workflows request through `inject_secret`.
+
+## [2026-06-23 15:50] Task Record
+
+### Task Description
+- Explain why logging in through `https://pr-50.sciedu.sdc.nycu.club/api/login/oauth/google?r=https://pr-50.sciedu.sdc.nycu.club/api/auth/session` can set an access token but still return `401 Unauthorized`, without applying a fix.
+
+### Actions Taken
+- Checked git status and Git user before diagnosis.
+- Read `docs/AUTH_DESIGN.md` for the intended OAuth/session flow and cookie semantics.
+- Inspected `internal/auth/handler.go`, `internal/auth/service.go`, `internal/auth/types.go`, and `.deploy/snapshot/compose.yaml`.
+- Confirmed no code/config files were modified for this diagnosis.
+
+### Attempted Methods
+- Traced `GET /api/auth/session` and confirmed it requires both `access_token` and `refresh_token` cookies before calling the service.
+- Confirmed the refresh cookie is configured with `Path=/api/auth` and `SameSite=Strict`.
+- Compared the user's `r=/api/auth/session` flow against the documented flow, where OAuth redirects to a frontend URL first and the frontend then calls session.
+
+### Issues & Blockers
+- The likely cause is that the immediate OAuth callback redirect to `/api/auth/session` occurs in a cross-site navigation chain from Google. `access_token` is `SameSite=Lax`, but `refresh_token` is `SameSite=Strict`; the session handler returns 401 when the strict refresh cookie is not sent.
+- Directly using the API session endpoint as the OAuth `r` target is not the intended flow.
+
+### Next Steps
+- Use a frontend route as `r`, then have the frontend call `GET /api/auth/session` after landing.
+- Verify in browser DevTools whether the failing `/api/auth/session` request includes both `access_token` and `refresh_token` in the request cookies.
+
+## [2026-06-23 16:32] Task Record
+
+### Task Description
+- Adjust local/dev auth behavior so localhost frontend OAuth/session requests work with credentialed CORS.
+
+### Actions Taken
+- Updated `internal/config/config.go` so `Load()` defaults `Environment` to `dev`.
+- Updated `internal/config/config.go` so default `ALLOW_ORIGINS` includes `http://localhost:5173`.
+- Updated `cmd/backend/main.go` so comma-separated origin parsing trims trailing `/`, allowing env values like `http://localhost:5173/`.
+- Added `cmd/backend/main_test.go` coverage for origin parsing.
+- Updated `internal/auth/handler.go` so dev cookies use `SameSite=None` while prod keeps access `Lax` and refresh `Strict`.
+- Added `internal/auth/handler_test.go` coverage for dev/prod cookie attributes.
+- Updated `internal/config/config_test.go` to assert the new dev/default CORS configuration.
+- Ran `gofmt -w internal/config/config.go internal/config/config_test.go internal/auth/handler.go internal/auth/handler_test.go cmd/backend/main.go cmd/backend/main_test.go`.
+- Ran `go test ./cmd/backend ./internal/config ./internal/auth ./internal/cors`.
+- Ran `go test ./...`.
+
+### Attempted Methods
+- Kept existing CORS middleware behavior because it already emits `Access-Control-Allow-Credentials: true` for allowlisted origins.
+- Used `http://localhost:5173` internally because browser `Origin` headers do not include a trailing slash, but normalized configured origins so a trailing slash from documentation or env files does not break matching.
+- Preserved production cookie posture by only switching SameSite behavior in `ENVIRONMENT=dev`.
+
+### Issues & Blockers
+- No blocker remains. Focused tests and the full Go test suite pass.
+- Dev cookies remain host-only because `CookieConfig.Domain` is still omitted in dev mode.
+
+### Next Steps
+- Restart the backend so it reloads the new default config, then test from the Vite frontend with `credentials: "include"`.
