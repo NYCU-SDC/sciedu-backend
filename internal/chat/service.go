@@ -2,7 +2,6 @@ package chat
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -14,12 +13,16 @@ import (
 )
 
 type ChatQuerier interface {
-	CreateChat(ctx context.Context) (Chat, error)
+	CreateChat(ctx context.Context, arg CreateChatParams) (Chat, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	GetChat(ctx context.Context, id uuid.UUID) (Chat, error)
 	GetMessage(ctx context.Context, id uuid.UUID) (Message, error)
 	GetMessages(ctx context.Context, chatID uuid.UUID) ([]Message, error)
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) (Message, error)
+	UpdateChat(ctx context.Context, arg UpdateChatParams) (Chat, error)
+	ListChatsByUser(ctx context.Context, arg ListChatsByUserParams) ([]Chat, error)
+	CountChatsByUser(ctx context.Context, userID uuid.UUID) (int64, error)
+	DeleteChat(ctx context.Context, id uuid.UUID) error
 }
 
 type ChatService struct {
@@ -27,6 +30,26 @@ type ChatService struct {
 	querier   ChatQuerier
 	streamHub *StreamHub
 	logger    *zap.Logger
+}
+
+func normalizePagination(page, pageSize int32) (int32, int32) {
+	if page < 1 {
+		page = defaultPage
+	}
+	if pageSize < 1 {
+		pageSize = defaultPageSize
+	}
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
+	}
+	return page, pageSize
+}
+
+type ChatReturn struct {
+	ID        uuid.UUID `json:"id"`
+	Title     string    `json:"title"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 type MessageReturn struct {
@@ -52,8 +75,11 @@ func NewService(provider LLMProvider, querier ChatQuerier, streamHub *StreamHub,
 	}
 }
 
-func (s *ChatService) CreateChat(ctx context.Context) (uuid.UUID, error) {
-	chat, err := s.querier.CreateChat(ctx)
+func (s *ChatService) CreateChat(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
+	chat, err := s.querier.CreateChat(ctx, CreateChatParams{
+		UserID: userID,
+		Title:  "",
+	})
 	if err != nil {
 		return uuid.New(), databaseutil.WrapDBError(err, s.logger, "create chat")
 	}
@@ -87,19 +113,82 @@ func (s *ChatService) fetchMessages(ctx context.Context, chatID uuid.UUID) ([]Me
 	return result, nil
 }
 
-func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageReturn, error) {
+func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID) (Chat, []MessageReturn, error) {
 	chat, err := s.querier.GetChat(ctx, chatID)
 	if err != nil {
-		return nil, databaseutil.WrapDBErrorWithKeyValue(err, "chat", "chat_id", chatID.String(), s.logger, "get chat")
+		return Chat{}, nil, databaseutil.WrapDBErrorWithKeyValue(err, "chat", "chat_id", chatID.String(), s.logger, "get chat")
 	}
 	if chat.ID == uuid.Nil {
-		return nil, handlerutil.NewNotFoundError("chat", "chat_id", chatID.String(), "")
+		return Chat{}, nil, handlerutil.NewNotFoundError("chat", "chat_id", chatID.String(), "")
 	}
 	result, err := s.fetchMessages(ctx, chatID)
 	if err != nil {
-		return nil, err
+		return Chat{}, nil, err
 	}
-	return result, nil
+	return chat, result, nil
+}
+
+func (s *ChatService) ListChats(ctx context.Context, userID uuid.UUID, page, pageSize int32) (ChatPage, error) {
+	page, pageSize = normalizePagination(page, pageSize)
+
+	total, err := s.querier.CountChatsByUser(ctx, userID)
+	if err != nil {
+		return ChatPage{}, databaseutil.WrapDBError(err, s.logger, "count chats by user")
+	}
+
+	offset := (page - 1) * pageSize
+	chats, err := s.querier.ListChatsByUser(ctx, ListChatsByUserParams{
+		UserID: userID,
+		Limit:  pageSize,
+		Offset: offset,
+	})
+	if err != nil {
+		return ChatPage{}, databaseutil.WrapDBError(err, s.logger, "list chats by user")
+	}
+
+	totalItems := int32(total)
+	totalPages := int32(0)
+	if totalItems > 0 {
+		totalPages = (totalItems + pageSize - 1) / pageSize
+	}
+
+	items := make([]ChatReturn, 0, len(chats))
+	for _, c := range chats {
+		items = append(items, ChatReturn{
+			ID:        c.ID,
+			Title:     c.Title,
+			CreatedAt: c.CreatedAt.Time,
+			UpdatedAt: c.UpdatedAt.Time,
+		})
+	}
+
+	return ChatPage{
+		Items:       items,
+		TotalPages:  totalPages,
+		TotalItems:  totalItems,
+		CurrentPage: page,
+		PageSize:    pageSize,
+		HasNextPage: page < totalPages,
+	}, nil
+}
+
+func (s *ChatService) DeleteChat(ctx context.Context, chatID uuid.UUID, userID uuid.UUID) error {
+	chat, err := s.querier.GetChat(ctx, chatID)
+	if err != nil {
+		return databaseutil.WrapDBErrorWithKeyValue(err, "chat", "chat_id", chatID.String(), s.logger, "get chat for delete")
+	}
+	if chat.ID == uuid.Nil {
+		return handlerutil.NewNotFoundError("chat", "chat_id", chatID.String(), "")
+	}
+	if chat.UserID != userID {
+		return handlerutil.NewNotFoundError("chat", "chat_id", chatID.String(), "chat does not belong to the user")
+	}
+
+	err = s.querier.DeleteChat(ctx, chatID)
+	if err != nil {
+		return databaseutil.WrapDBErrorWithKeyValue(err, "chat", "chat_id", chatID.String(), s.logger, "delete chat")
+	}
+	return nil
 }
 
 func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error) {
@@ -154,6 +243,20 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 		return CreateMessageReturn{}, databaseutil.WrapDBError(err, s.logger, "create response message")
 	}
 
+	// update chat
+	createTitle := false
+	newTitle := chat.Title
+	if newTitle == "" {
+		newTitle = content
+		createTitle = true
+	}
+	if _, err = s.querier.UpdateChat(ctx, UpdateChatParams{
+		ID:    chatID,
+		Title: newTitle,
+	}); err != nil {
+		return CreateMessageReturn{}, databaseutil.WrapDBError(err, s.logger, "update chat title")
+	}
+
 	// create provider request
 	providerReq := CreateChatCompletionRequest{
 		Messages: history,
@@ -161,7 +264,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 	}
 
 	streamEvent := s.streamHub.CreateStream(llmMessage.ID)
-	go s.streamProcessor(context.Background(), llmMessage.ID, streamEvent, providerReq)
+	go s.streamProcessor(context.Background(), chatID, llmMessage.ID, streamEvent, providerReq, createTitle)
 
 	return CreateMessageReturn{
 		Message: MessageReturn{
@@ -186,7 +289,7 @@ func (s *ChatService) Stream(ctx context.Context, messageID uuid.UUID) (bool, <-
 	return ok, llmCh, errCh, cancel
 }
 
-func (s *ChatService) streamProcessor(ctx context.Context, messageID uuid.UUID, streamEvent *StreamEvent, providerReq CreateChatCompletionRequest) {
+func (s *ChatService) streamProcessor(ctx context.Context, chatID uuid.UUID, messageID uuid.UUID, streamEvent *StreamEvent, providerReq CreateChatCompletionRequest, createTitle bool) {
 	llmCh, errCh := s.provider.Stream(ctx, providerReq)
 	endFlag := false
 	for !endFlag && (llmCh != nil || errCh != nil) {
@@ -238,6 +341,23 @@ func (s *ChatService) streamProcessor(ctx context.Context, messageID uuid.UUID, 
 		SSEError(err, s.logger)
 	}
 
+	// title generate
+	if status == MessageStatusDone && createTitle {
+		title, err := s.createTitleByLLM(updateCtx, chatID)
+		if err != nil {
+			SSEError(err, s.logger)
+			return
+		}
+		_, err = s.querier.UpdateChat(updateCtx, UpdateChatParams{
+			ID:    chatID,
+			Title: title,
+		})
+		if err != nil {
+			SSEError(err, s.logger)
+			return
+		}
+	}
+
 }
 
 func (s *ChatService) ValidatePreviousID(ctx context.Context, previousID uuid.UUID, chatID uuid.UUID) error {
@@ -255,6 +375,19 @@ func (s *ChatService) ValidatePreviousID(ctx context.Context, previousID uuid.UU
 		return handlerutil.NewNotFoundError("message", "previous_id", previousID.String(), fmt.Sprintf("previous message does not belong to the same chat: previous_id=%s, chat_id=%s", previousID.String(), chatID.String()))
 	}
 	return nil
+}
+
+func (s *ChatService) createTitleByLLM(ctx context.Context, chatID uuid.UUID) (string, error) {
+	messages, err := s.fetchMessages(ctx, chatID)
+	if err != nil {
+		return "", err
+	}
+	history := createChatHistory(messages)
+	title, err := s.provider.GetTitle(ctx, history)
+	if err != nil {
+		return "", databaseutil.WrapDBErrorWithKeyValue(err, "title", "chat_id", chatID.String(), s.logger, "get title for chat")
+	}
+	return title, nil
 }
 
 func createChatHistory(allMessages []MessageReturn) []ChatMessage {
@@ -296,6 +429,3 @@ func createChatHistory(allMessages []MessageReturn) []ChatMessage {
 func SSEError(err error, logger *zap.Logger) {
 	logger.Warn("Handling SSE Error", zap.String("problem", "SSE Error"), zap.Error(err))
 }
-
-// temp
-var ErrStatus502 = errors.New("message has error status")
