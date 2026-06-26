@@ -2,6 +2,7 @@ package chat
 
 import (
 	"sync"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -21,8 +22,14 @@ type StreamEvent struct {
 	lock        sync.RWMutex
 	status      MessageStatus
 	fullContent string
-	subscribers map[chan StreamDelta]struct{}
+	subscribers map[*streamSubscriber]struct{}
 	err         error
+}
+
+type streamSubscriber struct {
+	chunks chan StreamDelta
+	errs   chan error
+	done   chan struct{}
 }
 
 func (s *StreamHub) CreateStream(messageID uuid.UUID) *StreamEvent {
@@ -35,7 +42,7 @@ func (s *StreamHub) CreateStream(messageID uuid.UUID) *StreamEvent {
 	stream := &StreamEvent{
 		status:      MessageStatusStreaming,
 		fullContent: "",
-		subscribers: make(map[chan StreamDelta]struct{}),
+		subscribers: make(map[*streamSubscriber]struct{}),
 	}
 	s.streams[messageID] = stream
 	return stream
@@ -57,45 +64,58 @@ func (s *StreamHub) DeleteStream(messageID uuid.UUID) {
 }
 
 func (s *StreamEvent) Subscribe() (<-chan StreamDelta, <-chan error, func()) {
-	ch := make(chan StreamDelta, 16)
-	errCh := make(chan error, 1)
-
 	s.lock.Lock()
-	s.subscribers[ch] = struct{}{}
 	fullContent := s.fullContent
+	status := s.status
+	streamErr := s.err
+	sub := &streamSubscriber{
+		chunks: make(chan StreamDelta, maxInt(64, utf8.RuneCountInString(fullContent)+2)),
+		errs:   make(chan error, 1),
+		done:   make(chan struct{}),
+	}
+	s.subscribers[sub] = struct{}{}
 	s.lock.Unlock()
 
 	cancel := func() {
 		s.lock.Lock()
-		if _, ok := s.subscribers[ch]; ok {
-			delete(s.subscribers, ch)
-			close(ch)
+		if _, ok := s.subscribers[sub]; ok {
+			delete(s.subscribers, sub)
+			close(sub.done)
 		}
 		s.lock.Unlock()
 	}
 
-	ch <- StreamDelta{
-		Delta:      fullContent,
-		IsFinished: false,
+	for _, r := range fullContent {
+		sub.chunks <- StreamDelta{
+			Delta:      string(r),
+			IsFinished: false,
+		}
+	}
+	switch status {
+	case MessageStatusDone:
+		sub.chunks <- StreamDelta{Delta: "", IsFinished: true}
+	case MessageStatusError:
+		if streamErr != nil {
+			sub.errs <- streamErr
+		}
 	}
 
-	return ch, errCh, cancel
+	return sub.chunks, sub.errs, cancel
 }
 
 func (s *StreamEvent) Publish(stream StreamDelta) {
 	s.lock.RLock()
-	subs := make([]chan StreamDelta, 0, len(s.subscribers))
-	for ch := range s.subscribers {
-		subs = append(subs, ch)
+	subs := make([]*streamSubscriber, 0, len(s.subscribers))
+	for sub := range s.subscribers {
+		subs = append(subs, sub)
 	}
 	s.lock.RUnlock()
 
-	for _, ch := range subs {
+	for _, sub := range subs {
 		select {
-		case ch <- stream:
-		default: //avoid blocking
+		case sub.chunks <- stream:
+		case <-sub.done:
 		}
-
 	}
 }
 
@@ -103,7 +123,12 @@ func (s *StreamEvent) AppendDelta(stream StreamDelta) {
 	s.lock.Lock()
 	s.fullContent += stream.Delta
 	s.lock.Unlock()
-	s.Publish(stream)
+	for _, r := range stream.Delta {
+		s.Publish(StreamDelta{
+			Delta:      string(r),
+			IsFinished: stream.IsFinished,
+		})
+	}
 }
 
 func (s *StreamEvent) Complete() {
@@ -122,14 +147,34 @@ func (s *StreamEvent) Fail(err error) {
 	s.status = MessageStatusError
 	s.lock.Unlock()
 
-	s.Publish(StreamDelta{
-		Delta:      "",
-		IsFinished: true,
-	})
+	s.publishError(err)
 }
 
 func (s *StreamEvent) Get() (MessageStatus, string, error) {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
 	return s.status, s.fullContent, s.err
+}
+
+func (s *StreamEvent) publishError(err error) {
+	s.lock.RLock()
+	subs := make([]*streamSubscriber, 0, len(s.subscribers))
+	for sub := range s.subscribers {
+		subs = append(subs, sub)
+	}
+	s.lock.RUnlock()
+
+	for _, sub := range subs {
+		select {
+		case sub.errs <- err:
+		case <-sub.done:
+		}
+	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

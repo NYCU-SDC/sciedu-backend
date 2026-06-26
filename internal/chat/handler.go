@@ -6,21 +6,27 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
+	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
 	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"sciedu-backend/internal/auth"
 )
 
 type Store interface {
-	CreateChat(ctx context.Context) (uuid.UUID, error)
-	GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageReturn, error)
-	CreateMessage(ctx context.Context, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error)
-	Stream(ctx context.Context, messageID uuid.UUID) (bool, <-chan StreamDelta, <-chan error, func())
-	ValidatePreviousID(ctx context.Context, previousID uuid.UUID, chatID uuid.UUID) error
+	CreateChat(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
+	GetChat(ctx context.Context, userID uuid.UUID, chatID uuid.UUID) (Chat, []MessageReturn, error)
+	CreateMessage(ctx context.Context, userID uuid.UUID, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error)
+	Stream(ctx context.Context, userID uuid.UUID, messageID uuid.UUID) (bool, <-chan StreamDelta, <-chan error, func())
+	ValidatePreviousID(ctx context.Context, userID uuid.UUID, previousID uuid.UUID, chatID uuid.UUID) error
+	ListChats(ctx context.Context, userID uuid.UUID, page, pageSize int32) (ChatPage, error)
+	DeleteChat(ctx context.Context, chatID uuid.UUID, userID uuid.UUID) error
 }
 
 type Handler struct {
@@ -55,11 +61,33 @@ func NewHandler(store Store, logger *zap.Logger) *Handler {
 	}
 }
 
+func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil.Set) {
+	handle := func(pattern string, fn http.HandlerFunc) {
+		if middlewares != nil {
+			fn = middlewares.HandlerFunc(fn)
+		}
+		mux.HandleFunc(pattern, fn)
+	}
+
+	handle("GET /api/chat", h.ListChats)
+	handle("POST /api/chat", h.CreateChat)
+	handle("GET /api/chat/stream/{messageID}", h.Stream)
+	handle("GET /api/chat/{chatID}", h.GetChat)
+	handle("DELETE /api/chat/{chatID}", h.DeleteChat)
+	handle("POST /api/chat/{chatID}", h.CreateMessage)
+}
+
 func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := logutil.WithContext(ctx, h.logger)
 
-	chatID, err := h.store.CreateChat(ctx)
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
+	chatID, err := h.store.CreateChat(ctx, userID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -77,9 +105,15 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
 	status := http.StatusOK
 
-	messages, err := h.store.GetChat(ctx, chatID)
+	chat, messages, err := h.store.GetChat(ctx, userID, chatID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -90,7 +124,13 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request) {
 		messages = []MessageReturn{}
 	}
 
-	handlerutil.WriteJSONResponse(w, status, map[string][]MessageReturn{"messages": messages})
+	handlerutil.WriteJSONResponse(w, status, map[string]interface{}{
+		"id":        chat.ID,
+		"title":     chat.Title,
+		"createdAt": chat.CreatedAt,
+		"updatedAt": chat.UpdatedAt,
+		"messages":  messages,
+	})
 }
 
 func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request) {
@@ -109,13 +149,19 @@ func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.store.ValidatePreviousID(ctx, req.PreviousID, chatID)
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
+	err = h.store.ValidatePreviousID(ctx, userID, req.PreviousID, chatID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
 
-	message, err := h.store.CreateMessage(ctx, chatID, req.Content, req.PreviousID)
+	message, err := h.store.CreateMessage(ctx, userID, chatID, req.Content, req.PreviousID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -134,11 +180,18 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ok, chunks, errs, cleanup := h.store.Stream(ctx, messageID)
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
+	ok, chunks, errs, cleanup := h.store.Stream(ctx, userID, messageID)
 	if !ok {
 		h.problemWriter.WriteError(ctx, w, handlerutil.NewNotFoundError("stream", "messageID", messageID.String(), ""), logger)
 		return
 	}
+	defer cleanup()
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -153,16 +206,20 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	for {
+		if chunks == nil && errs == nil {
+			return
+		}
 		select {
 		case <-ctx.Done():
-			cleanup()
 			return
 		case err, ok := <-errs:
 			if !ok {
 				errs = nil
 				continue
 			}
-			h.problemWriter.WriteError(ctx, w, err, logger)
+			if err := writeSSEError(w, flusher, err); err != nil {
+				logger.Warn("failed to write SSE error", zap.Error(err))
+			}
 			return
 		case chunk, ok := <-chunks:
 			if !ok {
@@ -171,16 +228,89 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if err := writeSSEData(w, flusher, chunk); err != nil {
-				h.problemWriter.WriteError(ctx, w, err, logger)
+				logger.Warn("failed to write SSE chunk", zap.Error(err))
 				return
 			}
 			if chunk.IsFinished {
-				cleanup()
 				return
 			}
 		}
 	}
 
+}
+
+func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
+	page, pageSize, err := parsePaginationParams(r)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	result, err := h.store.ListChats(ctx, userID, page, pageSize)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	handlerutil.WriteJSONResponse(w, http.StatusOK, result)
+}
+
+func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+
+	chatID, err := handlerutil.ParseUUID(r.PathValue("chatID"))
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
+	err = h.store.DeleteChat(ctx, chatID, userID)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func parsePaginationParams(r *http.Request) (int32, int32, error) {
+	var page, pageSize int32
+
+	pageRaw := r.URL.Query().Get("page")
+	if pageRaw != "" {
+		parsed, err := strconv.ParseInt(pageRaw, 10, 32)
+		if err != nil || parsed < 1 {
+			return 0, 0, bodyParseError{fmt.Errorf("invalid page: %s", pageRaw)}
+		}
+		page = int32(parsed)
+	}
+
+	pageSizeRaw := r.URL.Query().Get("pageSize")
+	if pageSizeRaw != "" {
+		parsed, err := strconv.ParseInt(pageSizeRaw, 10, 32)
+		if err != nil || parsed < 1 {
+			return 0, 0, bodyParseError{fmt.Errorf("invalid pageSize: %s", pageSizeRaw)}
+		}
+		pageSize = int32(parsed)
+	}
+
+	return page, pageSize, nil
 }
 
 func writeSSEData(w http.ResponseWriter, flusher http.Flusher, chunk StreamDelta) error {
@@ -189,6 +319,27 @@ func writeSSEData(w http.ResponseWriter, flusher http.Flusher, chunk StreamDelta
 		return err
 	}
 	// SSE format: data: <json>\n\n
+	if _, err := w.Write([]byte("data: ")); err != nil {
+		return err
+	}
+	if _, err := w.Write(b); err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte("\n\n")); err != nil {
+		return err
+	}
+	flusher.Flush()
+	return nil
+}
+
+func writeSSEError(w http.ResponseWriter, flusher http.Flusher, streamErr error) error {
+	b, err := json.Marshal(map[string]string{"error": streamErr.Error()})
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte("event: error\n")); err != nil {
+		return err
+	}
 	if _, err := w.Write([]byte("data: ")); err != nil {
 		return err
 	}
