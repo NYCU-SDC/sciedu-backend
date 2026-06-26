@@ -1548,3 +1548,90 @@
 
 ### Next Steps
 - Restart/redeploy the backend, then verify the browser flow from localhost: login, logout, and click login again. The Google authorization redirect should include `prompt=select_account`.
+
+## [2026-06-26 11:24] Task Record
+
+### Task Description
+- Revert the previously implemented snapshot OAuth proxy integration and return the auth system files to the latest state synchronized with `origin/feat/SCIEDU-81-AUTH-System`.
+
+### Actions Taken
+- Reverted the OAuth proxy implementation changes from the working tree:
+  - `.deploy/snapshot/compose.yaml`
+  - `.env.example`
+  - `cmd/backend/main.go`
+  - `internal/auth/handler.go`
+  - `internal/auth/service.go`
+  - `internal/auth/service_test.go`
+  - `internal/auth/types.go`
+  - `internal/config/config.go`
+  - `internal/config/config_test.go`
+  - `reports/report-asciibase64-codex-gpt-5.md`
+- Appended this report entry after the revert per project reporting protocol.
+- Terminal commands executed:
+  - `git status --short --branch`
+  - `git config user.name`
+  - `git diff --stat`
+  - `git checkout -- .deploy/snapshot/compose.yaml .env.example cmd/backend/main.go internal/auth/handler.go internal/auth/service.go internal/auth/service_test.go internal/auth/types.go internal/config/config.go internal/config/config_test.go reports/report-asciibase64-codex-gpt-5.md`
+  - `date '+%Y-%m-%d %H:%M'`
+  - `tail -n 40 reports/report-asciibase64-codex-gpt-5.md`
+
+### Attempted Methods
+- Used a targeted checkout of only the files changed by the OAuth proxy implementation, avoiding a branch-wide reset.
+
+### Issues & Blockers
+- No blockers. The implementation files are back to the branch state; only this report file is modified because reporting is mandatory.
+
+### Next Steps
+- If a completely clean working tree is required, the developer may also discard this report-only change after reviewing it.
+
+## [2026-06-26 12:16] Task Record
+
+### Task Description
+- Merge PR #50 and PR #48 into the current branch `feat/Merge-Auth-and-Chat` locally.
+
+### Actions Taken
+- Checked git status, `.gitignore`, git username, existing reports, and GitHub workflow instructions before acting.
+- Fetched PR refs into local branches:
+  - `pr-50`
+  - `pr-48`
+- Confirmed PR #50 was already included in the current branch (`Already up to date`).
+- Merged PR #48 and resolved conflicts in:
+  - `cmd/backend/main.go`
+  - `go.mod`
+- Kept current branch auth/CORS wiring and registered PR #48 chat routes through the existing protected auth middleware.
+- Updated `internal/chat/handler.go` to read the authenticated user ID from `auth.UserIDFromContext` instead of PR #48's mock user context.
+- Regenerated merged schema/sqlc outputs with `./scripts/create_sqlc_full_schema.sh` and `sqlc generate`.
+- Staged the generated `internal/auth/models.go` chat schema sync so generated models remain consistent.
+- Fixed a trailing blank line in `internal/database/migrations/9_chatHistory.down.sql`.
+- Completed local merge commit:
+  - `1e5afc9 Merge branch 'pr-48' into feat/Merge-Auth-and-Chat`
+- Terminal commands executed included:
+  - `git status --short --branch`
+  - `git config user.name`
+  - `cat .gitignore`
+  - `tail -n ... reports/*.md`
+  - `git fetch origin pull/50/head:pr-50 pull/48/head:pr-48`
+  - `git merge pr-50`
+  - `git merge pr-48`
+  - `./scripts/create_sqlc_full_schema.sh`
+  - `sqlc generate`
+  - `gofmt -w cmd/backend/main.go internal/chat/handler.go`
+  - `git diff --cached --check`
+  - `go test ./internal/chat`
+  - `go test ./cmd/backend`
+  - `go test ./...`
+  - `git commit --no-edit`
+
+### Attempted Methods
+- First merge attempt failed in sandbox because Git could not write `.git/ORIG_HEAD`; reran the local merge with approved escalated filesystem access.
+- Initial `go test` failed because sqlc-generated chat parameter types were missing after PR #48 changed `internal/chat/queries.sql`; regenerated schema and sqlc outputs.
+- Initial `sqlc generate` failed because `internal/database/full_schema.sql` was stale and lacked new `chats.user_id`, `chats.title`, and `chats.updated_at` fields; regenerated full schema from package schema files.
+
+### Issues & Blockers
+- No blocker remains.
+- `go test ./...` passes after the merge.
+- The report file had pre-existing uncommitted modifications before this task; this task appended a new record without reverting them.
+
+### Next Steps
+- Review merge commit `1e5afc9` locally.
+- Push is intentionally not performed per repository AI-agent workflow; the human developer should push after review if desired.
