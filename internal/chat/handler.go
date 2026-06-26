@@ -6,21 +6,27 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
+	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
 	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"sciedu-backend/internal/auth"
 )
 
 type Store interface {
-	CreateChat(ctx context.Context) (uuid.UUID, error)
-	GetChat(ctx context.Context, chatID uuid.UUID) ([]MessageReturn, error)
+	CreateChat(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
+	GetChat(ctx context.Context, chatID uuid.UUID) (Chat, []MessageReturn, error)
 	CreateMessage(ctx context.Context, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error)
 	Stream(ctx context.Context, messageID uuid.UUID) (bool, <-chan StreamDelta, <-chan error, func())
 	ValidatePreviousID(ctx context.Context, previousID uuid.UUID, chatID uuid.UUID) error
+	ListChats(ctx context.Context, userID uuid.UUID, page, pageSize int32) (ChatPage, error)
+	DeleteChat(ctx context.Context, chatID uuid.UUID, userID uuid.UUID) error
 }
 
 type Handler struct {
@@ -55,11 +61,33 @@ func NewHandler(store Store, logger *zap.Logger) *Handler {
 	}
 }
 
+func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil.Set) {
+	handle := func(pattern string, fn http.HandlerFunc) {
+		if middlewares != nil {
+			fn = middlewares.HandlerFunc(fn)
+		}
+		mux.HandleFunc(pattern, fn)
+	}
+
+	handle("GET /api/chat", h.ListChats)
+	handle("POST /api/chat", h.CreateChat)
+	handle("GET /api/chat/stream/{messageID}", h.Stream)
+	handle("GET /api/chat/{chatID}", h.GetChat)
+	handle("DELETE /api/chat/{chatID}", h.DeleteChat)
+	handle("POST /api/chat/{chatID}", h.CreateMessage)
+}
+
 func (h *Handler) CreateChat(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := logutil.WithContext(ctx, h.logger)
 
-	chatID, err := h.store.CreateChat(ctx)
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
+	chatID, err := h.store.CreateChat(ctx, userID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -79,7 +107,7 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request) {
 
 	status := http.StatusOK
 
-	messages, err := h.store.GetChat(ctx, chatID)
+	chat, messages, err := h.store.GetChat(ctx, chatID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -90,7 +118,13 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request) {
 		messages = []MessageReturn{}
 	}
 
-	handlerutil.WriteJSONResponse(w, status, map[string][]MessageReturn{"messages": messages})
+	handlerutil.WriteJSONResponse(w, status, map[string]interface{}{
+		"id":        chat.ID,
+		"title":     chat.Title,
+		"createdAt": chat.CreatedAt,
+		"updatedAt": chat.UpdatedAt,
+		"messages":  messages,
+	})
 }
 
 func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request) {
@@ -181,6 +215,80 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+}
+
+func (h *Handler) ListChats(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
+	page, pageSize, err := parsePaginationParams(r)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	result, err := h.store.ListChats(ctx, userID, page, pageSize)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	handlerutil.WriteJSONResponse(w, http.StatusOK, result)
+}
+
+func (h *Handler) DeleteChat(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+
+	chatID, err := handlerutil.ParseUUID(r.PathValue("chatID"))
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
+	err = h.store.DeleteChat(ctx, chatID, userID)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func parsePaginationParams(r *http.Request) (int32, int32, error) {
+	var page, pageSize int32
+
+	pageRaw := r.URL.Query().Get("page")
+	if pageRaw != "" {
+		parsed, err := strconv.ParseInt(pageRaw, 10, 32)
+		if err != nil || parsed < 1 {
+			return 0, 0, bodyParseError{fmt.Errorf("invalid page: %s", pageRaw)}
+		}
+		page = int32(parsed)
+	}
+
+	pageSizeRaw := r.URL.Query().Get("pageSize")
+	if pageSizeRaw != "" {
+		parsed, err := strconv.ParseInt(pageSizeRaw, 10, 32)
+		if err != nil || parsed < 1 {
+			return 0, 0, bodyParseError{fmt.Errorf("invalid pageSize: %s", pageSizeRaw)}
+		}
+		pageSize = int32(parsed)
+	}
+
+	return page, pageSize, nil
 }
 
 func writeSSEData(w http.ResponseWriter, flusher http.Flusher, chunk StreamDelta) error {

@@ -13,6 +13,7 @@ import (
 
 type LLMProvider interface {
 	Stream(ctx context.Context, req CreateChatCompletionRequest) (<-chan StreamDelta, <-chan error)
+	GetTitle(ctx context.Context, messages []ChatMessage) (string, error)
 }
 
 type Provider struct {
@@ -186,4 +187,47 @@ func (p *Provider) Stream(ctx context.Context, req CreateChatCompletionRequest) 
 	}()
 
 	return chunks, errs
+}
+
+func (p *Provider) GetTitle(ctx context.Context, messages []ChatMessage) (string, error) {
+	reqBody := struct {
+		Messages []ChatMessage `json:"messages"`
+	}{
+		Messages: messages,
+	}
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", err
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint+"/title", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	for k, vs := range p.headers {
+		for _, v := range vs {
+			httpReq.Header.Add(k, v)
+		}
+	}
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
+		return "", fmt.Errorf("upstream status=%d body=%q", resp.StatusCode, string(b))
+	}
+
+	var respData struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&respData); err != nil {
+		return "", fmt.Errorf("failed to decode get-title response: %w", err)
+	}
+	return respData.Title, nil
 }

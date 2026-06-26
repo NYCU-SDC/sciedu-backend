@@ -126,10 +126,7 @@ func main() {
 	authHandler.RegisterRoutes(mux, middlewareSet)
 	questionHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	contentHandler.RegisterRoutes(mux, protectedMiddlewareSet)
-	mux.HandleFunc("POST /api/chat", protectedMiddlewareSet.HandlerFunc(chatHandler.CreateChat))
-	mux.HandleFunc("GET /api/chat/stream/{messageID}", protectedMiddlewareSet.HandlerFunc(chatHandler.Stream))
-	mux.HandleFunc("GET /api/chat/{chatID}", protectedMiddlewareSet.HandlerFunc(chatHandler.GetChat))
-	mux.HandleFunc("POST /api/chat/{chatID}", protectedMiddlewareSet.HandlerFunc(chatHandler.CreateMessage))
+	chatHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 
 	logger.Info("Start listening on port: 8080")
 
