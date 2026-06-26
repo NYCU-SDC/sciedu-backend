@@ -1774,3 +1774,28 @@
 
 ### Next Steps
 - Manually verify from the frontend that each SSE `data:` event is appended incrementally and that UI render pacing matches the desired animation speed.
+
+## [2026-06-26 15:39] Task Record
+
+### Task Description
+- Fix CI golangci-lint/staticcheck failures in `internal/chat/streamHub.go`.
+
+### Actions Taken
+- Replaced `range []rune(string)` with direct `range string` loops because Go ranges over strings by rune.
+- Replaced `len([]rune(fullContent))` buffer sizing with `utf8.RuneCountInString(fullContent)`.
+- Modified file:
+  - `internal/chat/streamHub.go`
+- Terminal commands executed:
+  - `gofmt -w internal/chat/streamHub.go`
+  - `go test ./internal/chat`
+  - `go test ./...`
+  - `golangci-lint run ./...`
+
+### Attempted Methods
+- Kept the typewriter streaming semantics unchanged: outbound deltas still split by rune, just without the staticcheck-prohibited conversion.
+
+### Issues & Blockers
+- No blocker remains. Local `golangci-lint run ./...` reports `0 issues`.
+
+### Next Steps
+- Rerun GitHub Actions; the SA6003 failures should be resolved.

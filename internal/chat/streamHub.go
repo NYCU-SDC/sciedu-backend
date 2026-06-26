@@ -2,6 +2,7 @@ package chat
 
 import (
 	"sync"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -68,7 +69,7 @@ func (s *StreamEvent) Subscribe() (<-chan StreamDelta, <-chan error, func()) {
 	status := s.status
 	streamErr := s.err
 	sub := &streamSubscriber{
-		chunks: make(chan StreamDelta, maxInt(64, len([]rune(fullContent))+2)),
+		chunks: make(chan StreamDelta, maxInt(64, utf8.RuneCountInString(fullContent)+2)),
 		errs:   make(chan error, 1),
 		done:   make(chan struct{}),
 	}
@@ -84,7 +85,7 @@ func (s *StreamEvent) Subscribe() (<-chan StreamDelta, <-chan error, func()) {
 		s.lock.Unlock()
 	}
 
-	for _, r := range []rune(fullContent) {
+	for _, r := range fullContent {
 		sub.chunks <- StreamDelta{
 			Delta:      string(r),
 			IsFinished: false,
@@ -122,7 +123,7 @@ func (s *StreamEvent) AppendDelta(stream StreamDelta) {
 	s.lock.Lock()
 	s.fullContent += stream.Delta
 	s.lock.Unlock()
-	for _, r := range []rune(stream.Delta) {
+	for _, r := range stream.Delta {
 		s.Publish(StreamDelta{
 			Delta:      string(r),
 			IsFinished: stream.IsFinished,
