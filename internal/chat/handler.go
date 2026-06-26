@@ -21,10 +21,10 @@ import (
 
 type Store interface {
 	CreateChat(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
-	GetChat(ctx context.Context, chatID uuid.UUID) (Chat, []MessageReturn, error)
-	CreateMessage(ctx context.Context, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error)
-	Stream(ctx context.Context, messageID uuid.UUID) (bool, <-chan StreamDelta, <-chan error, func())
-	ValidatePreviousID(ctx context.Context, previousID uuid.UUID, chatID uuid.UUID) error
+	GetChat(ctx context.Context, userID uuid.UUID, chatID uuid.UUID) (Chat, []MessageReturn, error)
+	CreateMessage(ctx context.Context, userID uuid.UUID, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error)
+	Stream(ctx context.Context, userID uuid.UUID, messageID uuid.UUID) (bool, <-chan StreamDelta, <-chan error, func())
+	ValidatePreviousID(ctx context.Context, userID uuid.UUID, previousID uuid.UUID, chatID uuid.UUID) error
 	ListChats(ctx context.Context, userID uuid.UUID, page, pageSize int32) (ChatPage, error)
 	DeleteChat(ctx context.Context, chatID uuid.UUID, userID uuid.UUID) error
 }
@@ -105,9 +105,15 @@ func (h *Handler) GetChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
 	status := http.StatusOK
 
-	chat, messages, err := h.store.GetChat(ctx, chatID)
+	chat, messages, err := h.store.GetChat(ctx, userID, chatID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -143,13 +149,19 @@ func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.store.ValidatePreviousID(ctx, req.PreviousID, chatID)
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
+	err = h.store.ValidatePreviousID(ctx, userID, req.PreviousID, chatID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
 
-	message, err := h.store.CreateMessage(ctx, chatID, req.Content, req.PreviousID)
+	message, err := h.store.CreateMessage(ctx, userID, chatID, req.Content, req.PreviousID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -168,11 +180,18 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ok, chunks, errs, cleanup := h.store.Stream(ctx, messageID)
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
+	ok, chunks, errs, cleanup := h.store.Stream(ctx, userID, messageID)
 	if !ok {
 		h.problemWriter.WriteError(ctx, w, handlerutil.NewNotFoundError("stream", "messageID", messageID.String(), ""), logger)
 		return
 	}
+	defer cleanup()
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -187,16 +206,20 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	for {
+		if chunks == nil && errs == nil {
+			return
+		}
 		select {
 		case <-ctx.Done():
-			cleanup()
 			return
 		case err, ok := <-errs:
 			if !ok {
 				errs = nil
 				continue
 			}
-			h.problemWriter.WriteError(ctx, w, err, logger)
+			if err := writeSSEError(w, flusher, err); err != nil {
+				logger.Warn("failed to write SSE error", zap.Error(err))
+			}
 			return
 		case chunk, ok := <-chunks:
 			if !ok {
@@ -205,11 +228,10 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if err := writeSSEData(w, flusher, chunk); err != nil {
-				h.problemWriter.WriteError(ctx, w, err, logger)
+				logger.Warn("failed to write SSE chunk", zap.Error(err))
 				return
 			}
 			if chunk.IsFinished {
-				cleanup()
 				return
 			}
 		}
@@ -297,6 +319,27 @@ func writeSSEData(w http.ResponseWriter, flusher http.Flusher, chunk StreamDelta
 		return err
 	}
 	// SSE format: data: <json>\n\n
+	if _, err := w.Write([]byte("data: ")); err != nil {
+		return err
+	}
+	if _, err := w.Write(b); err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte("\n\n")); err != nil {
+		return err
+	}
+	flusher.Flush()
+	return nil
+}
+
+func writeSSEError(w http.ResponseWriter, flusher http.Flusher, streamErr error) error {
+	b, err := json.Marshal(map[string]string{"error": streamErr.Error()})
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write([]byte("event: error\n")); err != nil {
+		return err
+	}
 	if _, err := w.Write([]byte("data: ")); err != nil {
 		return err
 	}

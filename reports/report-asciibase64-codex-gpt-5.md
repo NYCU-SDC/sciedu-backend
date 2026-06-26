@@ -1635,3 +1635,142 @@
 ### Next Steps
 - Review merge commit `1e5afc9` locally.
 - Push is intentionally not performed per repository AI-agent workflow; the human developer should push after review if desired.
+
+## [2026-06-26 14:42] Task Record
+
+### Task Description
+- Inspect whether backend and LLM provider integration needs backend-side changes.
+
+### Actions Taken
+- Checked git status, git username, `.gitignore`, and recent report context.
+- Inspected backend chat provider contract and chat service flow:
+  - `internal/chat/provider.go`
+  - `internal/chat/service.go`
+  - `internal/chat/type.go`
+  - `internal/config/config.go`
+- Inspected backend Docker/env configuration:
+  - `.deploy/local/compose.yaml`
+  - `.deploy/dev/compose.yaml`
+  - `.env.example`
+- No application code was modified.
+
+### Attempted Methods
+- Verified the backend currently constructs the LLM streaming endpoint as `LLM_URL + "/chat"` and the title endpoint as `LLM_URL + "/chat/title"`.
+- Verified backend chat routes are protected by auth middleware, so end-to-end manual chat testing requires a valid `access_token` cookie unless a dev-only auth bypass is intentionally added.
+
+### Issues & Blockers
+- The LLM provider's actual OpenAPI paths were not available in this local backend checkout. Earlier manual `/chat` probing returned 404, so route compatibility must be verified from the LLM provider with `/openapi.json`.
+- If the LLM provider does not expose `/chat` and `/chat/title`, backend adapter/config changes are required.
+
+### Next Steps
+- On the LLM host, run `curl -sS http://localhost:<llm-host-port>/openapi.json | python3 -c 'import sys,json; print("\n".join(json.load(sys.stdin)["paths"].keys()))'`.
+- If paths differ from `/chat` and `/chat/title`, either align the LLM provider routes or make backend LLM paths configurable.
+- For a shared local compose network, set backend `LLM_URL=http://llm-provider:8080` and do not point it at the host backend port.
+
+## [2026-06-26 14:57] Task Record
+
+### Task Description
+- Review `internal/chat` implementation for streaming correctness and integration risks.
+
+### Actions Taken
+- Checked git status, git username, and recent report context.
+- Reviewed chat handler, service, provider, stream hub, SQL queries, and schema:
+  - `internal/chat/handler.go`
+  - `internal/chat/service.go`
+  - `internal/chat/provider.go`
+  - `internal/chat/streamHub.go`
+  - `internal/chat/queries.sql`
+  - `internal/chat/schema.sql`
+- Ran `go test ./internal/chat`.
+- No application code was modified.
+
+### Attempted Methods
+- Assessed happy-path SSE flow from backend handler through `StreamHub` to LLM provider and DB persistence.
+- Checked ownership boundaries around chat/message queries and stream subscription access.
+- Checked goroutine lifecycle and subscriber cleanup behavior.
+
+### Issues & Blockers
+- `internal/chat` has no test files.
+- Streaming can work on the happy path, but review found correctness and security risks:
+  - stream subscription does not verify that the message belongs to the requesting user;
+  - `GetChat` and `CreateMessage` do not enforce chat ownership;
+  - `Stream` returns 404 after the background stream finishes, so clients that connect after completion cannot retrieve the final answer through the stream endpoint;
+  - handler writes problem JSON after SSE headers/body may already have started, which is not a valid SSE error shape;
+  - stream subscriber error channel is never used and is not closed on cancellation;
+  - provider treats upstream EOF without an explicit finish event as a normal end, which can persist a streaming message with `streaming` status.
+
+### Next Steps
+- Add ownership-aware query/service methods and require user ID for get/create-message/stream operations.
+- Add table-driven tests for provider SSE parsing, StreamHub subscription cleanup, and service stream persistence on complete/error/EOF.
+- Decide whether late stream consumers should read completed assistant messages from DB or receive a clear non-streaming response.
+
+## [2026-06-26 15:05] Task Record
+
+### Task Description
+- Fix `internal/chat` streaming correctness and ownership issues found in review.
+
+### Actions Taken
+- Updated chat handler/service interfaces so get chat, create message, validate previous ID, and stream subscription all receive the authenticated `userID`.
+- Added ownership-aware sqlc queries:
+  - `GetChatByUser`
+  - `GetMessageByUser`
+- Updated stream subscription to verify the requested assistant message belongs to the authenticated user before streaming.
+- Added DB fallback behavior for late stream consumers:
+  - completed messages stream their persisted content plus a finish event;
+  - failed/unavailable messages emit an SSE error event.
+- Changed SSE handler error behavior after headers are written: it now writes `event: error` SSE payloads instead of problem JSON.
+- Updated provider SSE parsing so upstream EOF before an explicit finish event becomes an error instead of leaving messages in `streaming` status.
+- Updated `StreamHub` so `Fail` publishes errors to subscribers and cancellation no longer closes channels while another goroutine may publish.
+- Added tests:
+  - `internal/chat/provider_test.go`
+  - `internal/chat/streamHub_test.go`
+- Regenerated sqlc output locally with `./scripts/create_sqlc_full_schema.sh` and `sqlc generate`.
+- Terminal commands executed included:
+  - `go test ./internal/chat`
+  - `go test -race ./internal/chat`
+  - `go test ./...`
+  - `git diff --check`
+
+### Attempted Methods
+- Fixed the first implementation pass after noticing `StreamHub.cancel` could close subscriber channels while `Publish` had already copied the subscriber list, which could panic on send.
+- Kept the LLM route contract unchanged (`LLM_URL + "/chat"` and `LLM_URL + "/chat/title"`); this task only fixed backend streaming correctness.
+
+### Issues & Blockers
+- No blocker remains.
+- `go test ./internal/chat`, `go test -race ./internal/chat`, `go test ./...`, and `git diff --check` pass.
+- sqlc-generated query files remain ignored by repository configuration, so future clean environments must run `make gen` or `sqlc generate` before compiling if ignored generated files are absent.
+
+### Next Steps
+- Manually retest with backend connected to the LLM provider using `LLM_URL=http://llm-provider:8080` inside Docker network or `LLM_URL=http://127.0.0.1:18080` when backend runs on the host.
+- Consider adding service-level tests with a fake querier/provider for stream persistence and ownership denial cases.
+
+## [2026-06-26 15:10] Task Record
+
+### Task Description
+- Ensure backend chat streaming supports frontend typewriter-style rendering where text appears one character at a time.
+
+### Actions Taken
+- Updated `StreamEvent.AppendDelta` so upstream LLM chunks are split into individual Go rune deltas before being published to SSE subscribers.
+- Updated completed-message fallback streams so late consumers also receive persisted content as rune-by-rune deltas followed by a finish event.
+- Changed stream publishing to avoid silently dropping chunk events when subscriber buffers are full; publishing now waits for subscribers or skips canceled subscribers.
+- Adjusted stream subscription buffering so existing accumulated content can be replayed as rune deltas without blocking subscription setup.
+- Added tests covering rune-by-rune streaming behavior:
+  - `TestStreamEventAppendDeltaPublishesRuneDeltas`
+  - `TestCompletedStreamPublishesRuneDeltas`
+- Terminal commands executed:
+  - `go test ./internal/chat`
+  - `go test -race ./internal/chat`
+  - `go test ./...`
+  - `git diff --check`
+
+### Attempted Methods
+- Treated the typewriter behavior as a backend SSE contract rather than relying on the LLM provider to emit tiny chunks.
+- Preserved full-content persistence by appending the original upstream delta to `fullContent` while only splitting the outbound stream events.
+
+### Issues & Blockers
+- No blocker remains.
+- Tests and race detector pass.
+- Backend emits rune-by-rune deltas, not artificial timed delays. The frontend can control visual speed by buffering and rendering received deltas with its own timer if a slower animation is desired.
+
+### Next Steps
+- Manually verify from the frontend that each SSE `data:` event is appended incrementally and that UI render pacing matches the desired animation speed.

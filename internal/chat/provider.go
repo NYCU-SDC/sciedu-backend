@@ -150,8 +150,18 @@ func (p *Provider) Stream(ctx context.Context, req CreateChatCompletionRequest) 
 				if ctx.Err() != nil {
 					return
 				}
-				// upstream closed normally (EOF) => end
 				if err == io.EOF {
+					if len(eventLines) > 0 {
+						done, perr := publishSSEPayload(ctx, eventLines, chunks)
+						if perr != nil {
+							errs <- perr
+							return
+						}
+						if done {
+							return
+						}
+					}
+					errs <- fmt.Errorf("upstream closed before finish")
 					return
 				}
 				errs <- err
@@ -160,21 +170,11 @@ func (p *Provider) Stream(ctx context.Context, req CreateChatCompletionRequest) 
 
 			// SSE event terminator: blank line
 			if line == "\n" || line == "\r\n" {
-				payload := readSSEEventFromLines(eventLines)
+				done, perr := publishSSEPayload(ctx, eventLines, chunks)
 				eventLines = eventLines[:0]
-
-				chunk, done, perr := parseSSEEventData(payload)
 				if perr != nil {
 					errs <- perr
 					return
-				}
-				// ignore empty payload events
-				if payload != "" {
-					select {
-					case <-ctx.Done():
-						return
-					case chunks <- chunk:
-					}
 				}
 				if done {
 					return
@@ -187,6 +187,23 @@ func (p *Provider) Stream(ctx context.Context, req CreateChatCompletionRequest) 
 	}()
 
 	return chunks, errs
+}
+
+func publishSSEPayload(ctx context.Context, eventLines []string, chunks chan<- StreamDelta) (bool, error) {
+	payload := readSSEEventFromLines(eventLines)
+	chunk, done, err := parseSSEEventData(payload)
+	if err != nil {
+		return false, err
+	}
+	if payload == "" {
+		return false, nil
+	}
+	select {
+	case <-ctx.Done():
+		return false, ctx.Err()
+	case chunks <- chunk:
+	}
+	return done, nil
 }
 
 func (p *Provider) GetTitle(ctx context.Context, messages []ChatMessage) (string, error) {

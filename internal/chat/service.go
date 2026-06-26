@@ -2,12 +2,14 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.uber.org/zap"
 )
@@ -16,7 +18,9 @@ type ChatQuerier interface {
 	CreateChat(ctx context.Context, arg CreateChatParams) (Chat, error)
 	CreateMessage(ctx context.Context, arg CreateMessageParams) (Message, error)
 	GetChat(ctx context.Context, id uuid.UUID) (Chat, error)
+	GetChatByUser(ctx context.Context, arg GetChatByUserParams) (Chat, error)
 	GetMessage(ctx context.Context, id uuid.UUID) (Message, error)
+	GetMessageByUser(ctx context.Context, arg GetMessageByUserParams) (Message, error)
 	GetMessages(ctx context.Context, chatID uuid.UUID) ([]Message, error)
 	UpdateMessage(ctx context.Context, arg UpdateMessageParams) (Message, error)
 	UpdateChat(ctx context.Context, arg UpdateChatParams) (Chat, error)
@@ -113,9 +117,15 @@ func (s *ChatService) fetchMessages(ctx context.Context, chatID uuid.UUID) ([]Me
 	return result, nil
 }
 
-func (s *ChatService) GetChat(ctx context.Context, chatID uuid.UUID) (Chat, []MessageReturn, error) {
-	chat, err := s.querier.GetChat(ctx, chatID)
+func (s *ChatService) GetChat(ctx context.Context, userID uuid.UUID, chatID uuid.UUID) (Chat, []MessageReturn, error) {
+	chat, err := s.querier.GetChatByUser(ctx, GetChatByUserParams{
+		ID:     chatID,
+		UserID: userID,
+	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Chat{}, nil, handlerutil.NewNotFoundError("chat", "chat_id", chatID.String(), "")
+		}
 		return Chat{}, nil, databaseutil.WrapDBErrorWithKeyValue(err, "chat", "chat_id", chatID.String(), s.logger, "get chat")
 	}
 	if chat.ID == uuid.Nil {
@@ -191,10 +201,16 @@ func (s *ChatService) DeleteChat(ctx context.Context, chatID uuid.UUID, userID u
 	return nil
 }
 
-func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error) {
+func (s *ChatService) CreateMessage(ctx context.Context, userID uuid.UUID, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error) {
 
-	chat, err := s.querier.GetChat(ctx, chatID)
+	chat, err := s.querier.GetChatByUser(ctx, GetChatByUserParams{
+		ID:     chatID,
+		UserID: userID,
+	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CreateMessageReturn{}, handlerutil.NewNotFoundError("chat", "chat_id", chatID.String(), "")
+		}
 		return CreateMessageReturn{}, databaseutil.WrapDBErrorWithKeyValue(err, "chat", "chat_id", chatID.String(), s.logger, "get chat")
 	}
 	if chat.ID == uuid.Nil {
@@ -280,13 +296,32 @@ func (s *ChatService) CreateMessage(ctx context.Context, chatID uuid.UUID, conte
 
 }
 
-func (s *ChatService) Stream(ctx context.Context, messageID uuid.UUID) (bool, <-chan StreamDelta, <-chan error, func()) {
-	streamEvent, ok := s.streamHub.GetStream(messageID)
-	if !ok {
-		return false, nil, nil, func() {}
+func (s *ChatService) Stream(ctx context.Context, userID uuid.UUID, messageID uuid.UUID) (bool, <-chan StreamDelta, <-chan error, func()) {
+	msg, err := s.querier.GetMessageByUser(ctx, GetMessageByUserParams{
+		ID:     messageID,
+		UserID: userID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil, nil, func() {}
+		}
+		return true, nil, errorStream(databaseutil.WrapDBErrorWithKeyValue(err, "message", "message_id", messageID.String(), s.logger, "get stream message")), func() {}
 	}
-	llmCh, errCh, cancel := streamEvent.Subscribe()
-	return ok, llmCh, errCh, cancel
+
+	streamEvent, ok := s.streamHub.GetStream(messageID)
+	if ok {
+		llmCh, errCh, cancel := streamEvent.Subscribe()
+		return ok, llmCh, errCh, cancel
+	}
+
+	switch MessageStatus(msg.Status) {
+	case MessageStatusDone:
+		return true, completedStream(msg.Content.String), closedErrorStream(), func() {}
+	case MessageStatusError:
+		return true, nil, errorStream(fmt.Errorf("message stream failed")), func() {}
+	default:
+		return true, nil, errorStream(fmt.Errorf("message stream is unavailable")), func() {}
+	}
 }
 
 func (s *ChatService) streamProcessor(ctx context.Context, chatID uuid.UUID, messageID uuid.UUID, streamEvent *StreamEvent, providerReq CreateChatCompletionRequest, createTitle bool) {
@@ -319,6 +354,10 @@ func (s *ChatService) streamProcessor(ctx context.Context, chatID uuid.UUID, mes
 				}
 			}
 		}
+	}
+
+	if !endFlag {
+		streamEvent.Fail(fmt.Errorf("upstream stream ended before finish"))
 	}
 
 	status, fullChunk, err := streamEvent.Get()
@@ -360,12 +399,18 @@ func (s *ChatService) streamProcessor(ctx context.Context, chatID uuid.UUID, mes
 
 }
 
-func (s *ChatService) ValidatePreviousID(ctx context.Context, previousID uuid.UUID, chatID uuid.UUID) error {
+func (s *ChatService) ValidatePreviousID(ctx context.Context, userID uuid.UUID, previousID uuid.UUID, chatID uuid.UUID) error {
 	if previousID == uuid.Nil {
 		return nil
 	}
-	msg, err := s.querier.GetMessage(ctx, previousID)
+	msg, err := s.querier.GetMessageByUser(ctx, GetMessageByUserParams{
+		ID:     previousID,
+		UserID: userID,
+	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return handlerutil.NewNotFoundError("message", "previous_id", previousID.String(), "")
+		}
 		return databaseutil.WrapDBErrorWithKeyValue(err, "message", "ID", previousID.String(), s.logger, "validate previous id")
 	}
 	if msg.ID == uuid.Nil {
@@ -428,4 +473,28 @@ func createChatHistory(allMessages []MessageReturn) []ChatMessage {
 
 func SSEError(err error, logger *zap.Logger) {
 	logger.Warn("Handling SSE Error", zap.String("problem", "SSE Error"), zap.Error(err))
+}
+
+func completedStream(content string) <-chan StreamDelta {
+	runes := []rune(content)
+	ch := make(chan StreamDelta, len(runes)+1)
+	for _, r := range runes {
+		ch <- StreamDelta{Delta: string(r), IsFinished: false}
+	}
+	ch <- StreamDelta{Delta: "", IsFinished: true}
+	close(ch)
+	return ch
+}
+
+func errorStream(err error) <-chan error {
+	ch := make(chan error, 1)
+	ch <- err
+	close(ch)
+	return ch
+}
+
+func closedErrorStream() <-chan error {
+	ch := make(chan error)
+	close(ch)
+	return ch
 }

@@ -1,6 +1,9 @@
 -- name: GetChat :one
 SELECT * FROM chats
 WHERE id = $1;
+-- name: GetChatByUser :one
+SELECT * FROM chats
+WHERE id = $1 AND user_id = $2;
 -- name: CreateChat :one
 INSERT INTO chats (user_id, title)
 VALUES ($1, $2)
@@ -13,6 +16,10 @@ RETURNING *;
 -- name: GetMessage :one
 SELECT * FROM messages
 WHERE id = $1;
+-- name: GetMessageByUser :one
+SELECT messages.* FROM messages
+JOIN chats ON chats.id = messages.chat_id
+WHERE messages.id = $1 AND chats.user_id = $2;
 -- name: GetMessages :many
 SELECT * FROM messages
 WHERE chat_id = $1
