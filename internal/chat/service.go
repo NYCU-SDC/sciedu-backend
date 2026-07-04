@@ -26,7 +26,7 @@ type ChatQuerier interface {
 	UpdateChat(ctx context.Context, arg UpdateChatParams) (Chat, error)
 	ListChatsByUser(ctx context.Context, arg ListChatsByUserParams) ([]Chat, error)
 	CountChatsByUser(ctx context.Context, userID uuid.UUID) (int64, error)
-	DeleteChat(ctx context.Context, id uuid.UUID) error
+	DeleteChat(ctx context.Context, arg DeleteChatParams) (int64, error)
 }
 
 type ChatService struct {
@@ -183,20 +183,15 @@ func (s *ChatService) ListChats(ctx context.Context, userID uuid.UUID, page, pag
 }
 
 func (s *ChatService) DeleteChat(ctx context.Context, chatID uuid.UUID, userID uuid.UUID) error {
-	chat, err := s.querier.GetChat(ctx, chatID)
-	if err != nil {
-		return databaseutil.WrapDBErrorWithKeyValue(err, "chat", "chat_id", chatID.String(), s.logger, "get chat for delete")
-	}
-	if chat.ID == uuid.Nil {
-		return handlerutil.NewNotFoundError("chat", "chat_id", chatID.String(), "")
-	}
-	if chat.UserID != userID {
-		return handlerutil.NewNotFoundError("chat", "chat_id", chatID.String(), "chat does not belong to the user")
-	}
-
-	err = s.querier.DeleteChat(ctx, chatID)
+	rowsAffected, err := s.querier.DeleteChat(ctx, DeleteChatParams{
+		ID:     chatID,
+		UserID: userID,
+	})
 	if err != nil {
 		return databaseutil.WrapDBErrorWithKeyValue(err, "chat", "chat_id", chatID.String(), s.logger, "delete chat")
+	}
+	if rowsAffected == 0 {
+		return handlerutil.NewNotFoundError("chat", "chat_id", chatID.String(), "")
 	}
 	return nil
 }
@@ -263,7 +258,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, userID uuid.UUID, chatI
 	createTitle := false
 	newTitle := chat.Title
 	if newTitle == "" {
-		newTitle = content
+		newTitle = truncateTitle(content)
 		createTitle = true
 	}
 	if _, err = s.querier.UpdateChat(ctx, UpdateChatParams{
@@ -389,7 +384,7 @@ func (s *ChatService) streamProcessor(ctx context.Context, chatID uuid.UUID, mes
 		}
 		_, err = s.querier.UpdateChat(updateCtx, UpdateChatParams{
 			ID:    chatID,
-			Title: title,
+			Title: truncateTitle(title),
 		})
 		if err != nil {
 			SSEError(err, s.logger)
@@ -397,6 +392,16 @@ func (s *ChatService) streamProcessor(ctx context.Context, chatID uuid.UUID, mes
 		}
 	}
 
+}
+
+func truncateTitle(title string) string {
+	const maxTitleRunes = 255
+
+	runes := []rune(title)
+	if len(runes) <= maxTitleRunes {
+		return title
+	}
+	return string(runes[:maxTitleRunes])
 }
 
 func (s *ChatService) ValidatePreviousID(ctx context.Context, userID uuid.UUID, previousID uuid.UUID, chatID uuid.UUID) error {

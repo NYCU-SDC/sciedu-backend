@@ -396,7 +396,7 @@ func (s *Service) oauthProvider(name string) (OAuthProvider, error) {
 
 func (s *Service) isRedirectAllowed(raw string) bool {
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || parsed.User != nil {
 		return false
 	}
 
@@ -414,7 +414,19 @@ func (s *Service) isRedirectAllowed(raw string) bool {
 		if allowed == "" {
 			continue
 		}
-		if raw == allowed || strings.HasPrefix(raw, strings.TrimRight(allowed, "/")+"/") {
+
+		allowedURL, err := url.Parse(allowed)
+		if err != nil || allowedURL.Scheme == "" || allowedURL.Host == "" || allowedURL.User != nil {
+			continue
+		}
+		if !strings.EqualFold(parsed.Scheme, allowedURL.Scheme) ||
+			!strings.EqualFold(parsed.Host, allowedURL.Host) {
+			continue
+		}
+
+		allowedPath := strings.TrimRight(allowedURL.EscapedPath(), "/")
+		redirectPath := parsed.EscapedPath()
+		if allowedPath == "" || redirectPath == allowedPath || strings.HasPrefix(redirectPath, allowedPath+"/") {
 			return true
 		}
 	}

@@ -1,11 +1,14 @@
 package chat
 
 import (
+	"errors"
 	"sync"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
+
+var errSlowStreamSubscriber = errors.New("stream subscriber is too slow")
 
 type StreamHub struct {
 	lock    sync.RWMutex
@@ -115,8 +118,25 @@ func (s *StreamEvent) Publish(stream StreamDelta) {
 		select {
 		case sub.chunks <- stream:
 		case <-sub.done:
+		default:
+			s.disconnectSlowSubscriber(sub)
 		}
 	}
+}
+
+func (s *StreamEvent) disconnectSlowSubscriber(sub *streamSubscriber) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	if _, ok := s.subscribers[sub]; !ok {
+		return
+	}
+	delete(s.subscribers, sub)
+	select {
+	case sub.errs <- errSlowStreamSubscriber:
+	default:
+	}
+	close(sub.done)
 }
 
 func (s *StreamEvent) AppendDelta(stream StreamDelta) {
@@ -168,6 +188,7 @@ func (s *StreamEvent) publishError(err error) {
 		select {
 		case sub.errs <- err:
 		case <-sub.done:
+		default:
 		}
 	}
 }

@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS chats (
 
 CREATE TABLE IF NOT EXISTS messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    chat_id UUID NOT NULL REFERENCES chats(id),
+    chat_id UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
     previous_id UUID REFERENCES messages(id),
     content TEXT,
     role VARCHAR(20) NOT NULL CHECK (role IN ('user', 'assistant', 'system')),

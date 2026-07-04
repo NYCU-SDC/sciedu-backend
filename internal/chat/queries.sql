@@ -33,9 +33,9 @@ UPDATE messages
 SET content = $2, status = $3
 WHERE id = $1
 RETURNING *;
--- name: DeleteChat :exec
+-- name: DeleteChat :execrows
 DELETE FROM chats
-WHERE id = $1;
+WHERE id = $1 AND user_id = $2;
 -- name: ListChatsByUser :many
 SELECT * FROM chats
 WHERE user_id = $1

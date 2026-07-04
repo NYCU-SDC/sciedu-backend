@@ -49,3 +49,26 @@ func TestCompletedStreamPublishesRuneDeltas(t *testing.T) {
 	require.Equal(t, StreamDelta{Delta: "了"}, receiveChunk(t, chunks))
 	require.Equal(t, StreamDelta{Delta: "", IsFinished: true}, receiveChunk(t, chunks))
 }
+
+func TestStreamEventPublishDoesNotBlockOnSlowSubscriber(t *testing.T) {
+	stream := NewStreamHub().CreateStream(uuid.MustParse("00000000-0000-0000-0000-000000000001"))
+	chunks, errs, cancel := stream.Subscribe()
+	defer cancel()
+
+	for i := 0; i < cap(chunks); i++ {
+		stream.Publish(StreamDelta{Delta: "x"})
+	}
+
+	published := make(chan struct{})
+	go func() {
+		stream.Publish(StreamDelta{Delta: "overflow"})
+		close(published)
+	}()
+
+	select {
+	case <-published:
+	case <-time.After(time.Second):
+		t.Fatal("publish blocked on slow subscriber")
+	}
+	require.ErrorIs(t, receiveErr(t, errs), errSlowStreamSubscriber)
+}

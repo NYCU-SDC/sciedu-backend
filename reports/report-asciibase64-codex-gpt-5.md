@@ -1799,3 +1799,80 @@
 
 ### Next Steps
 - Rerun GitHub Actions; the SA6003 failures should be resolved.
+
+## [2026-07-04 09:28] Task Record
+
+### Task Description
+- Inspect unresolved review feedback on the pull request associated with the current branch using the GitHub PR comment workflow.
+
+### Actions Taken
+- Verified the clean working tree, current branch, Git username, remote, and `.gitignore`.
+- Read the GitHub PR comment handler skill and prior Codex report context.
+- Verified GitHub CLI authentication and resolved the current branch to `NYCU-SDC/sciedu-backend` PR #53.
+- Retrieved thread-aware review data with the bundled GraphQL script and confirmed seven unresolved, non-outdated inline review threads.
+- Retrieved PR metadata through the GitHub connector and validated each review comment against the current auth, chat, migration, query, and test code.
+- Modified only `reports/report-asciibase64-codex-gpt-5.md`.
+- Executed read-only Git, GitHub CLI, GraphQL, search, and file-inspection commands.
+
+### Attempted Methods
+- Initially ran the bundled comment script in the filesystem sandbox while checking its usage; its internal `gh auth status` could not access the authenticated keyring. Re-ran it with the skill-required elevated network/keyring access, which succeeded.
+- One combined `rg` command referenced the absent `service/` directory and exited before subsequent `sed` commands. Re-ran the relevant file reads without that nonexistent path.
+
+### Issues & Blockers
+- All seven unresolved comments are supported by the current code and are actionable.
+- No code changes were made because the skill requires confirming which review threads the user wants addressed before editing when “fix everything” was not requested.
+- No GitHub comments were posted and no review threads were resolved.
+
+### Next Steps
+- Ask the user to select which of the seven numbered review threads to fix, then implement and verify those changes locally.
+
+## [2026-07-04 09:35] Task Record
+
+### Task Description
+- Address all unresolved PR #53 review threads except thread 3, which requested changing `GetChat` timestamp serialization.
+
+### Actions Taken
+- Fixed OAuth redirect allowlist validation to compare parsed scheme, host/port, and bounded path prefixes, and to reject userinfo URLs.
+- Made stream publishing non-blocking by disconnecting slow subscribers and returning an explicit stream error when their chunk buffer is full.
+- Changed migration 9 to create the existing deterministic mock user before adding `chats.user_id`, backfill legacy chats, then enforce the NOT NULL foreign key.
+- Made migration 9 replace the message foreign key with `ON DELETE CASCADE`; updated the sqlc schema accordingly.
+- Added `IF EXISTS` to down-migration constraint removals.
+- Changed chat deletion to one user-scoped `DELETE` query that returns affected rows, preventing ownership disclosure and allowing cascaded message deletion.
+- Rune-truncated provisional and LLM-generated chat titles to the database limit of 255 characters.
+- Added table-driven redirect, chat deletion, and title-boundary tests plus a slow-subscriber regression test.
+- Ran `make gen`, which regenerated ignored sqlc artifacts including `DeleteChatParams` and the affected-row return signature.
+- Modified:
+  - `internal/auth/service.go`
+  - `internal/auth/service_test.go`
+  - `internal/chat/queries.sql`
+  - `internal/chat/schema.sql`
+  - `internal/chat/service.go`
+  - `internal/chat/service_test.go`
+  - `internal/chat/streamHub.go`
+  - `internal/chat/streamHub_test.go`
+  - `internal/database/migrations/9_chatHistory.up.sql`
+  - `internal/database/migrations/9_chatHistory.down.sql`
+  - `reports/report-asciibase64-codex-gpt-5.md`
+- Verification commands:
+  - `make gen`
+  - `gofmt -w internal/auth/service.go internal/auth/service_test.go internal/chat/service.go internal/chat/service_test.go internal/chat/streamHub.go internal/chat/streamHub_test.go`
+  - `go test ./internal/auth ./internal/chat`
+  - `go test -race ./internal/chat`
+  - `go test ./...`
+  - `golangci-lint run ./...`
+  - `git diff --check`
+
+### Attempted Methods
+- The initial targeted test command failed because the filesystem sandbox could not write to the macOS Go build cache. Re-ran it with approved build-cache access and it passed.
+- Used sqlc `:execrows` rather than a pre-delete ownership lookup so nonexistent and non-owned chats produce the same not-found behavior without a race between authorization and deletion.
+- Chose explicit slow-subscriber disconnection instead of silently dropping chunks, because dropped stream deltas would corrupt the client-visible response.
+
+### Issues & Blockers
+- No blocker remains for the selected threads.
+- Thread 3 remains intentionally unaddressed per user instruction; `GetChat` still writes `pgtype.Timestamptz` values directly.
+- GitHub review threads were not replied to or resolved because no GitHub write action was requested.
+- Migration SQL was reviewed and generated schema compilation succeeded, but the migration was not exercised against a disposable PostgreSQL instance during this task.
+
+### Next Steps
+- Review and commit the local changes.
+- Optionally run the migrations against a disposable database before updating or resolving the corresponding GitHub review threads.

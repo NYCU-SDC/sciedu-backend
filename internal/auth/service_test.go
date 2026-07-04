@@ -277,19 +277,72 @@ func TestServiceOAuthFlow(t *testing.T) {
 	require.NotEmpty(t, complete.Session.RefreshToken)
 }
 
-func TestServiceBeginOAuthRejectsUnallowedRedirect(t *testing.T) {
-	svc := NewService(&fakeAuthRepository{}, ServiceConfig{
-		Secret:               "test-secret",
-		Environment:          EnvironmentDev,
-		OAuthProvider:        &fakeOAuthProvider{},
-		RedirectURLAllowlist: []string{"http://localhost:5173"},
-	}, nil)
+func TestServiceBeginOAuthValidatesRedirectAllowlist(t *testing.T) {
+	tests := []struct {
+		name      string
+		allowlist []string
+		redirect  string
+		wantError bool
+	}{
+		{
+			name:      "allows matching origin and nested path",
+			allowlist: []string{"http://localhost:5173"},
+			redirect:  "http://localhost:5173/courses",
+		},
+		{
+			name:      "allows matching configured path prefix",
+			allowlist: []string{"https://example.com/app"},
+			redirect:  "https://example.com/app/courses",
+		},
+		{
+			name:      "rejects different host",
+			allowlist: []string{"http://localhost:5173"},
+			redirect:  "https://evil.example.com",
+			wantError: true,
+		},
+		{
+			name:      "rejects userinfo prefix bypass",
+			allowlist: []string{"https://sciedu.sdc.nycu.club"},
+			redirect:  "https://sciedu.sdc.nycu.club@evil.example.com/courses",
+			wantError: true,
+		},
+		{
+			name:      "rejects different port",
+			allowlist: []string{"http://localhost:5173"},
+			redirect:  "http://localhost:5174/courses",
+			wantError: true,
+		},
+		{
+			name:      "rejects sibling path with matching text prefix",
+			allowlist: []string{"https://example.com/app"},
+			redirect:  "https://example.com/application",
+			wantError: true,
+		},
+	}
 
-	_, err := svc.BeginOAuth(t.Context(), BeginOAuthParams{
-		Provider:    "google",
-		RedirectURL: "https://evil.example.com",
-	})
-	require.ErrorIs(t, err, errInvalidRedirectURL)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeAuthRepository{}
+			svc := NewService(repo, ServiceConfig{
+				Secret:               "test-secret",
+				Environment:          EnvironmentDev,
+				OAuthProvider:        &fakeOAuthProvider{},
+				RedirectURLAllowlist: tt.allowlist,
+			}, nil)
+
+			_, err := svc.BeginOAuth(t.Context(), BeginOAuthParams{
+				Provider:    "google",
+				RedirectURL: tt.redirect,
+			})
+			if tt.wantError {
+				require.ErrorIs(t, err, errInvalidRedirectURL)
+				require.False(t, repo.createdState)
+				return
+			}
+			require.NoError(t, err)
+			require.True(t, repo.createdState)
+		})
+	}
 }
 
 func TestGoogleOAuthProviderAuthCodeURLPromptsAccountSelection(t *testing.T) {
