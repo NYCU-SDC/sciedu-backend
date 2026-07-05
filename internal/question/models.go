@@ -7,6 +7,7 @@ package question
 import (
 	"database/sql/driver"
 	"fmt"
+	"net/netip"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -57,6 +58,9 @@ func (ns NullContentType) Value() (driver.Value, error) {
 type Chat struct {
 	ID        uuid.UUID
 	CreatedAt pgtype.Timestamptz
+	UserID    uuid.UUID
+	Title     string
+	UpdatedAt pgtype.Timestamptz
 }
 
 type Content struct {
@@ -75,6 +79,30 @@ type Message struct {
 	CreatedAt  pgtype.Timestamptz
 }
 
+type OauthAccount struct {
+	ID             uuid.UUID
+	UserID         uuid.UUID
+	Provider       string
+	ProviderUserID string
+	ProviderEmail  string
+	EmailVerified  bool
+	LastLoginAt    pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type OauthLoginState struct {
+	StateHash    []byte
+	Provider     string
+	CodeVerifier string
+	RedirectUrl  string
+	ExpiresAt    pgtype.Timestamptz
+	UsedAt       pgtype.Timestamptz
+	IpAddress    *netip.Addr
+	UserAgent    pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+}
+
 type Option struct {
 	ID         uuid.UUID
 	QuestionID uuid.UUID
@@ -90,4 +118,43 @@ type Question struct {
 	Type      string
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
+}
+
+type RefreshToken struct {
+	ID                 uuid.UUID
+	FamilyID           uuid.UUID
+	UserID             uuid.UUID
+	TokenHash          []byte
+	RotatedFromTokenID pgtype.UUID
+	IsCurrent          bool
+	IssuedAt           pgtype.Timestamptz
+	UsedAt             pgtype.Timestamptz
+	RevokedAt          pgtype.Timestamptz
+	CreatedAt          pgtype.Timestamptz
+}
+
+type RefreshTokenFamily struct {
+	ID              uuid.UUID
+	UserID          uuid.UUID
+	OauthAccountID  pgtype.UUID
+	ExpiresAt       pgtype.Timestamptz
+	RevokedAt       pgtype.Timestamptz
+	RevokedReason   pgtype.Text
+	ReuseDetectedAt pgtype.Timestamptz
+	LastUsedAt      pgtype.Timestamptz
+	IpAddress       *netip.Addr
+	UserAgent       pgtype.Text
+	CreatedAt       pgtype.Timestamptz
+}
+
+type User struct {
+	ID          uuid.UUID
+	Email       string
+	Name        string
+	AvatarUrl   pgtype.Text
+	Roles       []interface{}
+	LastLoginAt pgtype.Timestamptz
+	DisabledAt  pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
 }

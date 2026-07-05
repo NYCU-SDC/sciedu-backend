@@ -32,7 +32,11 @@ lint:
 	@echo -e "  -> Checking code with golangci-lint..."
 	@golangci-lint run ./... && echo -e "==> $(BLUE)Lint passed!$(NC)" || (echo -e "==> $(RED)Lint failed!$(NC)" && exit 1)
 
-build: gen
+test:
+	@echo -e ":: $(GREEN)Running tests...$(NC)"
+	@go test ./... && echo -e "==> $(BLUE)Tests passed!$(NC)" || (echo -e "==> $(RED)Tests failed!$(NC)" && exit 1)
+
+build: gen test
 	@echo -e ":: $(GREEN)Building backend...$(NC)"
 	@echo -e "  -> Building backend binary..."
 	@go build -o bin/backend cmd/backend/main.go && echo -e "==> $(BLUE)Build complete successfully! $(NC)" || (echo -e "==> $(RED)Build failed! $(NC)" && exit 1)
