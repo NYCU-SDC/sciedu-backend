@@ -22,7 +22,7 @@ import (
 type Store interface {
 	CreateChat(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
 	GetChat(ctx context.Context, userID uuid.UUID, chatID uuid.UUID) (Chat, []MessageReturn, error)
-	CreateMessage(ctx context.Context, userID uuid.UUID, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error)
+	CreateMessage(ctx context.Context, userID uuid.UUID, chatID uuid.UUID, content string, previousID uuid.UUID, model string) (CreateMessageReturn, error)
 	Stream(ctx context.Context, userID uuid.UUID, messageID uuid.UUID) (bool, <-chan StreamDelta, <-chan error, func())
 	ValidatePreviousID(ctx context.Context, userID uuid.UUID, previousID uuid.UUID, chatID uuid.UUID) error
 	ListChats(ctx context.Context, userID uuid.UUID, page, pageSize int32) (ChatPage, error)
@@ -39,6 +39,7 @@ type Handler struct {
 type CreateMessageRequest struct {
 	Content    string    `json:"content" validate:"required"`
 	PreviousID uuid.UUID `json:"previousID,omitempty"`
+	Model      string    `json:"model,omitempty"`
 }
 
 type bodyParseError struct{ err error }
@@ -161,7 +162,7 @@ func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	message, err := h.store.CreateMessage(ctx, userID, chatID, req.Content, req.PreviousID)
+	message, err := h.store.CreateMessage(ctx, userID, chatID, req.Content, req.PreviousID, req.Model)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return

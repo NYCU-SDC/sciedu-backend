@@ -27,6 +27,7 @@ type ChatMessage struct {
 
 type CreateChatCompletionRequest struct {
 	Messages []ChatMessage `json:"messages"`
+	Model    string        `json:"model,omitempty"`
 	Stream   bool          `json:"stream"`
 }
 

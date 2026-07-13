@@ -196,7 +196,7 @@ func (s *ChatService) DeleteChat(ctx context.Context, chatID uuid.UUID, userID u
 	return nil
 }
 
-func (s *ChatService) CreateMessage(ctx context.Context, userID uuid.UUID, chatID uuid.UUID, content string, previousID uuid.UUID) (CreateMessageReturn, error) {
+func (s *ChatService) CreateMessage(ctx context.Context, userID uuid.UUID, chatID uuid.UUID, content string, previousID uuid.UUID, model string) (CreateMessageReturn, error) {
 
 	chat, err := s.querier.GetChatByUser(ctx, GetChatByUserParams{
 		ID:     chatID,
@@ -271,6 +271,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, userID uuid.UUID, chatI
 	// create provider request
 	providerReq := CreateChatCompletionRequest{
 		Messages: history,
+		Model:    model,
 		Stream:   true,
 	}
 

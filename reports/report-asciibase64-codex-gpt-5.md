@@ -1876,3 +1876,72 @@
 ### Next Steps
 - Review and commit the local changes.
 - Optionally run the migrations against a disposable database before updating or resolving the corresponding GitHub review threads.
+
+## [2026-07-13 11:38] Task Record
+
+### Task Description
+- Explain how the backend `chat` domain invokes the LLM and starts an answer, without changing implementation.
+
+### Actions Taken
+- Checked Git status, `.gitignore`, Git user configuration, existing Codex reports, and the EntroCamp working-memory instructions.
+- Read the LLM API and interaction-protocol documents:
+  - `docs/LLM_API.md`
+  - `docs/LLM_INTERACTION_PROTOCOL.md`
+  - `docs/LLM_ERD.md`
+- Inspected the chat bootstrap, handler, service, provider, and SSE hub implementation:
+  - `cmd/backend/main.go`
+  - `internal/chat/handler.go`
+  - `internal/chat/service.go`
+  - `internal/chat/provider.go`
+  - `internal/chat/streamHub.go`
+  - `internal/chat/type.go`
+- Modified only this report file.
+
+### Attempted Methods
+- Traced the end-to-end path from `POST /api/chat/{chatID}`, through persistence of the user/placeholder assistant messages, creation of the in-memory stream, the background `streamProcessor`, and the provider's HTTP SSE request to the configured LLM `/chat` endpoint.
+- Verified that the frontend opens its own `GET /api/chat/stream/{replyMessageID}` SSE connection after the creation call returns, rather than receiving the upstream SSE directly.
+- One initial source-inspection command included the nonexistent `service/` directory, producing a harmless `rg` error; the required chat source was then read directly.
+
+### Issues & Blockers
+- No code changes or runtime requests were required for this explanation.
+- `docs/LLM_API.md` documents `/chat`; the implementation also invokes `/chat/title` after the first successful response to generate a title, so that endpoint should be verified against the deployed LLM service if title generation is failing.
+
+### Next Steps
+- If needed, add an integration test using a mock LLM server to assert the exact request body and SSE forwarding behavior from `POST /api/chat/{chatID}` through `GET /api/chat/stream/{messageID}`.
+
+## [2026-07-13 11:38] Task Record
+
+### Task Description
+- Add model selection to chat creation: accept the frontend's string `model` field without backend validation and forward it to the LLM chat request.
+
+### Actions Taken
+- Checked Git status, `.gitignore`, Git username, existing reports, the local LLM API guide, and the chat implementation.
+- Added `model` as an optional string field to `CreateMessageRequest` and threaded it through the handler store interface and `ChatService.CreateMessage`.
+- Added `model` to `CreateChatCompletionRequest` with `json:"model,omitempty"`, so non-empty values are forwarded unchanged to `${LLM_URL}/chat` and omitted values retain the LLM service default behavior.
+- Added tests:
+  - `internal/chat/handler_test.go`: table-driven verification that arbitrary model strings are passed through unchanged and omission produces an empty service argument.
+  - `internal/chat/provider_test.go`: verifies the provider serializes the selected model in its upstream HTTP JSON body.
+- Modified:
+  - `internal/chat/type.go`
+  - `internal/chat/handler.go`
+  - `internal/chat/service.go`
+  - `internal/chat/provider_test.go`
+  - `internal/chat/handler_test.go`
+  - `reports/report-asciibase64-codex-gpt-5.md`
+- Verification:
+  - `gofmt -w internal/chat/type.go internal/chat/handler.go internal/chat/service.go internal/chat/provider_test.go internal/chat/handler_test.go`
+  - `go test ./internal/chat`
+  - `go test ./...`
+  - `git diff --check`
+
+### Attempted Methods
+- Used the repository's `docs/LLM_API.md`, which documents `model` as an optional string on `/chat`, as the implementation contract.
+- Attempted to inspect the user-supplied Swagger page and `/openapi.json` through the web document reader, but both were rejected as unsafe URLs. Browser fallback could list the in-app browser but could not acquire a usable browser binding; the requested implementation did not depend on a detail absent from the local LLM guide.
+- The first sandboxed `go test ./internal/chat` could not write to the macOS Go build cache. Re-ran it with approved build-cache access; it passed.
+
+### Issues & Blockers
+- No implementation blocker remains; all repository tests pass.
+- The LLM title-generation call remains independent of this setting and does not receive a `model` field. This matches the requested scope of forwarding `model` for chat generation only.
+
+### Next Steps
+- Frontend may now include `{"model":"<provider model identifier>"}` with `POST /api/chat/{chatID}`. Use omission when the LLM service's default model is desired.
