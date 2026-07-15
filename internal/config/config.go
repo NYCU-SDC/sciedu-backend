@@ -17,8 +17,10 @@ import (
 const DefaultSecret = "default-secret"
 
 var (
-	ErrInsecureProductionSecret = errors.New("production secret must be configured")
-	ErrLocalhostRequiresDev     = errors.New("localhost origins require dev environment")
+	ErrInsecureProductionSecret     = errors.New("production secret must be configured")
+	ErrLocalhostRequiresDev         = errors.New("localhost origins require dev environment")
+	ErrPreviewRedirectRequiresDev   = errors.New("preview redirect domain requires dev environment")
+	ErrInvalidPreviewRedirectDomain = errors.New("preview redirect domain must be a valid DNS domain")
 )
 
 type Config struct {
@@ -35,7 +37,8 @@ type Config struct {
 	GoogleOAuthClientSecret    string `yaml:"google_oauth_client_secret" envconfig:"GOOGLE_OAUTH_CLIENT_SECRET"`
 	GoogleOAuthRedirectURL     string `yaml:"google_oauth_redirect_url"  envconfig:"GOOGLE_OAUTH_REDIRECT_URL"`
 	GoogleOAuthCredentialsFile string `yaml:"google_oauth_credentials_file" envconfig:"GOOGLE_OAUTH_CREDENTIALS_FILE"`
-	AuthRedirectAllowlist      string `yaml:"auth_redirect_allowlist"    envconfig:"AUTH_REDIRECT_ALLOWLIST"`
+	AuthRedirectAllowlist      string `yaml:"auth_redirect_allowlist"      envconfig:"AUTH_REDIRECT_ALLOWLIST"`
+	AuthRedirectPreviewDomain  string `yaml:"auth_redirect_preview_domain" envconfig:"AUTH_REDIRECT_PREVIEW_DOMAIN"`
 }
 
 type LogBuffer struct {
@@ -88,6 +91,7 @@ func Load() (Config, *LogBuffer) {
 		GoogleOAuthRedirectURL:     "",
 		GoogleOAuthCredentialsFile: "",
 		AuthRedirectAllowlist:      "",
+		AuthRedirectPreviewDomain:  "",
 	}
 
 	var err error
@@ -157,6 +161,7 @@ func FromEnv(config *Config, logger *LogBuffer) (*Config, error) {
 		GoogleOAuthRedirectURL:     os.Getenv("GOOGLE_OAUTH_REDIRECT_URL"),
 		GoogleOAuthCredentialsFile: os.Getenv("GOOGLE_OAUTH_CREDENTIALS_FILE"),
 		AuthRedirectAllowlist:      os.Getenv("AUTH_REDIRECT_ALLOWLIST"),
+		AuthRedirectPreviewDomain:  os.Getenv("AUTH_REDIRECT_PREVIEW_DOMAIN"),
 	}
 
 	merged, err := configutil.Merge[Config](config, envConfig)
@@ -185,6 +190,7 @@ func FromFlags(config *Config) (*Config, error) {
 	flag.StringVar(&flagConfig.GoogleOAuthRedirectURL, "google_oauth_redirect_url", "", "Google OAuth redirect URL")
 	flag.StringVar(&flagConfig.GoogleOAuthCredentialsFile, "google_oauth_credentials_file", "", "Google OAuth client secret JSON path")
 	flag.StringVar(&flagConfig.AuthRedirectAllowlist, "auth_redirect_allowlist", "", "allowed post-login redirect URL prefixes (comma-separated)")
+	flag.StringVar(&flagConfig.AuthRedirectPreviewDomain, "auth_redirect_preview_domain", "", "DNS domain for dev PR preview redirects")
 
 	flag.Parse()
 
@@ -199,7 +205,40 @@ func (c Config) Validate() error {
 	if environment != "dev" && containsLocalhostEntry(c.AllowOrigins, c.AuthRedirectAllowlist) {
 		return ErrLocalhostRequiresDev
 	}
+	if c.AuthRedirectPreviewDomain != "" {
+		if !isValidDNSDomain(c.AuthRedirectPreviewDomain) {
+			return ErrInvalidPreviewRedirectDomain
+		}
+		if environment != "dev" {
+			return ErrPreviewRedirectRequiresDev
+		}
+	}
 	return nil
+}
+
+func isValidDNSDomain(domain string) bool {
+	if domain == "" || domain != strings.TrimSpace(domain) || len(domain) > 253 || net.ParseIP(domain) != nil {
+		return false
+	}
+
+	for _, label := range strings.Split(domain, ".") {
+		if len(label) == 0 || len(label) > 63 || !isASCIIAlphaNumeric(label[0]) || !isASCIIAlphaNumeric(label[len(label)-1]) {
+			return false
+		}
+		for index := 1; index < len(label)-1; index++ {
+			character := label[index]
+			if !isASCIIAlphaNumeric(character) && character != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func isASCIIAlphaNumeric(character byte) bool {
+	return character >= 'a' && character <= 'z' ||
+		character >= 'A' && character <= 'Z' ||
+		character >= '0' && character <= '9'
 }
 
 func normalizeEnvironment(environment string) string {

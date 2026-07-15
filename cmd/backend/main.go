@@ -103,10 +103,11 @@ func main() {
 		oauthProvider = googleProvider
 	}
 	authService := auth.NewService(authStore, auth.ServiceConfig{
-		Secret:               cfg.Secret,
-		Environment:          cfg.Environment,
-		OAuthProvider:        oauthProvider,
-		RedirectURLAllowlist: parseAllowOrigins(cfg.AuthRedirectAllowlist),
+		Secret:                cfg.Secret,
+		Environment:           cfg.Environment,
+		OAuthProvider:         oauthProvider,
+		RedirectURLAllowlist:  parseAllowOrigins(cfg.AuthRedirectAllowlist),
+		RedirectPreviewDomain: cfg.AuthRedirectPreviewDomain,
 	}, logger)
 	authHandler := auth.NewHandler(authService, auth.CookieConfig{
 		Environment: cfg.Environment,

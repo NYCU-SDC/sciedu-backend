@@ -62,8 +62,13 @@ jobs:
         with:
           mockery-version: "2.53.5"
 
-      #- name: Test
-      #  run: make test
+      - name: Generate
+        run: |
+          go mod download
+          make gen
+
+      - name: Test auth configuration and CORS
+        run: go test ./internal/auth ./internal/config ./internal/cors
 
   Build-Push-Image:
     needs: [Lint, Test]
