@@ -431,22 +431,16 @@ func (s *Service) isRedirectAllowed(raw string) bool {
 			return true
 		}
 	}
-	return s.isPreviewRedirectAllowed(raw, parsed)
+	return s.isPreviewRedirectAllowed(parsed)
 }
 
-func (s *Service) isPreviewRedirectAllowed(raw string, parsed *url.URL) bool {
+func (s *Service) isPreviewRedirectAllowed(parsed *url.URL) bool {
 	if s.config.Environment != EnvironmentDev || s.config.RedirectPreviewDomain == "" {
 		return false
 	}
 	if !strings.EqualFold(parsed.Scheme, "https") ||
 		parsed.User != nil ||
-		parsed.Host != parsed.Hostname() ||
-		parsed.EscapedPath() != "/" ||
-		parsed.RawQuery != "" ||
-		parsed.ForceQuery ||
-		parsed.Fragment != "" ||
-		parsed.RawFragment != "" ||
-		strings.Contains(raw, "#") {
+		parsed.Host != parsed.Hostname() {
 		return false
 	}
 

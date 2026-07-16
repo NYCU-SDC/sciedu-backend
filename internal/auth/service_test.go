@@ -379,10 +379,9 @@ func TestServiceBeginOAuthValidatesPreviewRedirectDomain(t *testing.T) {
 			wantError:   true,
 		},
 		{
-			name:        "rejects missing root slash",
+			name:        "allows origin without root slash",
 			environment: EnvironmentDev,
 			redirect:    "https://pr-38.sciedu.sdc.nycu.club",
-			wantError:   true,
 		},
 		{
 			name:        "rejects zero PR number",
@@ -433,22 +432,24 @@ func TestServiceBeginOAuthValidatesPreviewRedirectDomain(t *testing.T) {
 			wantError:   true,
 		},
 		{
-			name:        "rejects non-root path",
+			name:        "allows frontend route",
 			environment: EnvironmentDev,
 			redirect:    "https://pr-38.sciedu.sdc.nycu.club/courses",
-			wantError:   true,
 		},
 		{
-			name:        "rejects query",
+			name:        "allows query",
 			environment: EnvironmentDev,
 			redirect:    "https://pr-38.sciedu.sdc.nycu.club/?next=/courses",
-			wantError:   true,
 		},
 		{
-			name:        "rejects fragment",
+			name:        "allows fragment",
 			environment: EnvironmentDev,
 			redirect:    "https://pr-38.sciedu.sdc.nycu.club/#courses",
-			wantError:   true,
+		},
+		{
+			name:        "allows route query and fragment together",
+			environment: EnvironmentDev,
+			redirect:    "https://pr-123.sciedu.sdc.nycu.club/courses/physics?tab=active#lesson-1",
 		},
 		{
 			name:        "rejects preview in non-dev environment",
