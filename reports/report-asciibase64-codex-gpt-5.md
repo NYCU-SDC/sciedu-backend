@@ -1945,3 +1945,216 @@
 
 ### Next Steps
 - Frontend may now include `{"model":"<provider model identifier>"}` with `POST /api/chat/{chatID}`. Use omission when the LLM service's default model is desired.
+
+## [2026-07-16 16:07] Task Record
+
+### Task Description
+- Diagnose and fix the SciEdu Google OAuth failures across `sciedu-frontend` and `sciedu-backend`.
+- Acceptance targets:
+  - Local frontend login returns with a usable authenticated session.
+  - PR preview login no longer returns `400 invalid redirect url` after deployment.
+  - Stop if evidence identifies Google Auth Platform as the root cause.
+
+### Actions Taken
+- Checked both repositories' Git status, branches, `.gitignore`, deployment workflows, auth implementation, local configuration, prior auth reports, and live HTTP behavior.
+- Confirmed the deployed PR-38 frontend calls the shared dev backend and reproduced the dev backend response:
+  - `GET /api/login/oauth/google?r=https://pr-38.sciedu.sdc.nycu.club/`
+  - Result: `400 Bad Request`, `detail: invalid redirect url`.
+- Confirmed the live dev backend still produces a valid Google OAuth authorization redirect for its configured callback, and following that redirect reaches Google's sign-in page instead of `redirect_uri_mismatch`.
+- Updated backend preview redirect handling:
+  - Added `AUTH_REDIRECT_PREVIEW_DOMAIN`.
+  - Allowed only dev-mode redirects matching `https://pr-<positive integer>.<configured domain>/`.
+  - Rejected HTTP, arbitrary/nested hosts, ports, non-root paths, queries, fragments, userinfo, zero/leading-zero PR numbers, and non-dev use.
+  - Wired the setting through config loading, validation, `cmd/backend/main.go`, and `.deploy/dev/compose.yaml`.
+- Added backend regression coverage for:
+  - PR preview redirect validation.
+  - Config loading and strict DNS-domain validation.
+  - Local OAuth callback cookies being accepted by the session endpoint.
+- Improved local setup:
+  - Added `.deploy/local/.env.example` for OAuth credentials.
+  - Corrected `.deploy/local/README.md` so Compose loads the intended local environment file.
+  - Documented the new backend preview-domain setting.
+- Updated frontend behavior:
+  - `RequireAuth` now waits for the session query before redirecting unauthenticated users.
+  - PR builds use `https://dev.sciedu.sdc.nycu.club` instead of the hard-coded `pr-55` API host.
+  - Added committed `.env.development` defaults pointing local Vite development to `http://localhost:8080`.
+  - Updated frontend README local startup instructions.
+- Modified backend files:
+  - `.deploy/dev/compose.yaml`
+  - `.deploy/local/.env.example`
+  - `.deploy/local/README.md`
+  - `.env.example`
+  - `cmd/backend/main.go`
+  - `internal/auth/handler_test.go`
+  - `internal/auth/service.go`
+  - `internal/auth/service_test.go`
+  - `internal/config/config.go`
+  - `internal/config/config_test.go`
+- Modified frontend files:
+  - `.env.development`
+  - `.github/workflows/pull-request.yaml`
+  - `README.md`
+  - `src/shared/auth/RequireAuth.tsx`
+
+### Attempted Methods
+- Used live HTTP requests to separate the application redirect allowlist failure from Google OAuth configuration.
+- Compared the deployed PR-38 frontend workflow with backend dev/snapshot allowlists and found that PR-38 intentionally targets the shared dev backend, while the dev backend previously accepted only dev and localhost redirect origins.
+- Followed the generated Google authorization URL without authenticating; Google returned its normal sign-in entry page, proving the configured dev callback is accepted at the OAuth entry stage.
+- Initially ran frontend checks against stale installed dependencies; typecheck/build failed because the workspace lacked the PostHog packages already present in `package.json` and `pnpm-lock.yaml`.
+- Reinstalled dependencies with `CI=true pnpm install --frozen-lockfile`, then reran checks using the repository-local binaries because the local pnpm wrapper attempted an unnecessary metadata fetch in non-interactive sandboxed runs.
+
+### Verification
+- Backend:
+  - `go test ./internal/auth ./internal/config ./internal/cors ./cmd/backend`
+  - `go test ./...`
+  - `GOOGLE_OAUTH_CLIENT_ID=client GOOGLE_OAUTH_CLIENT_SECRET=secret docker compose -f .deploy/dev/compose.yaml config`
+  - `GOOGLE_OAUTH_CLIENT_ID=client GOOGLE_OAUTH_CLIENT_SECRET=secret docker compose -f .deploy/local/compose.yaml config`
+  - `git diff --check`
+- Frontend:
+  - `./node_modules/.bin/eslint .`
+  - `./node_modules/.bin/tsc -b`
+  - `./node_modules/.bin/prettier . --check`
+  - Local development build with `.env.development`.
+  - PR-style production build with `VITE_BACKEND_BASE_URL=https://dev.sciedu.sdc.nycu.club`.
+  - Verified built bundles contain `http://localhost:8080` for local development and the dev backend URL for PR previews, with no `pr-55` endpoint.
+  - `git diff --check`
+
+### Issues & Blockers
+- No evidence points to Google Auth Platform as the root cause; both the user-observed local Google account page and the live dev OAuth entry confirm Google accepts the configured OAuth entry/callback setup.
+- The local Docker daemon was not running, so a real local PostgreSQL/backend/browser flow could not be launched in this session. The callback-to-session behavior is covered by handler regression tests instead.
+- The live PR-38 endpoint will continue returning the old `400 invalid redirect url` until the backend dev deployment includes these changes. Repository instructions prohibit pushing remotely without explicit human action.
+- A complete account-selection callback cannot be automated without an authenticated user Google browser session; live verification stopped at Google's accepted sign-in entry page.
+
+### Next Steps
+- Review and deploy the backend changes to the dev environment first.
+- Rebuild/redeploy the frontend PR preview so it uses the corrected workflow configuration.
+- After both deployments complete, rerun:
+  - Local browser login against `http://localhost:5173` and `http://localhost:8080`.
+  - PR preview login at `https://pr-38.sciedu.sdc.nycu.club/login`.
+
+## [2026-07-16 16:25] Task Record
+
+### Task Description
+- Continue the OAuth repair through runtime acceptance instead of treating unit/build success as proof.
+- Verify the local callback-to-session path with a real database and verify that the frontend remains authenticated when the backend returns a valid session.
+
+### Actions Taken
+- Started OrbStack and rebuilt/started the local Compose stack:
+  - PostgreSQL at `localhost:5432`, database `sciedu`.
+  - Backend at `http://localhost:8080`.
+- Started the Vite frontend at `http://localhost:5173`.
+- Confirmed the live local endpoints:
+  - `GET /api/healthz` returns `200 OK`.
+  - `GET /api/login/oauth/google?r=http://localhost:5173/` redirects to Google's sign-in page with the local callback.
+- Used Playwright Firefox to click the real frontend Google login button and confirmed Google displays the SciEdu sign-in page without `redirect_uri_mismatch`.
+- Added `internal/auth/oauth_integration_test.go` with the `integration` build tag.
+  - Uses a real PostgreSQL pool, real auth store, service, handler, HTTP routes, OAuth state persistence/consumption, user creation, refresh-family/token creation, callback cookies, and `/api/auth/session`.
+  - Replaces only the external Google code exchange and ID-token verification with a deterministic provider.
+  - Cleans up the generated user and OAuth state.
+- Added the integration-test command to `.deploy/local/README.md`.
+- Created and then removed a temporary local session seeder to verify frontend behavior in a browser.
+  - First seed used the repository-root `.env` and exposed that its `DATABASE_URL` points to database `postgres`, while Compose uses database `sciedu`.
+  - The resulting session correctly returned 401 from the Compose backend because it existed in the wrong database.
+  - Cleaned up that test user, reseeded against the authoritative Compose `sciedu` database, and reran the browser.
+  - The browser then loaded `/`, showed the authenticated user and new-chat UI, and recorded:
+    - `GET http://localhost:8080/api/auth/session => 200 OK`
+    - `GET http://localhost:8080/api/chat?page=1&pageSize=20 => 200 OK`
+  - Cleaned up the one-time browser test user, cookies/session file, temporary helper, and test browser.
+- Opened a separate headed Firefox session at Google's real local OAuth sign-in page for human credential handoff.
+
+### Attempted Methods
+- Initially treated the existing handler regression test as the strongest local callback evidence; upgraded this to a real PostgreSQL integration test after the local runtime became available.
+- The first browser session test failed with 401. Network inspection and a direct curl with the same cookies proved the failure was backend-side rather than a frontend cookie omission.
+- Compared the effective databases and found the temporary helper had used `postgres`, not Compose's `sciedu`; switching to the Compose DSN resolved the 401 and authenticated the frontend.
+- Did not enter, inspect, or request Google credentials. The final real provider callback remains a human handoff because Playwright uses an isolated browser with no saved Google session.
+
+### Verification
+- `go test ./...`
+- `AUTH_INTEGRATION_DATABASE_URL='postgres://postgres:password@localhost:5432/sciedu?sslmode=disable' go test -tags=integration ./internal/auth -run TestOAuthCallbackCreatesUsableLocalSession -count=1`
+- Frontend:
+  - `./node_modules/.bin/eslint .`
+  - `./node_modules/.bin/tsc -b`
+  - `./node_modules/.bin/prettier . --check`
+- Runtime browser evidence:
+  - Valid backend-generated cookies produce `/api/auth/session => 200`.
+  - Frontend remains at `/` and renders the authenticated chat UI.
+  - Real Google OAuth entry shows the SciEdu sign-in form and accepts `http://localhost:8080/api/auth/callback` at the authorization stage.
+
+### Issues & Blockers
+- Local acceptance still needs one human action: complete Google sign-in in the open headed Firefox window so the real Google code exchange/callback can be observed. No credentials should be shared with the agent.
+- Remote acceptance still requires a human-reviewed push/deployment. Repository instructions strictly prohibit the agent from running `git push`, and the current live PR-38/dev deployment still contains the old redirect behavior.
+- Local backend, database, Vite frontend, and the headed `sciedu-manual` Firefox session remain running for the handoff.
+
+### Next Steps
+- Human completes the visible Google sign-in and reports when the browser returns to SciEdu; then inspect the same Playwright session, cookies, requests, and backend logs.
+- Human reviews and pushes/deploys the backend and frontend changes; then rerun the live PR-38 login acceptance.
+
+## [2026-07-16 16:30] Task Record
+
+### Task Description
+- Continue the remote PR-38 acceptance audit and stop if the deployed topology proves that Google Auth Platform is blocking OAuth.
+
+### Actions Taken
+- Queried GitHub read-only and established the authoritative deployment mapping:
+  - Frontend PR-38 head is `feat/add-model-switching-support` at `86afe32`.
+  - Its latest workflow completed successfully and deployed the PR-38 frontend.
+  - The PR-38 workflow/build embeds backend URL `https://pr-55.sciedu.sdc.nycu.club`.
+  - Backend PR-55 is `fix/auth` at `df31725` and its snapshot deployment completed successfully.
+- Confirmed the live PR-38 JavaScript bundle embeds `https://pr-55.sciedu.sdc.nycu.club`.
+- Reproduced the first remote failure directly against backend PR-55:
+  - Redirect target `https://pr-38.sciedu.sdc.nycu.club/` returns `400 invalid redirect url`.
+- Confirmed backend PR-55 accepts its own frontend redirect target and generates an authorization URL with:
+  - `redirect_uri=https://pr-55.sciedu.sdc.nycu.club/api/auth/callback`
+- Followed that authorization URL to Google.
+- Google returned its OAuth error page with:
+  - `redirect_uri_mismatch`
+  - Rejected URI: `https://pr-55.sciedu.sdc.nycu.club/api/auth/callback`
+- Inspected backend PR-55 deployment config:
+  - `.deploy/dev/compose.yaml` enables `AUTH_REDIRECT_PREVIEW_DOMAIN`.
+  - `.deploy/snapshot/compose.yaml` does not enable it, explaining the application-side PR-38-to-PR-55 `invalid redirect url`.
+
+### Attempted Methods
+- Used live deployed artifacts and endpoints rather than inferring behavior from local branches.
+- Verified the full chain independently:
+  - Live PR-38 bundle -> PR-55 backend.
+  - PR-55 backend -> PR-55 Google callback.
+  - Google -> explicit callback rejection.
+
+### Issues & Blockers
+- The user-defined stop condition is met: Google Auth Platform does not authorize the deployed PR-55 callback URI.
+- Even after the application redirect allowlist is corrected for PR-38, the current PR-55 topology cannot complete OAuth until Google authorizes:
+  - `https://pr-55.sciedu.sdc.nycu.club/api/auth/callback`
+- There is also an application-side deployment defect in PR-55 snapshot configuration: it lacks `AUTH_REDIRECT_PREVIEW_DOMAIN=sciedu.sdc.nycu.club`.
+- Per the user's explicit instruction, no further code repair was performed after confirming the Google Platform error.
+
+### Next Steps
+- In Google Auth Platform, add the exact authorized redirect URI:
+  - `https://pr-55.sciedu.sdc.nycu.club/api/auth/callback`
+- Then redeploy backend PR-55 with:
+  - `AUTH_REDIRECT_PREVIEW_DOMAIN=sciedu.sdc.nycu.club`
+- Alternatively, point frontend PR-38 back to the shared dev backend, whose callback
+  `https://dev.sciedu.sdc.nycu.club/api/auth/callback` is already accepted by Google,
+  and deploy the backend preview-redirect allowlist change to dev.
+- After either topology is chosen and deployed, rerun PR-38 OAuth acceptance.
+
+## [2026-07-16 16:31] Task Record
+
+### Task Description
+- Recheck the external blocker without making further application changes.
+
+### Actions Taken
+- Repeated the live PR-55 OAuth authorization request.
+- Google still redirected to its OAuth error page with `redirect_uri_mismatch`.
+- Repeated the PR-38 redirect request against PR-55; it still returns
+  `400 invalid redirect url`.
+- Confirmed both worktrees contain only the previously prepared changes and pass
+  `git diff --check`.
+- Made no new frontend/backend behavior changes, following the user instruction
+  to stop repair when Google Auth Platform is the blocker.
+
+### Issues & Blockers
+- External state is unchanged. Google must authorize:
+  `https://pr-55.sciedu.sdc.nycu.club/api/auth/callback`.
+
+### Next Steps
+- Wait for the Google Auth Platform update, then resume live acceptance.

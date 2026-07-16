@@ -5,29 +5,31 @@ This directory contains the Docker Compose configuration for local development a
 ## Quick Start
 
 ### Prerequisites
+
 - Docker and Docker Compose installed
 - Ports 5432 and 8080 available on your host machine
+- A Google OAuth client that allows `http://localhost:8080/api/auth/callback`
 
 ### Starting the Complete Stack
 
 ```bash
-# Clean up previous test data to avoid pollution
-docker compose -f .deploy/local/compose.yaml down -v
-
-# Build and start all services (PostgreSQL + Backend)
-docker compose -f .deploy/local/compose.yaml up -d --build
-```
-
-Or use from the `.deploy/local` directory:
-
-```bash
 cd .deploy/local
 
-# Clean up
+# Create the untracked local OAuth configuration, then fill in both values
+cp .env.example .env
+
+# Clean up previous test data to avoid pollution
 docker compose down -v
 
-# Start services with build
+# Build and start all services (PostgreSQL + Backend)
 docker compose up -d --build
+```
+
+To run Compose from the repository root instead, pass the local environment file explicitly:
+
+```bash
+docker compose --env-file .deploy/local/.env -f .deploy/local/compose.yaml down -v
+docker compose --env-file .deploy/local/.env -f .deploy/local/compose.yaml up -d --build
 ```
 
 ### What Gets Deployed
@@ -52,7 +54,7 @@ docker compose up -d --build
 
 - **API Endpoint**: `http://localhost:8080`
 - **Health Check**: `http://localhost:8080/api/healthz`
-- **Environment**: `local` (debug mode enabled)
+- **Environment**: `dev` (debug mode enabled)
 - **Build**: Multi-stage Docker build from source code
 
 ## Architecture
@@ -105,6 +107,18 @@ docker exec sciedu-local-postgres-1 psql -U postgres -d sciedu -c "\dt"
 curl http://localhost:8080/api/healthz
 
 # Should return: OK
+```
+
+### OAuth Callback Integration Test
+
+With the local Compose stack running, verify that OAuth state consumption,
+database user/session creation, callback cookies, and `/api/auth/session` work
+together:
+
+```bash
+AUTH_INTEGRATION_DATABASE_URL='postgres://postgres:password@localhost:5432/sciedu?sslmode=disable' \
+go test -tags=integration ./internal/auth \
+  -run TestOAuthCallbackCreatesUsableLocalSession -count=1
 ```
 
 ## Development Workflow
@@ -197,6 +211,7 @@ lsof -i :8080
 
 ## Files in This Directory
 
+- `.env.example` - Template for local Google OAuth credentials
 - `compose.yaml` - Docker Compose configuration
 - `Dockerfile` - Multi-stage build for backend service
 - `README.md` - This file

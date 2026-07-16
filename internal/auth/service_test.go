@@ -295,6 +295,11 @@ func TestServiceBeginOAuthValidatesRedirectAllowlist(t *testing.T) {
 			redirect:  "https://example.com/app/courses",
 		},
 		{
+			name:      "preserves configured path prefix with query and fragment",
+			allowlist: []string{"https://example.com/app"},
+			redirect:  "https://example.com/app/courses?tab=active#lesson",
+		},
+		{
 			name:      "rejects different host",
 			allowlist: []string{"http://localhost:5173"},
 			redirect:  "https://evil.example.com",
@@ -328,6 +333,139 @@ func TestServiceBeginOAuthValidatesRedirectAllowlist(t *testing.T) {
 				Environment:          EnvironmentDev,
 				OAuthProvider:        &fakeOAuthProvider{},
 				RedirectURLAllowlist: tt.allowlist,
+			}, nil)
+
+			_, err := svc.BeginOAuth(t.Context(), BeginOAuthParams{
+				Provider:    "google",
+				RedirectURL: tt.redirect,
+			})
+			if tt.wantError {
+				require.ErrorIs(t, err, errInvalidRedirectURL)
+				require.False(t, repo.createdState)
+				return
+			}
+			require.NoError(t, err)
+			require.True(t, repo.createdState)
+		})
+	}
+}
+
+func TestServiceBeginOAuthValidatesPreviewRedirectDomain(t *testing.T) {
+	tests := []struct {
+		name        string
+		environment string
+		redirect    string
+		wantError   bool
+	}{
+		{
+			name:        "allows positive PR number at HTTPS root",
+			environment: EnvironmentDev,
+			redirect:    "https://pr-38.sciedu.sdc.nycu.club/",
+		},
+		{
+			name:        "allows single digit positive PR number",
+			environment: EnvironmentDev,
+			redirect:    "https://pr-1.sciedu.sdc.nycu.club/",
+		},
+		{
+			name:        "allows case-insensitive DNS host",
+			environment: EnvironmentDev,
+			redirect:    "https://PR-38.SCIEDU.SDC.NYCU.CLUB/",
+		},
+		{
+			name:        "rejects HTTP",
+			environment: EnvironmentDev,
+			redirect:    "http://pr-38.sciedu.sdc.nycu.club/",
+			wantError:   true,
+		},
+		{
+			name:        "rejects missing root slash",
+			environment: EnvironmentDev,
+			redirect:    "https://pr-38.sciedu.sdc.nycu.club",
+			wantError:   true,
+		},
+		{
+			name:        "rejects zero PR number",
+			environment: EnvironmentDev,
+			redirect:    "https://pr-0.sciedu.sdc.nycu.club/",
+			wantError:   true,
+		},
+		{
+			name:        "rejects leading zero",
+			environment: EnvironmentDev,
+			redirect:    "https://pr-038.sciedu.sdc.nycu.club/",
+			wantError:   true,
+		},
+		{
+			name:        "rejects non-numeric PR number",
+			environment: EnvironmentDev,
+			redirect:    "https://pr-main.sciedu.sdc.nycu.club/",
+			wantError:   true,
+		},
+		{
+			name:        "rejects arbitrary subdomain",
+			environment: EnvironmentDev,
+			redirect:    "https://preview-38.sciedu.sdc.nycu.club/",
+			wantError:   true,
+		},
+		{
+			name:        "rejects nested subdomain",
+			environment: EnvironmentDev,
+			redirect:    "https://evil.pr-38.sciedu.sdc.nycu.club/",
+			wantError:   true,
+		},
+		{
+			name:        "rejects malicious suffix",
+			environment: EnvironmentDev,
+			redirect:    "https://pr-38.sciedu.sdc.nycu.club.evil.example/",
+			wantError:   true,
+		},
+		{
+			name:        "rejects userinfo",
+			environment: EnvironmentDev,
+			redirect:    "https://user@pr-38.sciedu.sdc.nycu.club/",
+			wantError:   true,
+		},
+		{
+			name:        "rejects explicit port",
+			environment: EnvironmentDev,
+			redirect:    "https://pr-38.sciedu.sdc.nycu.club:443/",
+			wantError:   true,
+		},
+		{
+			name:        "rejects non-root path",
+			environment: EnvironmentDev,
+			redirect:    "https://pr-38.sciedu.sdc.nycu.club/courses",
+			wantError:   true,
+		},
+		{
+			name:        "rejects query",
+			environment: EnvironmentDev,
+			redirect:    "https://pr-38.sciedu.sdc.nycu.club/?next=/courses",
+			wantError:   true,
+		},
+		{
+			name:        "rejects fragment",
+			environment: EnvironmentDev,
+			redirect:    "https://pr-38.sciedu.sdc.nycu.club/#courses",
+			wantError:   true,
+		},
+		{
+			name:        "rejects preview in non-dev environment",
+			environment: EnvironmentProd,
+			redirect:    "https://pr-38.sciedu.sdc.nycu.club/",
+			wantError:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeAuthRepository{}
+			svc := NewService(repo, ServiceConfig{
+				Secret:                "test-secret",
+				Environment:           tt.environment,
+				OAuthProvider:         &fakeOAuthProvider{},
+				RedirectPreviewDomain: "sciedu.sdc.nycu.club",
 			}, nil)
 
 			_, err := svc.BeginOAuth(t.Context(), BeginOAuthParams{
