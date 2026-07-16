@@ -30,11 +30,12 @@ type Repository interface {
 }
 
 type ServiceConfig struct {
-	Secret               string
-	Environment          string
-	Now                  func() time.Time
-	OAuthProvider        OAuthProvider
-	RedirectURLAllowlist []string
+	Secret                string
+	Environment           string
+	Now                   func() time.Time
+	OAuthProvider         OAuthProvider
+	RedirectURLAllowlist  []string
+	RedirectPreviewDomain string
 }
 
 type Service struct {
@@ -430,5 +431,39 @@ func (s *Service) isRedirectAllowed(raw string) bool {
 			return true
 		}
 	}
-	return false
+	return s.isPreviewRedirectAllowed(parsed)
+}
+
+func (s *Service) isPreviewRedirectAllowed(parsed *url.URL) bool {
+	if s.config.Environment != EnvironmentDev || s.config.RedirectPreviewDomain == "" {
+		return false
+	}
+	if !strings.EqualFold(parsed.Scheme, "https") ||
+		parsed.User != nil ||
+		parsed.Host != parsed.Hostname() {
+		return false
+	}
+
+	domain := strings.ToLower(s.config.RedirectPreviewDomain)
+	host := strings.ToLower(parsed.Hostname())
+	suffix := "." + domain
+	if !strings.HasSuffix(host, suffix) {
+		return false
+	}
+
+	previewLabel := strings.TrimSuffix(host, suffix)
+	if strings.Contains(previewLabel, ".") || !strings.HasPrefix(previewLabel, "pr-") {
+		return false
+	}
+
+	prNumber := strings.TrimPrefix(previewLabel, "pr-")
+	if len(prNumber) == 0 || prNumber[0] < '1' || prNumber[0] > '9' {
+		return false
+	}
+	for _, digit := range prNumber[1:] {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
 }

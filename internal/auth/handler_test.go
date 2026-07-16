@@ -222,6 +222,52 @@ func TestHandlerCallbackInvalidOAuthState(t *testing.T) {
 	requireClearedCookie(t, rec.Result().Cookies(), refreshTokenCookieName)
 }
 
+func TestHandlerLocalOAuthCallbackCookiesCanLoadSession(t *testing.T) {
+	now := time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC)
+	session := Session{
+		UserID:                uuid.MustParse("33333333-3333-3333-3333-333333333333"),
+		AccessToken:           "local-access",
+		RefreshToken:          "local-refresh",
+		Username:              "Local Student",
+		Email:                 "local@example.com",
+		AccessTokenExpiresAt:  now.Add(accessTokenLifetime),
+		RefreshTokenExpiresAt: now.Add(refreshTokenLifetime),
+	}
+	svc := &fakeHandlerService{
+		session: session,
+		complete: CompleteOAuthResult{
+			Session:     session,
+			RedirectURL: "http://localhost:5173/",
+		},
+	}
+	handler := NewHandler(svc, CookieConfig{Environment: EnvironmentDev}, nil)
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "http://localhost:8080/api/auth/callback?code=code&state=state", nil)
+	callbackRec := httptest.NewRecorder()
+	handler.Callback(callbackRec, callbackReq)
+
+	require.Equal(t, http.StatusFound, callbackRec.Code)
+	require.Equal(t, "http://localhost:5173/", callbackRec.Header().Get("Location"))
+	callbackCookies := callbackRec.Result().Cookies()
+	accessCookie := findCookie(t, callbackCookies, accessTokenCookieName)
+	refreshCookie := findCookie(t, callbackCookies, refreshTokenCookieName)
+	require.False(t, accessCookie.Secure)
+	require.False(t, refreshCookie.Secure)
+	require.Equal(t, http.SameSiteLaxMode, accessCookie.SameSite)
+	require.Equal(t, http.SameSiteStrictMode, refreshCookie.SameSite)
+
+	sessionReq := httptest.NewRequest(http.MethodGet, "http://localhost:8080/api/auth/session", nil)
+	sessionReq.AddCookie(accessCookie)
+	sessionReq.AddCookie(refreshCookie)
+	sessionRec := httptest.NewRecorder()
+	handler.Session(sessionRec, sessionReq)
+
+	require.Equal(t, http.StatusOK, sessionRec.Code)
+	require.Equal(t, "local-access", svc.accessToken)
+	require.Equal(t, "local-refresh", svc.refreshToken)
+	require.Contains(t, sessionRec.Body.String(), `"email":"local@example.com"`)
+}
+
 func TestHandlerSessionCookieAttrs(t *testing.T) {
 	now := time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC)
 	session := Session{

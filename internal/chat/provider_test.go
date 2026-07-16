@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,9 @@ func TestProviderStreamParsesSSEUntilFinish(t *testing.T) {
 		require.Equal(t, http.MethodPost, r.Method)
 		require.Equal(t, "/chat", r.URL.Path)
 		require.Equal(t, "application/json", r.Header.Get("Content-Type"))
+		var body CreateChatCompletionRequest
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+		require.Equal(t, "opaque-model-name", body.Model)
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w, "data: {\"delta\":\"hello\",\"isFinished\":false}\n\n")
 		_, _ = fmt.Fprint(w, "data: {\"delta\":\"\",\"isFinished\":true}\n\n")
@@ -25,6 +29,7 @@ func TestProviderStreamParsesSSEUntilFinish(t *testing.T) {
 	provider := NewProvider(server.URL+"/chat", server.Client(), nil)
 	chunks, errs := provider.Stream(context.Background(), CreateChatCompletionRequest{
 		Messages: []ChatMessage{{Role: MessageRoleUser, Content: "hello"}},
+		Model:    "opaque-model-name",
 	})
 
 	first := receiveChunk(t, chunks)
