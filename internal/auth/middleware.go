@@ -67,6 +67,11 @@ func UserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
 	return userID, ok
 }
 
+// ContextWithUserID returns a copy of ctx carrying userID, the inverse of UserIDFromContext.
+func ContextWithUserID(ctx context.Context, userID uuid.UUID) context.Context {
+	return context.WithValue(ctx, userIDContextKey, userID)
+}
+
 func AccessTokenExpiresAtFromContext(ctx context.Context) (time.Time, bool) {
 	expiresAt, ok := ctx.Value(accessExpContextKey).(time.Time)
 	return expiresAt, ok
