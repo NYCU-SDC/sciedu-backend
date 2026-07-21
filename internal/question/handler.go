@@ -51,7 +51,7 @@ type questionResponse struct {
 
 type submitAnswerRequest struct {
 	SelectedOptionID *uuid.UUID `json:"selectedOptionId"`
-	TextAnswer       *string    `json:"textAnswer"`
+	TextAnswer       *string    `json:"textAnswer" validate:"omitempty,min=1,max=2000"`
 }
 
 type answerResponse struct {

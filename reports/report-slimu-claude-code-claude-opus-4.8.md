@@ -249,3 +249,27 @@ Why I still got it wrong despite the doc existing:
 - Levels 1 & 2 are green, so this refactor is verified as far as unit tests reach. Level 4 (Docker/psql) is unaffected by this change — it is a pure handler-merge refactor with no SQL, schema, or route-pattern changes.
 - `make lint` still not runnable (golangci-lint not installed; `brew install golangci-lint`). `go vet` + `gofmt` used as the substitute per the guide.
 - Both handlers registered under `protectedMiddlewareSet` before the merge, so auth behavior is unchanged; no middleware divergence to reconcile.
+
+## [2026-07-21 05:10] Task Record — Validate textAnswer length per API spec
+
+### Task Description
+- Code review comment on `submitAnswerRequest`: validate the length of `TextAnswer` per the API spec. Scoped to length only, per the user.
+
+### Actions Taken
+- `internal/question/handler.go:54`: added `validate:"omitempty,min=1,max=2000"` to `submitAnswerRequest.TextAnswer`, per `docs/question.tsp:107-115` (`textAnswer?` with `@minLength(1)` / `@maxLength(2000)`). No logic change — `ParseAndValidateRequestBody` already runs the validator.
+- The review comment cites `internal/question/answer_handler.go`, which no longer exists; the type moved into `handler.go` in `965245c`.
+
+### Notes
+- `omitempty` on a non-nil `*string` does not skip validation, so an absent field passes but `"textAnswer": ""` is rejected — the intended reading of `@minLength(1)`. Confirmed with a throwaway test rather than assumed.
+- Commit message used: `fix: validate text answer length on answer submission`.
+
+### Investigation: mutual-exclusion logic (user asked where it lives)
+- Already implemented in `answer_service.go:103-127` (`validateAnswerPayload`): CHOICE requires an option and forbids text, TEXT the reverse, unknown type errors. `answer_service.go:53-61` also verifies the option belongs to that question.
+- Correctly in the service, not the handler — it needs `questionService.Get()` for the question type first.
+
+### Verification
+- `go build ./...` → exit 0; `go test ./internal/question/` → 46 passed.
+
+### Next Steps
+- **Spec gap (worth a separate ticket).** `SubmitAnswerRequest` in `docs/question.tsp` declares both fields as plain optionals; the mutual-exclusion rule lives only in Go, so frontend can only discover it via a 400. TypeSpec has no oneOf constraint, but it belongs in `@doc` on both fields. User declined for now; offer left open.
+- Length is checked only at the handler, matching `createUpdateQuestionRequest`'s existing pattern — pushing it into the service would be a package-wide change, not a rider on this PR.
