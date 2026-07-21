@@ -29,7 +29,7 @@ type fakeQuerier struct {
 	updateOptionFn          func(ctx context.Context, arg UpdateOptionParams) (Option, error)
 	deleteOptionFn          func(ctx context.Context, id uuid.UUID) error
 	createAnswerFn          func(ctx context.Context, arg CreateAnswerParams) (Answer, error)
-	listAnswersFn           func(ctx context.Context, arg ListAnswersByQuestionForUserParams) ([]Answer, error)
+	listAnswersFn           func(ctx context.Context, questionID uuid.UUID) ([]Answer, error)
 
 	createQuestionCalls []CreateQuestionParams
 	updateQuestionCalls []UpdateQuestionParams
@@ -120,9 +120,9 @@ func (f *fakeQuerier) CreateAnswer(ctx context.Context, arg CreateAnswerParams) 
 	return Answer{}, nil
 }
 
-func (f *fakeQuerier) ListAnswersByQuestionForUser(ctx context.Context, arg ListAnswersByQuestionForUserParams) ([]Answer, error) {
+func (f *fakeQuerier) ListAnswersByQuestion(ctx context.Context, questionID uuid.UUID) ([]Answer, error) {
 	if f.listAnswersFn != nil {
-		return f.listAnswersFn(ctx, arg)
+		return f.listAnswersFn(ctx, questionID)
 	}
 	return nil, nil
 }
@@ -810,21 +810,19 @@ func TestHandlerSubmitAnswer_PassesUserAndConversions(t *testing.T) {
 
 func TestHandlerListAnswers_TableDriven(t *testing.T) {
 	questionID := uuid.New()
-	userID := uuid.New()
 
 	tests := []struct {
 		name       string
 		querier    *fakeQuerier
-		withUser   bool
 		wantStatus int
 		wantLen    int
 	}{
 		{
 			name: "returns answers newest first",
 			querier: &fakeQuerier{
-				listAnswersFn: func(_ context.Context, arg ListAnswersByQuestionForUserParams) ([]Answer, error) {
-					if arg.UserID != userID || arg.QuestionID != questionID {
-						t.Errorf("querier received wrong filter: %+v", arg)
+				listAnswersFn: func(_ context.Context, gotQuestionID uuid.UUID) ([]Answer, error) {
+					if gotQuestionID != questionID {
+						t.Errorf("querier received wrong question id: want %s got %s", questionID, gotQuestionID)
 					}
 					return []Answer{
 						{ID: uuid.New(), QuestionID: questionID, TextAnswer: pgtype.Text{String: "newer", Valid: true}},
@@ -832,22 +830,41 @@ func TestHandlerListAnswers_TableDriven(t *testing.T) {
 					}, nil
 				},
 			},
-			withUser:   true,
 			wantStatus: http.StatusOK,
 			wantLen:    2,
 		},
 		{
+			name: "returns answers from every user, not just the caller",
+			querier: &fakeQuerier{
+				listAnswersFn: func(context.Context, uuid.UUID) ([]Answer, error) {
+					return []Answer{
+						{ID: uuid.New(), QuestionID: questionID, UserID: uuid.New(), TextAnswer: pgtype.Text{String: "newer", Valid: true}},
+						{ID: uuid.New(), QuestionID: questionID, UserID: uuid.New(), TextAnswer: pgtype.Text{String: "middle", Valid: true}},
+						{ID: uuid.New(), QuestionID: questionID, UserID: uuid.New(), TextAnswer: pgtype.Text{String: "older", Valid: true}},
+					}, nil
+				},
+			},
+			wantStatus: http.StatusOK,
+			wantLen:    3,
+		},
+		{
 			name:       "no answers returns empty array",
 			querier:    &fakeQuerier{},
-			withUser:   true,
 			wantStatus: http.StatusOK,
 			wantLen:    0,
 		},
 		{
-			name:       "missing user returns 401",
-			querier:    &fakeQuerier{},
-			withUser:   false,
-			wantStatus: http.StatusUnauthorized,
+			name: "question not found returns 404",
+			querier: &fakeQuerier{
+				getQuestionFn: func(context.Context, uuid.UUID) (Question, error) {
+					return Question{}, pgx.ErrNoRows
+				},
+				listAnswersFn: func(context.Context, uuid.UUID) ([]Answer, error) {
+					t.Error("querier should not be called when the question does not exist")
+					return nil, nil
+				},
+			},
+			wantStatus: http.StatusNotFound,
 			wantLen:    0,
 		},
 	}
@@ -856,9 +873,6 @@ func TestHandlerListAnswers_TableDriven(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest(http.MethodGet, "/api/questions/"+questionID.String()+"/answers", nil)
-			if tt.withUser {
-				req = req.WithContext(auth.ContextWithUserID(req.Context(), userID))
-			}
 
 			newTestMux(tt.querier).ServeHTTP(rec, req)
 
@@ -876,7 +890,7 @@ func TestHandlerListAnswers_TableDriven(t *testing.T) {
 			if len(got) != tt.wantLen {
 				t.Fatalf("want %d answers, got %d", tt.wantLen, len(got))
 			}
-			if tt.wantLen == 2 && got[0]["textAnswer"] != "newer" {
+			if tt.wantLen > 0 && got[0]["textAnswer"] != "newer" {
 				t.Fatalf("order not preserved: %v", got[0]["textAnswer"])
 			}
 		})

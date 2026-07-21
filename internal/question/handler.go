@@ -277,13 +277,7 @@ func (h *Handler) ListAnswers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, ok := auth.UserIDFromContext(ctx)
-	if !ok {
-		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
-		return
-	}
-
-	answers, err := h.answerService.ListByQuestionForUser(ctx, questionID, userID)
+	answers, err := h.answerService.ListByQuestion(ctx, questionID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return

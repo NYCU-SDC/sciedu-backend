@@ -45,20 +45,15 @@ func (q *Queries) CreateAnswer(ctx context.Context, arg CreateAnswerParams) (Ans
 	return i, err
 }
 
-const listAnswersByQuestionForUser = `-- name: ListAnswersByQuestionForUser :many
+const listAnswersByQuestion = `-- name: ListAnswersByQuestion :many
 SELECT id, question_id, user_id, selected_option_id, text_answer, created_at, updated_at
 FROM answers
-WHERE question_id = $1 AND user_id = $2
+WHERE question_id = $1
 ORDER BY created_at DESC
 `
 
-type ListAnswersByQuestionForUserParams struct {
-	QuestionID uuid.UUID
-	UserID     uuid.UUID
-}
-
-func (q *Queries) ListAnswersByQuestionForUser(ctx context.Context, arg ListAnswersByQuestionForUserParams) ([]Answer, error) {
-	rows, err := q.db.Query(ctx, listAnswersByQuestionForUser, arg.QuestionID, arg.UserID)
+func (q *Queries) ListAnswersByQuestion(ctx context.Context, questionID uuid.UUID) ([]Answer, error) {
+	rows, err := q.db.Query(ctx, listAnswersByQuestion, questionID)
 	if err != nil {
 		return nil, err
 	}

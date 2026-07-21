@@ -19,7 +19,7 @@ type AnswerRequest struct {
 
 type AnswerQuerier interface {
 	CreateAnswer(ctx context.Context, arg CreateAnswerParams) (Answer, error)
-	ListAnswersByQuestionForUser(ctx context.Context, arg ListAnswersByQuestionForUserParams) ([]Answer, error)
+	ListAnswersByQuestion(ctx context.Context, questionID uuid.UUID) ([]Answer, error)
 }
 
 type AnswerService struct {
@@ -73,11 +73,12 @@ func (s *AnswerService) Create(ctx context.Context, arg AnswerRequest) (Answer, 
 	return answer, nil
 }
 
-func (s *AnswerService) ListByQuestionForUser(ctx context.Context, questionID, userID uuid.UUID) ([]Answer, error) {
-	answers, err := s.querier.ListAnswersByQuestionForUser(ctx, ListAnswersByQuestionForUserParams{
-		QuestionID: questionID,
-		UserID:     userID,
-	})
+func (s *AnswerService) ListByQuestion(ctx context.Context, questionID uuid.UUID) ([]Answer, error) {
+	if _, err := s.questionService.Get(ctx, questionID); err != nil {
+		return nil, err
+	}
+
+	answers, err := s.querier.ListAnswersByQuestion(ctx, questionID)
 	if err != nil {
 		return nil, databaseutil.WrapDBErrorWithKeyValue(err, "answers", "question_id", questionID.String(), s.logger, "list answers")
 	}

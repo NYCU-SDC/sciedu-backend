@@ -273,3 +273,39 @@ Why I still got it wrong despite the doc existing:
 ### Next Steps
 - **Spec gap (worth a separate ticket).** `SubmitAnswerRequest` in `docs/question.tsp` declares both fields as plain optionals; the mutual-exclusion rule lives only in Go, so frontend can only discover it via a 400. TypeSpec has no oneOf constraint, but it belongs in `@doc` on both fields. User declined for now; offer left open.
 - Length is checked only at the handler, matching `createUpdateQuestionRequest`'s existing pattern — pushing it into the service would be a package-wide change, not a rider on this PR.
+
+## [2026-07-22 00:54] Task Record — Fix listAnswers to return all answers for a question
+
+### Task Description
+- PR review comment (@ilsao) on `answer_queries.sql`: `ListAnswersByQuestionForUser` filters by `question_id AND user_id`, but the TSP declares this endpoint as *"Get all answers for a specific question (for Experimenter view)"*. Change the query to `WHERE question_id = $1` plus the handler/service knock-on changes. Reviewer explicitly scoped permission checks **out** of this fix ("fix this when the permission control is done").
+- User asked for a full discussion of the decision points before any implementation.
+
+### Actions Taken
+- `internal/question/answer_queries.sql`: `ListAnswersByQuestionForUser` → `ListAnswersByQuestion`, dropped `AND user_id = $2`. Kept `user_id` in the `SELECT` list so adding `userId` to the response later needs no SQL change.
+- `sqlc generate` (run by the user): `ListAnswersByQuestionForUserParams` disappears — with a single parameter sqlc emits `ListAnswersByQuestion(ctx, questionID uuid.UUID)` directly.
+- `internal/question/answer_service.go`: `AnswerQuerier` interface updated to the new signature; `ListByQuestionForUser` → `ListByQuestion(ctx, questionID)`; added a `questionService.Get` pre-check so a missing question returns 404 (TSP already declares `NotFound`; mirrors what `AnswerService.Create` and `Handler.Delete` already do).
+- `internal/question/handler.go`: removed the `auth.UserIDFromContext` + 401 block from `ListAnswers` (dead code — the route sits behind `protectedMiddlewareSet`, so the middleware already 401s). `SubmitAnswer` keeps its `UserIDFromContext` call; that one genuinely needs the ID for `answers.user_id`.
+- `internal/question/handler_test.go`: `listAnswersFn` signature updated; added `returns answers from every user, not just the caller` (three different `UserID`s, all returned) and `question not found returns 404` (with a `t.Error` inside `listAnswersFn` to prove the early return fires).
+
+### Key decisions
+- **Response deliberately does NOT include `userId`.** Four options were weighed (query only / add `userId` to `Answer` / a separate `AnswerWithUser` model / JOIN `users` to return names). Chose **query only**, to stay inside the reviewer's scope: TSP is the source of truth and the backend should not race ahead of the spec. Known cost — until `userId` lands, callers get an anonymous list and can only aggregate, and since `answers` has no `UNIQUE (question_id, user_id)` even that aggregation is unreliable (one user answering three times counts as three). Adding `userId` later is additive and non-breaking, and the Go `Answer` struct already carries `UserID`, so the backend cost is near zero once the TSP is updated.
+- **No TODO comments left in the code**, by the user's explicit instruction — known gaps belong in tickets, where they cannot rot in-tree.
+- Frontend has not implemented this endpoint yet (confirmed by the user), so the behavior change breaks no client.
+- **Deleted the `missing user returns 401` test case.** The handler no longer checks, and tests register via `RegisterRoutes(mux, nil)` with no auth middleware, so there is no 401 path at this layer. Coverage lives in `auth/middleware_test.go`.
+- **Did NOT fix the stale `questions_users_answers` comment in the TSP**, despite listing it as a freebie at first. Reverted because it contradicts the reasoning behind choice C, and TypeSpec `/** */` is a doc comment that flows into the generated OpenAPI description — so it is a spec-output change, not a cosmetic one.
+
+### TSP deviations found while auditing this endpoint
+- **`Conflict` (409) on `submitAnswer` is never implemented**, and `answers` has no `UNIQUE (question_id, user_id)` — the same user can submit unlimited answers to one question, all 201. The intended meaning is genuinely ambiguous (one-answer-per-user vs. the question being locked/closed), so **do not guess**; asked on the PR.
+- **`403 Forbidden` is absent everywhere**, and the blast radius is wider than answers: `POST`/`PUT`/`DELETE /api/questions` are open to any authenticated student, i.e. students can create, edit, and delete questions. Worth raising proactively — the reviewer may only have had answers in mind.
+- Also unimplemented but minor: `Question.type` is a Go `string` rather than the TSP enum (input is guarded by `validate:"oneof=CHOICE TEXT"`), and the `Answer` doc comment still refers to a `questions_users_answers` table that is actually named `answers`.
+
+### Verification
+- `go build ./...` → exit 0; `go vet ./internal/question/...` → clean; `go test ./...` → 239 passed across 8 packages.
+- Note: `sqlc` is **not** on PATH in this environment and `go install` was declined — the user runs `make generate` themselves. Do not assume the binary is available.
+
+### Next Steps
+- **Known interim state, disclosed on the PR**: with the `user_id` filter gone and no permission middleware yet, any authenticated user can read every answer to a question. The reviewer scoped permissions out of this fix deliberately, but whoever ships this should know the endpoint is unguarded until that work lands.
+- **Before any permission work, the JWT has to carry the role.** `accessClaims` is bare `jwt.RegisteredClaims` and only `Subject: userID` is signed; roles live in `users.roles` (`STUDENT`/`EXPERIMENTER`/`ADMIN`). Decide first between putting roles in the token (no DB hit, stale until expiry) or a per-request lookup (live, one extra query) — the middleware cannot be written until then.
+- **Clarify who may read answers before naming anything `isAdmin`.** The reviewer said `admin`, the DB has three roles, and the TSP says "Experimenter view" — likely `EXPERIMENTER` + `ADMIN`, but unconfirmed.
+- Once the TSP `Answer` model gains `userId`, expose it in `answerResponse`/`buildAnswerResponse`. The SQL already selects `user_id`, so no query change is needed.
+- Open question: with the user-scoped query gone, there is no "have I answered this / what did I answer" endpoint. Add `GET /api/questions/{id}/answers/me` if the frontend turns out to need it.
