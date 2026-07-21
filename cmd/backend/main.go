@@ -52,9 +52,8 @@ func main() {
 	questionStore := question.NewStore(pool)
 	optionService := question.NewOptionService(questionStore, logger)
 	questionService := question.NewQuestionService(questionStore, optionService, logger)
-	questionHandler := question.NewHandler(questionService, logger)
 	answerService := question.NewAnswerService(questionStore, questionService, logger)
-	answerHandler := question.NewAnswerHandler(answerService, logger)
+	questionHandler := question.NewHandler(questionService, answerService, logger)
 
 	contentQueries := content.New(pool)
 	contentService := content.NewService(contentQueries, logger)
@@ -128,7 +127,6 @@ func main() {
 
 	authHandler.RegisterRoutes(mux, middlewareSet)
 	questionHandler.RegisterRoutes(mux, protectedMiddlewareSet)
-	answerHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	contentHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	chatHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 

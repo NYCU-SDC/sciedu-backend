@@ -207,3 +207,45 @@
   - Optionally include `docs/user_question.md` (ERD `user_id` fix) if wanted; exclude unrelated `CLAUDE.md` / `mermaid.md` / `mguide.md`.
 - **Step 9**: run `make lint` (golangci-lint) and a manual API smoke test (CHOICE → 201 + GET; TEXT → 201; repeat submit → array newest-first; unknown question → 404; type-mismatched body → 400). These need the full local stack (Docker Postgres) which this environment could not run; the user will do it in their IDE.
 - Then open the PR per `AGENTS.md`, linking `docs/answer_design.md`.
+
+## [2026-07-21 04:30] Task Record — Merge answer handler into question handler
+
+### Task Description
+- Merge `internal/question/answer_handler.go` into `internal/question/handler.go`, and `answer_handler_test.go` into `handler_test.go`.
+
+### Design decisions (agreed with user before implementing)
+- **Chose full fold, not colocation.** `AnswerHandler` was dissolved into `Handler` rather than kept as a second struct in the same file — otherwise the split survives under a new filename. `Handler` now holds both `questionService` and `answerService`; one `problemWriter` maps both `errInvalidQuestionPayload` and `errInvalidAnswerPayload`; one `RegisterRoutes` covers all 7 routes.
+- **`buildAnswerResponse` stays a free function.** `buildQuestionResponse` is a method only because it needs `h.questionService`; `buildAnswerResponse` needs no receiver, so symmetry was not worth an unused one.
+- **`fakeAnswerQuerier` deleted.** Its two methods (`CreateAnswer`, `ListAnswersByQuestionForUser`) and `createAnswerCalls` were folded directly into `fakeQuerier`, which now satisfies `AnswerQuerier`. One fake, one `newTestMux`; the embedded-fake + interface-param alternative was more indirection for no gain.
+
+### Actions Taken
+- `internal/question/handler.go`: added `answerService` field, `submitAnswerRequest`/`answerResponse` types, `SubmitAnswer`/`ListAnswers` methods, `buildAnswerResponse`; `NewHandler` gained an `answerService *AnswerService` second parameter; imports gained `time` and `sciedu-backend/internal/auth`.
+- **Renamed methods on merge**: `AnswerHandler.Submit` → `Handler.SubmitAnswer`, `AnswerHandler.List` → `Handler.ListAnswers`. Forced — `Handler.List` (list questions) already existed. Route patterns are unchanged.
+- Answer handlers now use `h.parseID` instead of calling `handlerutil.ParseUUID` directly, matching the question handlers.
+- `internal/question/answer_handler.go` and `answer_handler_test.go`: deleted.
+- `internal/question/handler_test.go`: absorbed the three answer tests (renamed `TestAnswerHandlerSubmit_TableDriven` → `TestHandlerSubmitAnswer_TableDriven`, `TestAnswerHandlerSubmit_PassesUserAndConversions` → `TestHandlerSubmitAnswer_PassesUserAndConversions`, `TestAnswerHandlerList_TableDriven` → `TestHandlerListAnswers_TableDriven`), plus `choiceQuestion`/`textQuestion` helpers; imports gained `pgtype` and `auth`.
+- `cmd/backend/main.go`: `answerService` construction moved above `questionHandler`; `NewAnswerHandler` call and the `answerHandler.RegisterRoutes` line removed.
+
+### Verification — ALL GREEN (levels 1 & 2)
+Ran with `export PATH="$HOME/sdk/go1.26.1/bin:$HOME/go/bin:$PATH"` (go1.26.1 darwin/arm64):
+- `gofmt -l internal/ cmd/` → no output (clean)
+- `go build ./...` → exit 0
+- `go vet ./...` → exit 0
+- `go test ./internal/question/ -count=1 -v` → PASS, including all merged answer tests: `TestHandlerSubmitAnswer_TableDriven` (9 subtests), `TestHandlerSubmitAnswer_PassesUserAndConversions`, `TestHandlerListAnswers_TableDriven` (3 subtests)
+- `go test ./... -count=1` → all packages ok
+- `go test ./... -race -count=1` → all packages ok
+
+### ⚠️ Correction to my own first attempt in this session — read this
+I initially wrote in this report that **"the Go toolchain is not installed in this environment"** and asked the user to run the tests themselves. **That was wrong**, and it is the exact failure mode `docs/answer_implementation_guide.md` Step 0 and 常見卡點 already warn about — a previous agent made the identical mistake, which is why the warning exists.
+
+Why I still got it wrong despite the doc existing:
+- I checked `which go`, `/usr/local/go/bin`, `/opt/homebrew/bin/go*`, and `~/go/bin` — but **never `~/sdk`**, the GoLand-managed SDK directory the guide flags as ★最常被漏掉.
+- My `find / -maxdepth 4 -name go` was **too shallow**: the real path `/Users/melodywu/sdk/go1.26.1/bin/go` is at depth 6, so the search returned empty and I read that as confirmation.
+- Root cause: I never opened `docs/answer_implementation_guide.md` before declaring the environment broken. The user had to point me at it. **AGENTS.md says to check `docs/` first — do that before concluding any tool is missing.**
+
+**For the next agent: `go` IS installed. Always prefix with `export PATH="$HOME/sdk/go1.26.1/bin:$HOME/go/bin:$PATH"`. Never claim "cannot verify" without first working through Step 0 of the implementation guide.**
+
+### Next Steps
+- Levels 1 & 2 are green, so this refactor is verified as far as unit tests reach. Level 4 (Docker/psql) is unaffected by this change — it is a pure handler-merge refactor with no SQL, schema, or route-pattern changes.
+- `make lint` still not runnable (golangci-lint not installed; `brew install golangci-lint`). `go vet` + `gofmt` used as the substitute per the guide.
+- Both handlers registered under `protectedMiddlewareSet` before the merge, so auth behavior is unchanged; no middleware divergence to reconcile.
