@@ -384,3 +384,31 @@ Why I still got it wrong despite the doc existing:
 ### Next Steps
 - **Deployment runbook still applies**: set `AUTH_BOOTSTRAP_ADMIN_EMAIL`, log in once as that account, confirm `GET /api/users/me` shows ADMIN, then **remove the variable and redeploy** so it can't act as a permanent super-admin allowlist.
 - **Phase 1 (auth foundation) is complete.** Remaining: Phase 2 `internal/user` package (list/get/soft-delete/role-replace, self-op guards, and the first real wiring of `NewAuthorizer` + `RequireAnyRole` onto routes), then Phase 3 (answers `userId` + role gate, which first needs `feat/answer` merged in — see plan decision 6).
+
+## [2026-07-28 —] Task Record — Users RBAC Phase 2 (internal/user package)
+
+### Task Description
+- Implement Phase 2 of the Users API + RBAC plan: the new `internal/user` package (list/get/soft-delete/role-replace with self-op guards), and the first real wiring of `NewAuthorizer` + `RequireAnyRole` onto routes. Spec AC 3/5/6/7/8. Branch `feat/users-rbac`.
+
+### Actions Taken
+- `internal/user/queries.sql` (new, 6 queries, needs `make gen`): `ListUsers` (pagination + `ILIKE` name/email search + single-role filter `sqlc.narg('role')::user_role = ANY(roles)` + `ORDER BY name, id` + `LIMIT/OFFSET`), `CountUsers`, `GetActiveUserByID`, `SoftDeleteUser` (`:execrows`), `RevokeUserRefreshFamilies` (`revoked_reason = 'user_disabled'`), `ReplaceUserRoles` (`sqlc.arg('roles')::text[]::user_role[]` so sqlc infers `[]string`; RETURNING `roles::text[]`). All read/write via `::text[]` cast and gate `disabled_at IS NULL`.
+- `internal/user/store.go` (new): `Store{pool, queries}`. `SoftDelete` runs `SoftDeleteUser` + `RevokeUserRefreshFamilies` in **one transaction** (0 rows disabled ⇒ `pgx.ErrNoRows` for 404). Other methods are thin wrappers mapping generated rows → domain `Profile` (`AvatarURL *string`, `Roles []string`, timestamps `time.Time`).
+- `internal/user/service.go` (new): `Repository` interface (domain-typed), `List` (offset math + `totalPages`/`hasNextPage`), `Get`, self-op guards in `Delete`/`ReplaceRoles` (`actorID==targetID` → `errSelfOperation`, no DB touch), `databaseutil.WrapDBError*` for 404/500.
+- `internal/user/handler.go` (new): 5 routes + DTOs (`userResponse`, `paginatedUsersResponse`, `updateRolesRequest`). `RegisterRoutes(mux, middlewares, authorizer)` — `me` behind auth only; `list`/`get` behind `RequireAnyRole(EXPERIMENTER, ADMIN)`; `delete`/`updateRoles` behind `RequireAnyRole(ADMIN)`, reading actorID from context + targetID from path. `problemWriter` maps `errSelfOperation`→403, `errInvalidUserPayload`→400; ErrNoRows→404 via summer default. Structural validation via validator tags + query-param parsing.
+- `internal/user/errors.go` (new): `errSelfOperation`, `errInvalidUserPayload`.
+- `internal/auth/middleware.go`: added exported `ContextWithUserID(ctx, uuid)` (test-injection point for the user handler tests; prod middleware still seeds context internally).
+- `cmd/backend/main.go`: `authorizer := auth.NewAuthorizer(authStore, logger)` (authStore already satisfies `RoleQuerier`); user store/service/handler; `userHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)`.
+- Tests: `service_test.go` (self-op guards, pagination boundaries incl. exact-divide/last-page/empty, filter propagation), `handler_test.go` (per-route happy/400/403/404 + `TestRegisterRoutesAuthorization` exercising the real `RequireAnyRole` wiring against the permission matrix), `store_integration_test.go` (`//go:build integration`: tx family revoke, role replace, ILIKE/enum-filter/pagination/ordering, disabled exclusion).
+
+### Attempted Methods
+- Domain type named **`Profile`, not `User`**: sqlc generates a `User` table model (`Roles []interface{}`) in the same package, so the API-facing projection had to use a different name. First draft used `User` and hit a redeclaration collision on `make gen`; renamed store→service→handler→tests to `Profile`. JSON shape is unchanged (still the spec `User`).
+- **Validation placement deviates from the plan**: structural role/pagination validation lives in the handler (validator `oneof` tags + query parsing → 400), matching the existing `question` handler house style, rather than in the service as the plan first sketched. Self-op guard stays in the service. Plan updated with this deviation.
+- `ReplaceUserRoles` uses `sqlc.arg('roles')::text[]::user_role[]` (double cast) so the input param infers as `[]string`; the naive `$2::user_role[]` would map to `[]interface{}`.
+
+### Issues & Blockers
+- None outstanding. After `make gen`: `go build ./...` OK, `go vet ./...` clean, `go vet -tags integration ./internal/user/...` clean, `gofmt -l .` clean, `go test ./... -race -count=1` → 301 passed across 9 packages (user package: 51). Integration tests are build-tagged and were **not** run against a live DB this session (need `AUTH_INTEGRATION_DATABASE_URL` + migrated Postgres).
+
+### Next Steps
+- **Manual smoke (Phase 4, Yaak)** still owed: bootstrap admin → `GET /users/me` shows ADMIN; admin `DELETE /users/{self}` → 403; admin deletes a STUDENT → their refresh token → 401; deleted STUDENT re-runs OAuth → 401 (not recreated); role change reflects on next restricted request without re-login.
+- **Phase 3** next: merge `feat/answer` into `feat/users-rbac` (decision 6) to get `answerResponse`/`ListAnswers`, add `userId` to the answer response, and gate `GET /questions/{id}/answers` with `RequireAnyRole(EXPERIMENTER, ADMIN)`. Do it on `feat/users-rbac`, never on `feat/answer`.
+- **Out of scope (unchanged, disclosed)**: other Questions/Content routes keep their existing permissions (e.g. any authenticated student can still POST/PUT/DELETE questions) — spec explicitly excludes widening those here.

@@ -12,6 +12,7 @@ import (
 	"sciedu-backend/internal/content"
 	"sciedu-backend/internal/cors"
 	"sciedu-backend/internal/question"
+	"sciedu-backend/internal/user"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
@@ -115,6 +116,11 @@ func main() {
 	}, logger)
 	authMiddleware := auth.NewMiddleware(authService, logger)
 	protectedMiddlewareSet := middlewareSet.Append(authMiddleware.HandlerFunc)
+	authorizer := auth.NewAuthorizer(authStore, logger)
+
+	userStore := user.NewStore(pool)
+	userService := user.NewService(userStore, logger)
+	userHandler := user.NewHandler(userService, logger)
 
 	// Health check route
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -126,6 +132,7 @@ func main() {
 	})
 
 	authHandler.RegisterRoutes(mux, middlewareSet)
+	userHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
 	questionHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	contentHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	chatHandler.RegisterRoutes(mux, protectedMiddlewareSet)
