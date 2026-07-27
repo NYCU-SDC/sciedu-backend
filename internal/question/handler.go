@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
@@ -12,10 +13,13 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
+
+	"sciedu-backend/internal/auth"
 )
 
 type Handler struct {
 	questionService *QuestionService
+	answerService   *AnswerService
 	logger          *zap.Logger
 	problemWriter   *problemutil.HttpWriter
 	validator       *validator.Validate
@@ -45,16 +49,30 @@ type questionResponse struct {
 	Options []optionResponse `json:"options,omitempty"`
 }
 
-func NewHandler(questionService *QuestionService, logger *zap.Logger) *Handler {
+type submitAnswerRequest struct {
+	SelectedOptionID *uuid.UUID `json:"selectedOptionId"`
+	TextAnswer       *string    `json:"textAnswer" validate:"omitempty,min=1,max=2000"`
+}
+
+type answerResponse struct {
+	ID               uuid.UUID  `json:"id"`
+	QuestionID       uuid.UUID  `json:"questionId"`
+	SelectedOptionID *uuid.UUID `json:"selectedOptionId"`
+	TextAnswer       *string    `json:"textAnswer"`
+	CreatedAt        time.Time  `json:"createdAt"`
+}
+
+func NewHandler(questionService *QuestionService, answerService *AnswerService, logger *zap.Logger) *Handler {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
 
 	return &Handler{
 		questionService: questionService,
+		answerService:   answerService,
 		logger:          logger,
 		problemWriter: problemutil.NewWithMapping(func(err error) problemutil.Problem {
-			if errors.Is(err, errInvalidQuestionPayload) {
+			if errors.Is(err, errInvalidQuestionPayload) || errors.Is(err, errInvalidAnswerPayload) {
 				return problemutil.NewValidateProblem(err.Error())
 			}
 			return problemutil.Problem{}
@@ -76,6 +94,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil
 	handle("GET /api/questions/{id}", h.Get)
 	handle("PUT /api/questions/{id}", h.Update)
 	handle("DELETE /api/questions/{id}", h.Delete)
+	handle("POST /api/questions/{id}/answers", h.SubmitAnswer)
+	handle("GET /api/questions/{id}/answers", h.ListAnswers)
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -211,6 +231,66 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *Handler) SubmitAnswer(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+
+	questionID, err := h.parseID(r.PathValue("id"))
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	userID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+
+	var req submitAnswerRequest
+	if err := handlerutil.ParseAndValidateRequestBody(ctx, h.validator, r, &req); err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	answer, err := h.answerService.Create(ctx, AnswerRequest{
+		QuestionID:       questionID,
+		UserID:           userID,
+		SelectedOptionID: req.SelectedOptionID,
+		TextAnswer:       req.TextAnswer,
+	})
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	handlerutil.WriteJSONResponse(w, http.StatusCreated, buildAnswerResponse(answer))
+}
+
+func (h *Handler) ListAnswers(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+
+	questionID, err := h.parseID(r.PathValue("id"))
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	answers, err := h.answerService.ListByQuestion(ctx, questionID)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	resp := make([]answerResponse, 0, len(answers))
+	for _, answer := range answers {
+		resp = append(resp, buildAnswerResponse(answer))
+	}
+
+	handlerutil.WriteJSONResponse(w, http.StatusOK, resp)
+}
+
 func (h *Handler) parseID(raw string) (uuid.UUID, error) {
 	return handlerutil.ParseUUID(raw)
 }
@@ -241,6 +321,29 @@ func (h *Handler) buildQuestionResponse(ctx context.Context, q Question) (questi
 	}
 
 	return resp, nil
+}
+
+func buildAnswerResponse(answer Answer) answerResponse {
+	resp := answerResponse{
+		ID:         answer.ID,
+		QuestionID: answer.QuestionID,
+	}
+
+	if answer.SelectedOptionID.Valid {
+		selectedOptionID := uuid.UUID(answer.SelectedOptionID.Bytes)
+		resp.SelectedOptionID = &selectedOptionID
+	}
+
+	if answer.TextAnswer.Valid {
+		textAnswer := answer.TextAnswer.String
+		resp.TextAnswer = &textAnswer
+	}
+
+	if answer.CreatedAt.Valid {
+		resp.CreatedAt = answer.CreatedAt.Time
+	}
+
+	return resp
 }
 
 func (r createUpdateQuestionRequest) toQuestionOptionRequests() []QuestionOptionRequest {
