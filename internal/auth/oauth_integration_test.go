@@ -315,3 +315,52 @@ func TestStoreActiveUserRoles(t *testing.T) {
 	_, err = store.ActiveUserRoles(ctx, uuid.New())
 	require.ErrorIs(t, err, pgx.ErrNoRows)
 }
+
+func TestStoreGrantAdminRole(t *testing.T) {
+	databaseURL := os.Getenv("AUTH_INTEGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AUTH_INTEGRATION_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	require.NoError(t, pool.Ping(ctx))
+
+	testID := uuid.NewString()
+	email := "grant-" + testID + "@example.com"
+	subject := "grant-" + testID
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DELETE FROM users WHERE email = $1", email)
+	})
+
+	store := NewStore(pool)
+	record, err := store.FindOrCreateOAuthUser(ctx, OAuthIdentity{
+		Provider:       googleProviderName,
+		ProviderUserID: subject,
+		Email:          email,
+		EmailVerified:  true,
+		Name:           "Grant User",
+		Now:            time.Now(),
+	})
+	require.NoError(t, err)
+
+	granted, err := store.GrantAdminRole(ctx, record.UserID)
+	require.NoError(t, err)
+	require.True(t, granted)
+
+	roles, err := store.ActiveUserRoles(ctx, record.UserID)
+	require.NoError(t, err)
+	require.Contains(t, roles, ADMIN)
+
+	granted, err = store.GrantAdminRole(ctx, record.UserID)
+	require.NoError(t, err)
+	require.False(t, granted)
+
+	_, err = pool.Exec(ctx, "UPDATE users SET disabled_at = now() WHERE email = $1", email)
+	require.NoError(t, err)
+	granted, err = store.GrantAdminRole(ctx, record.UserID)
+	require.NoError(t, err)
+	require.False(t, granted)
+}

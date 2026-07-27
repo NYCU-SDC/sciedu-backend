@@ -172,3 +172,11 @@ SELECT roles::text[] AS roles
 FROM users
 WHERE id = $1
   AND disabled_at IS NULL;
+
+-- name: GrantUserAdminRole :execrows
+UPDATE users
+SET roles = array_append(roles, 'ADMIN'::user_role),
+    updated_at = now()
+WHERE id = $1
+  AND disabled_at IS NULL
+  AND NOT ('ADMIN'::user_role = ANY (roles));

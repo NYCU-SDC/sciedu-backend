@@ -108,6 +108,7 @@ func main() {
 		OAuthProvider:         oauthProvider,
 		RedirectURLAllowlist:  parseAllowOrigins(cfg.AuthRedirectAllowlist),
 		RedirectPreviewDomain: cfg.AuthRedirectPreviewDomain,
+		BootstrapAdminEmail:   cfg.AuthBootstrapAdminEmail,
 	}, logger)
 	authHandler := auth.NewHandler(authService, auth.CookieConfig{
 		Environment: cfg.Environment,

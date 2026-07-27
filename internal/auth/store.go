@@ -271,6 +271,14 @@ func (s *Store) ActiveUserRoles(ctx context.Context, userID uuid.UUID) ([]Role, 
 	return roles, nil
 }
 
+func (s *Store) GrantAdminRole(ctx context.Context, userID uuid.UUID) (bool, error) {
+	rows, err := s.queries.GrantUserAdminRole(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
 func refreshTokenRecordFromRow(row GetRefreshTokenByHashRow) RefreshTokenRecord {
 	return RefreshTokenRecord{
 		ID:              row.ID,

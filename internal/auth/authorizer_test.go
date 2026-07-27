@@ -89,7 +89,7 @@ func TestAuthorizerRequireAnyRole(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodGet, "/api/users", nil)
 			if tt.seedUserID {
-				req = req.WithContext(ContextWithUserID(req.Context(), userID))
+				req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, userID))
 			}
 			rec := httptest.NewRecorder()
 
@@ -112,7 +112,7 @@ func TestAuthorizerRequireAnyRoleReadsRolesEachRequest(t *testing.T) {
 	call := func() int {
 		next := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 		req := httptest.NewRequest(http.MethodGet, "/api/questions/x/answers", nil)
-		req = req.WithContext(ContextWithUserID(req.Context(), userID))
+		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, userID))
 		rec := httptest.NewRecorder()
 		authorizer.RequireAnyRole(EXPERIMENTER, ADMIN)(next)(rec, req)
 		return rec.Code

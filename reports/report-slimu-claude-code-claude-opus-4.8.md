@@ -357,3 +357,30 @@ Why I still got it wrong despite the doc existing:
 ### Next Steps
 - **Wiring is intentionally deferred.** When Phase 2 builds the `internal/user` handler, construct the authorizer once in `main.go` (`authorizer := auth.NewAuthorizer(authStore, logger)`) and register restricted routes with `middlewares.Append(authorizer.RequireAnyRole(...)).HandlerFunc(fn)`; `authStore` already satisfies `RoleQuerier`.
 - **Role constants are exported as `auth.STUDENT` / `auth.EXPERIMENTER` / `auth.ADMIN`** (bare, not `RoleAdmin`) to match the plan's route snippets; Phase 2/3 should use those.
+
+## [2026-07-27 —] Task Record — Users RBAC Phase 1.3 (bootstrap administrator)
+
+### Task Description
+- Implement the `AUTH_BOOTSTRAP_ADMIN_EMAIL` bootstrap-admin flow: a verified OAuth email configured out-of-band is idempotently granted ADMIN on every login while the variable is set. Branch `feat/users-rbac`.
+
+### Actions Taken
+- `internal/config/config.go`: added `AuthBootstrapAdminEmail` (struct field + `Load` default + **`FromEnv` `os.Getenv` — required, the `envconfig` tags are decorative here, nothing reads them** + `FromFlags`); `Validate()` rejects a non-empty-but-invalid value via `net/mail.ParseAddress` with a strict `addr.Address == trimmed` check (rejects `Name <a@b>` and address lists). New sentinel `ErrInvalidBootstrapAdminEmail`. Fail-fast is already wired (`main.go:33` → `logger.Fatal`).
+- `internal/config/config_test.go`: `TestValidateBootstrapAdminEmail` (empty/blank ok, plain ok, trimmed ok, and the invalid forms).
+- `internal/auth/queries.sql`: `GrantUserAdminRole :execrows` — `UPDATE ... SET roles = array_append(roles, 'ADMIN'::user_role) ... WHERE id=$1 AND disabled_at IS NULL AND NOT ('ADMIN'::user_role = ANY(roles))`. Idempotent by the WHERE guard; `:execrows` reports whether a row changed. Regenerated via user's `make generate`.
+- `internal/auth/store.go`: `Store.GrantAdminRole(ctx, id) (bool, error)` — `rows > 0`.
+- `internal/auth/service.go`: `ServiceConfig.BootstrapAdminEmail`; `Repository.GrantAdminRole`; `CompleteOAuth` calls new `ensureBootstrapAdmin` after `FindOrCreateOAuthUser`, before `IssueSession`. It no-ops unless the email is configured, `claims.EmailVerified`, and a trimmed case-insensitive match; logs one line (`user_id`+`email`) only when a role was actually added.
+- `internal/auth/service_test.go`: fake gained `GrantAdminRole` + tracking; `TestServiceCompleteOAuthBootstrapAdmin` (6 cases) uses a `zaptest/observer` to assert exactly one log line with the right fields on grant, and zero otherwise.
+- `internal/auth/oauth_integration_test.go`: `TestStoreGrantAdminRole` (`//go:build integration`) — first grant true + roles contain ADMIN, second grant false (idempotent), disabled user grant false.
+- `cmd/backend/main.go`: wired `BootstrapAdminEmail: cfg.AuthBootstrapAdminEmail`.
+
+### Attempted Methods
+- Gate on `claims.EmailVerified` (spec: "OAuth provider 必須回傳 verified email"); the plan's implementation bullet didn't spell it out but the plan's spec reference and a later edit both require it.
+- Idempotency lives in SQL (single WHERE-guarded UPDATE), not a read-then-write in Go — atomic, no TOCTOU, and matches decision #5's "每次 callback 都做冪等檢查". The UPDATE statement runs on every matching login but writes 0 rows once ADMIN is present.
+- Had to stop treating `ContextWithUserID` as available: it was removed from `middleware.go` after Phase 1.2 (only `authorizer_test.go` used it), so that test now seeds context with the in-package `userIDContextKey` directly, mirroring `Middleware`.
+
+### Issues & Blockers
+- None. `gofmt -l .` clean; `go build ./...`, `go vet ./...`, `go vet -tags integration ./internal/auth/...` clean; `go test ./... -race -count=1` → all pass (8 packages). Integration tests are build-tagged and not run against a live DB this session.
+
+### Next Steps
+- **Deployment runbook still applies**: set `AUTH_BOOTSTRAP_ADMIN_EMAIL`, log in once as that account, confirm `GET /api/users/me` shows ADMIN, then **remove the variable and redeploy** so it can't act as a permanent super-admin allowlist.
+- **Phase 1 (auth foundation) is complete.** Remaining: Phase 2 `internal/user` package (list/get/soft-delete/role-replace, self-op guards, and the first real wiring of `NewAuthorizer` + `RequireAnyRole` onto routes), then Phase 3 (answers `userId` + role gate, which first needs `feat/answer` merged in — see plan decision 6).

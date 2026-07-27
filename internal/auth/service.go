@@ -27,6 +27,7 @@ type Repository interface {
 	CreateOAuthLoginState(ctx context.Context, params CreateOAuthStateParams) error
 	ConsumeOAuthLoginState(ctx context.Context, stateHash []byte, now time.Time) (OAuthLoginStateRecord, error)
 	FindOrCreateOAuthUser(ctx context.Context, identity OAuthIdentity) (OAuthUserRecord, error)
+	GrantAdminRole(ctx context.Context, userID uuid.UUID) (bool, error)
 }
 
 type ServiceConfig struct {
@@ -36,6 +37,7 @@ type ServiceConfig struct {
 	OAuthProvider         OAuthProvider
 	RedirectURLAllowlist  []string
 	RedirectPreviewDomain string
+	BootstrapAdminEmail   string
 }
 
 type Service struct {
@@ -187,6 +189,10 @@ func (s *Service) CompleteOAuth(ctx context.Context, params CompleteOAuthParams)
 		return CompleteOAuthResult{}, fmt.Errorf("find or create oauth user: %w", err)
 	}
 
+	if err := s.ensureBootstrapAdmin(ctx, user.UserID, claims); err != nil {
+		return CompleteOAuthResult{}, err
+	}
+
 	session, err := s.IssueSession(ctx, IssueSessionParams{
 		UserID:         user.UserID,
 		OAuthAccountID: &user.OAuthAccountID,
@@ -197,6 +203,27 @@ func (s *Service) CompleteOAuth(ctx context.Context, params CompleteOAuthParams)
 		return CompleteOAuthResult{}, fmt.Errorf("issue oauth session: %w", err)
 	}
 	return CompleteOAuthResult{Session: session, RedirectURL: state.RedirectURL}, nil
+}
+
+func (s *Service) ensureBootstrapAdmin(ctx context.Context, userID uuid.UUID, claims GoogleIDTokenClaims) error {
+	target := strings.TrimSpace(s.config.BootstrapAdminEmail)
+	if target == "" || !claims.EmailVerified {
+		return nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(claims.Email), target) {
+		return nil
+	}
+
+	granted, err := s.repo.GrantAdminRole(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("grant bootstrap admin: %w", err)
+	}
+	if granted {
+		s.logger.Info("granted bootstrap admin role",
+			zap.String("user_id", userID.String()),
+			zap.String("email", claims.Email))
+	}
+	return nil
 }
 
 func (s *Service) Session(ctx context.Context, accessToken, refreshToken string) (Session, error) {

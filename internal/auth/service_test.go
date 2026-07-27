@@ -11,6 +11,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestServiceRefresh(t *testing.T) {
@@ -349,6 +351,123 @@ func TestServiceCompleteOAuthRejectsDisabledUser(t *testing.T) {
 	}
 }
 
+func TestServiceCompleteOAuthBootstrapAdmin(t *testing.T) {
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	userID := uuid.MustParse("cccccccc-cccc-cccc-cccc-cccccccccccc")
+	accountID := uuid.MustParse("dddddddd-dddd-dddd-dddd-dddddddddddd")
+
+	tests := []struct {
+		name           string
+		bootstrapEmail string
+		claimEmail     string
+		emailVerified  bool
+		grantResult    bool
+		wantGrantCalls int
+		wantLogged     bool
+	}{
+		{
+			name:           "matching verified email grants admin and logs once",
+			bootstrapEmail: "admin@example.com",
+			claimEmail:     "admin@example.com",
+			emailVerified:  true,
+			grantResult:    true,
+			wantGrantCalls: 1,
+			wantLogged:     true,
+		},
+		{
+			name:           "already admin grants nothing and does not log",
+			bootstrapEmail: "admin@example.com",
+			claimEmail:     "admin@example.com",
+			emailVerified:  true,
+			grantResult:    false,
+			wantGrantCalls: 1,
+			wantLogged:     false,
+		},
+		{
+			name:           "trimmed and case-insensitive email still matches",
+			bootstrapEmail: "  Admin@Example.com  ",
+			claimEmail:     "admin@example.com",
+			emailVerified:  true,
+			grantResult:    true,
+			wantGrantCalls: 1,
+			wantLogged:     true,
+		},
+		{
+			name:           "non-matching email never touches roles",
+			bootstrapEmail: "admin@example.com",
+			claimEmail:     "student@example.com",
+			emailVerified:  true,
+			wantGrantCalls: 0,
+		},
+		{
+			name:           "unverified email is ignored",
+			bootstrapEmail: "admin@example.com",
+			claimEmail:     "admin@example.com",
+			emailVerified:  false,
+			wantGrantCalls: 0,
+		},
+		{
+			name:           "unset bootstrap email never touches roles",
+			bootstrapEmail: "",
+			claimEmail:     "admin@example.com",
+			emailVerified:  true,
+			wantGrantCalls: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, logs := observer.New(zap.InfoLevel)
+			provider := &fakeOAuthProvider{
+				claims: GoogleIDTokenClaims{
+					Email:            tt.claimEmail,
+					EmailVerified:    tt.emailVerified,
+					Name:             "User",
+					RegisteredClaims: jwt.RegisteredClaims{Subject: "google-subject"},
+				},
+			}
+			repo := &fakeAuthRepository{
+				oauthUser:        OAuthUserRecord{UserID: userID, OAuthAccountID: accountID},
+				profile:          testUserProfile(userID),
+				grantAdminResult: tt.grantResult,
+			}
+			svc := NewService(repo, ServiceConfig{
+				Secret:               "test-secret",
+				Environment:          EnvironmentDev,
+				Now:                  func() time.Time { return now },
+				OAuthProvider:        provider,
+				RedirectURLAllowlist: []string{"http://localhost:5173"},
+				BootstrapAdminEmail:  tt.bootstrapEmail,
+			}, zap.New(core))
+
+			begin, err := svc.BeginOAuth(t.Context(), BeginOAuthParams{
+				Provider:    "google",
+				RedirectURL: "http://localhost:5173/courses",
+			})
+			require.NoError(t, err)
+
+			_, err = svc.CompleteOAuth(t.Context(), CompleteOAuthParams{
+				Provider: "google",
+				Code:     "auth-code",
+				State:    stateFromURL(t, begin.AuthURL),
+			})
+			require.NoError(t, err)
+
+			require.Equal(t, tt.wantGrantCalls, repo.grantAdminCalls)
+
+			adminLogs := logs.FilterMessage("granted bootstrap admin role")
+			if tt.wantLogged {
+				require.Equal(t, 1, adminLogs.Len())
+				fields := adminLogs.All()[0].ContextMap()
+				require.Equal(t, userID.String(), fields["user_id"])
+				require.Equal(t, tt.claimEmail, fields["email"])
+			} else {
+				require.Equal(t, 0, adminLogs.Len())
+			}
+		})
+	}
+}
+
 func TestServiceBeginOAuthValidatesRedirectAllowlist(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -603,20 +722,23 @@ func stateFromURL(t *testing.T, raw string) string {
 }
 
 type fakeAuthRepository struct {
-	record         RefreshTokenRecord
-	oauthState     OAuthLoginStateRecord
-	oauthUser      OAuthUserRecord
-	profile        UserProfile
-	findErr        error
-	consumeErr     error
-	oauthUserErr   error
-	revokeErr      error
-	rotateErr      error
-	rotated        bool
-	revoked        bool
-	reuseDetected  bool
-	createdState   bool
-	createdSession bool
+	record           RefreshTokenRecord
+	oauthState       OAuthLoginStateRecord
+	oauthUser        OAuthUserRecord
+	profile          UserProfile
+	findErr          error
+	consumeErr       error
+	oauthUserErr     error
+	revokeErr        error
+	rotateErr        error
+	rotated          bool
+	revoked          bool
+	reuseDetected    bool
+	createdState     bool
+	createdSession   bool
+	grantAdminResult bool
+	grantAdminErr    error
+	grantAdminCalls  int
 }
 
 func (r *fakeAuthRepository) CreateRefreshSession(ctx context.Context, params CreateRefreshSessionParams) (RefreshTokenRecord, error) {
@@ -705,6 +827,11 @@ func (r *fakeAuthRepository) GetUserProfile(ctx context.Context, userID uuid.UUI
 		r.profile = testUserProfile(userID)
 	}
 	return r.profile, nil
+}
+
+func (r *fakeAuthRepository) GrantAdminRole(ctx context.Context, userID uuid.UUID) (bool, error) {
+	r.grantAdminCalls++
+	return r.grantAdminResult, r.grantAdminErr
 }
 
 func testUserProfile(userID uuid.UUID) UserProfile {
