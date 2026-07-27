@@ -181,6 +181,9 @@ func (s *Service) CompleteOAuth(ctx context.Context, params CompleteOAuthParams)
 		Now:            s.now(),
 	})
 	if err != nil {
+		if errors.Is(err, errUserDisabled) {
+			return CompleteOAuthResult{}, handlerutil.ErrUnauthorized
+		}
 		return CompleteOAuthResult{}, fmt.Errorf("find or create oauth user: %w", err)
 	}
 

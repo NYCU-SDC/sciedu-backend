@@ -277,6 +277,78 @@ func TestServiceOAuthFlow(t *testing.T) {
 	require.NotEmpty(t, complete.Session.RefreshToken)
 }
 
+func TestServiceCompleteOAuthRejectsDisabledUser(t *testing.T) {
+	now := time.Date(2026, 5, 27, 12, 0, 0, 0, time.UTC)
+	userID := uuid.MustParse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+	accountID := uuid.MustParse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+
+	tests := []struct {
+		name         string
+		oauthUserErr error
+		wantErr      error
+		wantSession  bool
+	}{
+		{
+			name:        "active user issues a session",
+			wantSession: true,
+		},
+		{
+			name:         "disabled user is unauthorized and issues no session",
+			oauthUserErr: errUserDisabled,
+			wantErr:      handlerutil.ErrUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			provider := &fakeOAuthProvider{
+				claims: GoogleIDTokenClaims{
+					Email:            "student@example.com",
+					EmailVerified:    true,
+					Name:             "Student",
+					RegisteredClaims: jwt.RegisteredClaims{Subject: "google-subject"},
+				},
+			}
+			repo := &fakeAuthRepository{
+				oauthUser:    OAuthUserRecord{UserID: userID, OAuthAccountID: accountID},
+				profile:      testUserProfile(userID),
+				oauthUserErr: tt.oauthUserErr,
+			}
+			svc := NewService(repo, ServiceConfig{
+				Secret:               "test-secret",
+				Environment:          EnvironmentDev,
+				Now:                  func() time.Time { return now },
+				OAuthProvider:        provider,
+				RedirectURLAllowlist: []string{"http://localhost:5173"},
+			}, nil)
+
+			begin, err := svc.BeginOAuth(t.Context(), BeginOAuthParams{
+				Provider:    "google",
+				RedirectURL: "http://localhost:5173/courses",
+			})
+			require.NoError(t, err)
+
+			complete, err := svc.CompleteOAuth(t.Context(), CompleteOAuthParams{
+				Provider: "google",
+				Code:     "auth-code",
+				State:    stateFromURL(t, begin.AuthURL),
+			})
+			if tt.wantErr != nil {
+				require.ErrorIs(t, err, tt.wantErr)
+				require.Empty(t, complete.Session.AccessToken)
+				require.False(t, repo.createdSession, "disabled user must not have a refresh token family/token created")
+				return
+			}
+
+			require.NoError(t, err)
+			require.True(t, tt.wantSession)
+			require.NotEmpty(t, complete.Session.AccessToken)
+			require.NotEmpty(t, complete.Session.RefreshToken)
+			require.True(t, repo.createdSession)
+		})
+	}
+}
+
 func TestServiceBeginOAuthValidatesRedirectAllowlist(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -531,22 +603,24 @@ func stateFromURL(t *testing.T, raw string) string {
 }
 
 type fakeAuthRepository struct {
-	record        RefreshTokenRecord
-	oauthState    OAuthLoginStateRecord
-	oauthUser     OAuthUserRecord
-	profile       UserProfile
-	findErr       error
-	consumeErr    error
-	oauthUserErr  error
-	revokeErr     error
-	rotateErr     error
-	rotated       bool
-	revoked       bool
-	reuseDetected bool
-	createdState  bool
+	record         RefreshTokenRecord
+	oauthState     OAuthLoginStateRecord
+	oauthUser      OAuthUserRecord
+	profile        UserProfile
+	findErr        error
+	consumeErr     error
+	oauthUserErr   error
+	revokeErr      error
+	rotateErr      error
+	rotated        bool
+	revoked        bool
+	reuseDetected  bool
+	createdState   bool
+	createdSession bool
 }
 
 func (r *fakeAuthRepository) CreateRefreshSession(ctx context.Context, params CreateRefreshSessionParams) (RefreshTokenRecord, error) {
+	r.createdSession = true
 	return RefreshTokenRecord{
 		ID:              uuid.New(),
 		FamilyID:        uuid.New(),

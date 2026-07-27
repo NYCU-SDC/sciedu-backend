@@ -190,6 +190,14 @@ func (s *Store) FindOrCreateOAuthUser(ctx context.Context, identity OAuthIdentit
 		ProviderUserID: identity.ProviderUserID,
 	})
 	if err == nil {
+		// Reject disabled users before any login side effect: GetUserProfile filters on
+		// disabled_at IS NULL, so ErrNoRows here means the user is disabled or removed.
+		if _, err := q.GetUserProfile(ctx, account.UserID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return OAuthUserRecord{}, errUserDisabled
+			}
+			return OAuthUserRecord{}, err
+		}
 		if err := q.TouchOAuthAccount(ctx, TouchOAuthAccountParams{
 			ID:            account.ID,
 			UserID:        account.UserID,
