@@ -333,3 +333,27 @@ Why I still got it wrong despite the doc existing:
 - **Running the disabled-user integration test:** it is `//go:build integration` and skips unless `AUTH_INTEGRATION_DATABASE_URL` points at a migrated Postgres. To exercise it: `docker compose -f .deploy/local/compose.yaml up -d`, apply migrations, then `go test -tags integration ./internal/auth/ -run TestOAuthCallbackRejectsDisabledUser`.
 - **Design caveat for whoever touches auth next:** the disabled gate reuses `GetUserProfile` (a profile-fetch query) purely as an "is this user still active?" existence check, relying on its `WHERE disabled_at IS NULL`. If `GetUserProfile` ever loses that predicate or changes columns, this gate silently weakens — keep the integration test as the guard, or switch to a dedicated `GetActiveUserByID` (Phase 2 introduces one in `internal/user`).
 - **Remaining RBAC work** (this is Phase 1.1 of the plan in `_mynotes/users/user_impl_plan_0727.md`): Phase 1.2 `RequireAnyRole` authorizer middleware (DB-backed, fail-closed, per-route via summer `Set.Append`); Phase 1.3 `AUTH_BOOTSTRAP_ADMIN_EMAIL` bootstrap admin; Phase 2 the `internal/user` package (list/get/soft-delete/role-replace with self-op guards); Phase 3 add `userId` to `answerResponse` + role-gate `GET /questions/{id}/answers`.
+
+## [2026-07-27 —] Task Record — Users RBAC Phase 1.2 (RequireAnyRole authorizer middleware)
+
+### Task Description
+- Build the reusable, DB-backed `RequireAnyRole` authorization middleware that Phase 2 (Users routes) and Phase 3 (answers GET) will hang on role-restricted routes. Fail-closed per spec. Branch `feat/users-rbac`.
+
+### Actions Taken
+- `internal/auth/authorizer.go` (new): `type Role string` + exported constants `STUDENT`/`EXPERIMENTER`/`ADMIN` (aligned with the DB `user_role` enum and TypeSpec `UserRole`); `RoleQuerier` interface (`ActiveUserRoles(ctx, userID) ([]Role, error)`, `pgx.ErrNoRows` = missing/disabled); `Authorizer` struct + `NewAuthorizer` (holds `problemutil.New()`, same shape as `Middleware`); `RequireAnyRole(allowed ...Role)` returning `func(http.HandlerFunc) http.HandlerFunc`.
+- Middleware outcomes, all written via `problemWriter.WriteError` (summer maps the sentinel → status): no user ID in context → `ErrUnauthorized` (401); DB error (non-ErrNoRows) → raw err → 500 (never a silent pass); `ErrNoRows` → `ErrUnauthorized` (401); active user without a matching role → `ErrForbidden` (403); intersection non-empty → `next`. Roles are read from the DB every request (no cache), so role changes take effect on the next request.
+- `internal/auth/queries.sql`: added `ActiveUserRoles :one` — `SELECT roles::text[] AS roles FROM users WHERE id = $1 AND disabled_at IS NULL`. The `::text[]` cast is required because sqlc maps the raw `user_role[]` column to `[]interface{}` (see `models.go`); casting yields `[]string` (same trick as `CreateOAuthUser`). `make generate` was run by the user.
+- `internal/auth/store.go`: `Store.ActiveUserRoles` wrapper — calls the generated `[]string` query and converts to `[]Role`, passing `pgx.ErrNoRows` straight through.
+- `internal/auth/authorizer_test.go` (new): table-driven over all five outcomes with a fake `RoleQuerier`, plus `TestAuthorizerRequireAnyRoleReadsRolesEachRequest` (two calls returning different roles → 200 then 403, asserting `querier.calls == 2` to prove no caching / immediate downgrade).
+- `internal/auth/oauth_integration_test.go` (`//go:build integration`): `TestStoreActiveUserRoles` — new user defaults to `[STUDENT]`; a SQL role update is visible on the next `ActiveUserRoles` read; a disabled user and an unknown user both return `pgx.ErrNoRows`.
+
+### Attempted Methods
+- Made `RequireAnyRole` a **method on `*Authorizer`** (constructor-injected `RoleQuerier`), not the package-level function the plan's snippet first sketched — it needs the querier and this matches how `Middleware`/`Service` are wired. `Set.Append` still accepts it because it returns `func(http.HandlerFunc) http.HandlerFunc`.
+- Deliberately did **not** touch `cmd/backend/main.go` or any `RegisterRoutes`: constructing an `Authorizer` with no route using it is an unused variable and won't compile. Wiring lands in Phase 2 (first Users route) and Phase 3 (answers GET).
+
+### Issues & Blockers
+- None. `go build ./...`, `go vet ./...`, `go vet -tags integration ./internal/auth/...`, `gofmt -l .` all clean; `go test ./internal/auth/... -race -count=1` → 91 passed; `go test ./... -count=1` → 249 passed across 8 packages. The new integration test is `//go:build integration` and was not run against a live DB this session.
+
+### Next Steps
+- **Wiring is intentionally deferred.** When Phase 2 builds the `internal/user` handler, construct the authorizer once in `main.go` (`authorizer := auth.NewAuthorizer(authStore, logger)`) and register restricted routes with `middlewares.Append(authorizer.RequireAnyRole(...)).HandlerFunc(fn)`; `authStore` already satisfies `RoleQuerier`.
+- **Role constants are exported as `auth.STUDENT` / `auth.EXPERIMENTER` / `auth.ADMIN`** (bare, not `RoleAdmin`) to match the plan's route snippets; Phase 2/3 should use those.

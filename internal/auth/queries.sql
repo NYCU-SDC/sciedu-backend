@@ -166,3 +166,9 @@ SELECT id, name, email
 FROM users
 WHERE id = $1
   AND disabled_at IS NULL;
+
+-- name: ActiveUserRoles :one
+SELECT roles::text[] AS roles
+FROM users
+WHERE id = $1
+  AND disabled_at IS NULL;

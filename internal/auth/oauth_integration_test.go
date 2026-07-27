@@ -10,9 +10,11 @@ import (
 	"net/url"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 )
@@ -202,19 +204,16 @@ func TestOAuthCallbackRejectsDisabledUser(t *testing.T) {
 		},
 	}
 
-	// First login creates the user and issues a session (one refresh token family).
 	firstCallback := completeOAuthCallback(t, ctx, client, server.URL, userAgent)
 	require.Equal(t, http.StatusFound, firstCallback.StatusCode)
 	require.Equal(t, 1, countRefreshFamiliesByEmail(t, ctx, pool, email))
 
-	// Disable the user, then attempt to log in again with the same provider subject.
 	_, err = pool.Exec(ctx, "UPDATE users SET disabled_at = now() WHERE email = $1", email)
 	require.NoError(t, err)
 
 	secondCallback := completeOAuthCallback(t, ctx, client, server.URL, userAgent)
 	require.Equal(t, http.StatusUnauthorized, secondCallback.StatusCode)
 
-	// The disabled login must not recreate the user or issue a new refresh token family.
 	require.Equal(t, 1, countRefreshFamiliesByEmail(t, ctx, pool, email))
 
 	var userCount int
@@ -266,4 +265,53 @@ func countRefreshFamiliesByEmail(t *testing.T, ctx context.Context, pool *pgxpoo
 		email,
 	).Scan(&count))
 	return count
+}
+
+func TestStoreActiveUserRoles(t *testing.T) {
+	databaseURL := os.Getenv("AUTH_INTEGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AUTH_INTEGRATION_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	require.NoError(t, pool.Ping(ctx))
+
+	testID := uuid.NewString()
+	email := "roles-" + testID + "@example.com"
+	subject := "roles-" + testID
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DELETE FROM users WHERE email = $1", email)
+	})
+
+	store := NewStore(pool)
+	record, err := store.FindOrCreateOAuthUser(ctx, OAuthIdentity{
+		Provider:       googleProviderName,
+		ProviderUserID: subject,
+		Email:          email,
+		EmailVerified:  true,
+		Name:           "Roles User",
+		Now:            time.Now(),
+	})
+	require.NoError(t, err)
+
+	roles, err := store.ActiveUserRoles(ctx, record.UserID)
+	require.NoError(t, err)
+	require.Equal(t, []Role{STUDENT}, roles)
+
+	_, err = pool.Exec(ctx, "UPDATE users SET roles = ARRAY['STUDENT','EXPERIMENTER']::user_role[] WHERE email = $1", email)
+	require.NoError(t, err)
+	roles, err = store.ActiveUserRoles(ctx, record.UserID)
+	require.NoError(t, err)
+	require.Equal(t, []Role{STUDENT, EXPERIMENTER}, roles)
+
+	_, err = pool.Exec(ctx, "UPDATE users SET disabled_at = now() WHERE email = $1", email)
+	require.NoError(t, err)
+	_, err = store.ActiveUserRoles(ctx, record.UserID)
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+
+	_, err = store.ActiveUserRoles(ctx, uuid.New())
+	require.ErrorIs(t, err, pgx.ErrNoRows)
 }
