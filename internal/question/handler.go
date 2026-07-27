@@ -57,6 +57,7 @@ type submitAnswerRequest struct {
 type answerResponse struct {
 	ID               uuid.UUID  `json:"id"`
 	QuestionID       uuid.UUID  `json:"questionId"`
+	UserID           uuid.UUID  `json:"userId"`
 	SelectedOptionID *uuid.UUID `json:"selectedOptionId"`
 	TextAnswer       *string    `json:"textAnswer"`
 	CreatedAt        time.Time  `json:"createdAt"`
@@ -81,21 +82,26 @@ func NewHandler(questionService *QuestionService, answerService *AnswerService, 
 	}
 }
 
-func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil.Set) {
-	handle := func(pattern string, fn http.HandlerFunc) {
-		if middlewares != nil {
-			fn = middlewares.HandlerFunc(fn)
+func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil.Set, authorizer *auth.Authorizer) {
+	handle := func(pattern string, set *middlewareutil.Set, fn http.HandlerFunc) {
+		if set != nil {
+			fn = set.HandlerFunc(fn)
 		}
 		mux.HandleFunc(pattern, fn)
 	}
 
-	handle("GET /api/questions", h.List)
-	handle("POST /api/questions", h.Create)
-	handle("GET /api/questions/{id}", h.Get)
-	handle("PUT /api/questions/{id}", h.Update)
-	handle("DELETE /api/questions/{id}", h.Delete)
-	handle("POST /api/questions/{id}/answers", h.SubmitAnswer)
-	handle("GET /api/questions/{id}/answers", h.ListAnswers)
+	answerReadAccess := middlewares
+	if middlewares != nil && authorizer != nil {
+		answerReadAccess = middlewares.Append(authorizer.RequireAnyRole(auth.EXPERIMENTER, auth.ADMIN))
+	}
+
+	handle("GET /api/questions", middlewares, h.List)
+	handle("POST /api/questions", middlewares, h.Create)
+	handle("GET /api/questions/{id}", middlewares, h.Get)
+	handle("PUT /api/questions/{id}", middlewares, h.Update)
+	handle("DELETE /api/questions/{id}", middlewares, h.Delete)
+	handle("POST /api/questions/{id}/answers", middlewares, h.SubmitAnswer)
+	handle("GET /api/questions/{id}/answers", answerReadAccess, h.ListAnswers)
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -327,6 +333,7 @@ func buildAnswerResponse(answer Answer) answerResponse {
 	resp := answerResponse{
 		ID:         answer.ID,
 		QuestionID: answer.QuestionID,
+		UserID:     answer.UserID,
 	}
 
 	if answer.SelectedOptionID.Valid {

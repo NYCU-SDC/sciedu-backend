@@ -412,3 +412,26 @@ Why I still got it wrong despite the doc existing:
 - **Manual smoke (Phase 4, Yaak)** still owed: bootstrap admin → `GET /users/me` shows ADMIN; admin `DELETE /users/{self}` → 403; admin deletes a STUDENT → their refresh token → 401; deleted STUDENT re-runs OAuth → 401 (not recreated); role change reflects on next restricted request without re-login.
 - **Phase 3** next: merge `feat/answer` into `feat/users-rbac` (decision 6) to get `answerResponse`/`ListAnswers`, add `userId` to the answer response, and gate `GET /questions/{id}/answers` with `RequireAnyRole(EXPERIMENTER, ADMIN)`. Do it on `feat/users-rbac`, never on `feat/answer`.
 - **Out of scope (unchanged, disclosed)**: other Questions/Content routes keep their existing permissions (e.g. any authenticated student can still POST/PUT/DELETE questions) — spec explicitly excludes widening those here.
+
+## [2026-07-28 —] Task Record — Users RBAC Phase 3 (answer userId + role gate) incl. feat/answer merge
+
+### Task Description
+- Merge `feat/answer` into `feat/users-rbac` (decision 6) to get the answer code, then Phase 3: expose `userId` on the answer response and gate `GET /api/questions/{id}/answers` with `RequireAnyRole(EXPERIMENTER, ADMIN)`. Spec AC "Answer GET 只允許 EXPERIMENTER/ADMIN 並回傳所有 users 的 answers 與 userId".
+
+### Actions Taken
+- **Merge** `feat/answer` → `feat/users-rbac` (merge commit `7bae366`). Only textual conflict was the report file (`--ours`, since our copy is a strict superset of feat/answer's entries). `make gen` was re-run post-merge to reconcile `internal/user/models.go` (it had been generated before the `answers` table existed, so it was missing the `Answer` model; every other package already had it).
+- `internal/question/handler.go`: `answerResponse` gained `UserID uuid.UUID \`json:"userId"\``; `buildAnswerResponse` sets `UserID: answer.UserID` (the `answers` query already selects `user_id`, `Answer.UserID` is a non-null `uuid.UUID`, so pure wiring). `RegisterRoutes` signature gained `authorizer *auth.Authorizer`; `GET /api/questions/{id}/answers` now registers via `middlewares.Append(authorizer.RequireAnyRole(auth.EXPERIMENTER, auth.ADMIN))`; the other six routes (incl. `POST .../answers`) are unchanged.
+- `cmd/backend/main.go`: `questionHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)` (authorizer already built in Phase 2).
+- `internal/question/handler_test.go`: `newTestMux` → `RegisterRoutes(mux, nil, nil)`; `TestHandlerListAnswers_TableDriven` now asserts every returned answer carries a non-nil, unique `userId`; added `TestHandlerListAnswers_Authorization` (real `RegisterRoutes` + real authorizer with a fake `RoleQuerier` + injected userID): STUDENT GET → 403, EXPERIMENTER/ADMIN GET → 200, STUDENT POST → 201.
+
+### Attempted Methods
+- **Semantic (non-textual) merge conflict caught before it shipped**: both branches independently added an identical `func ContextWithUserID` to `auth/middleware.go` but at different line regions (mine before `UserIDFromContext`, feat/answer's after, with a doc comment). Git auto-merged both → a duplicate function that fails to compile, with **no** CONFLICT marker. Verified via `git merge-tree --write-tree` (two definitions in the merged tree) before the user committed, and removed my copy, keeping feat/answer's documented one. Lesson for next agent: after any merge, `go build` even when git reports no conflicts.
+- `RegisterRoutes` nil-guard: when `middlewares`/`authorizer` are nil (unit tests via `newTestMux`), the answers-GET route registers without the role gate, so existing ListAnswers logic tests keep passing; the gate gets its own dedicated test with a real authorizer.
+
+### Issues & Blockers
+- None outstanding. `go build ./...`, `go vet ./...`, `gofmt -l .` clean; `go test ./... -race -count=1` → 322 passed across 9 packages (question package: 52). No SQL/migration change, so no further `make gen` needed beyond the post-merge reconciliation.
+
+### Next Steps
+- **All five phases of the plan are now implemented.** Remaining is Phase 4 (manual Yaak smoke against a live stack) and Phase 5 (PR). Suggested per-Phase commits are with the user; Phase 3's is a single `feat:` on top of merge commit `7bae366`.
+- **Out of scope (unchanged, disclosed)**: `POST .../answers` stays authenticated-only; other Questions/Content routes keep existing permissions (any authenticated student can still POST/PUT/DELETE questions) — spec explicitly excludes widening those.
+- **When `feat/answer` (PR #57) later merges to main**, a `git rebase main` on `feat/users-rbac` should fold the identical answer commits by SHA without conflict.

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -139,7 +140,7 @@ func newTestMux(q *fakeQuerier) *http.ServeMux {
 	handler := NewHandler(questionService, answerService, logger)
 
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux, nil)
+	handler.RegisterRoutes(mux, nil, nil)
 	return mux
 }
 
@@ -825,8 +826,8 @@ func TestHandlerListAnswers_TableDriven(t *testing.T) {
 						t.Errorf("querier received wrong question id: want %s got %s", questionID, gotQuestionID)
 					}
 					return []Answer{
-						{ID: uuid.New(), QuestionID: questionID, TextAnswer: pgtype.Text{String: "newer", Valid: true}},
-						{ID: uuid.New(), QuestionID: questionID, TextAnswer: pgtype.Text{String: "older", Valid: true}},
+						{ID: uuid.New(), QuestionID: questionID, UserID: uuid.New(), TextAnswer: pgtype.Text{String: "newer", Valid: true}},
+						{ID: uuid.New(), QuestionID: questionID, UserID: uuid.New(), TextAnswer: pgtype.Text{String: "older", Valid: true}},
 					}, nil
 				},
 			},
@@ -892,6 +893,94 @@ func TestHandlerListAnswers_TableDriven(t *testing.T) {
 			}
 			if tt.wantLen > 0 && got[0]["textAnswer"] != "newer" {
 				t.Fatalf("order not preserved: %v", got[0]["textAnswer"])
+			}
+			seen := make(map[string]bool, len(got))
+			for i, item := range got {
+				uid, ok := item["userId"].(string)
+				if !ok || uid == "" || uid == uuid.Nil.String() {
+					t.Fatalf("answer %d missing userId: %v", i, item)
+				}
+				if seen[uid] {
+					t.Fatalf("userId %s duplicated across answers", uid)
+				}
+				seen[uid] = true
+			}
+		})
+	}
+}
+
+type fakeRoleQuerier struct {
+	roles []auth.Role
+}
+
+func (f fakeRoleQuerier) ActiveUserRoles(ctx context.Context, userID uuid.UUID) ([]auth.Role, error) {
+	return f.roles, nil
+}
+
+func newAuthorizedMux(q *fakeQuerier, actorID uuid.UUID, roles []auth.Role) *http.ServeMux {
+	logger := zap.NewNop()
+	optionService := NewOptionService(q, logger)
+	questionService := NewQuestionService(q, optionService, logger)
+	answerService := NewAnswerService(q, questionService, logger)
+	handler := NewHandler(questionService, answerService, logger)
+
+	set := middlewareutil.NewSet(func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			next(w, r.WithContext(auth.ContextWithUserID(r.Context(), actorID)))
+		}
+	})
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux, set, auth.NewAuthorizer(fakeRoleQuerier{roles: roles}, nil))
+	return mux
+}
+
+// TestHandlerListAnswers_Authorization exercises the real RequireAnyRole wiring:
+// GET answers needs EXPERIMENTER/ADMIN, while POST answers stays open to any
+// authenticated user.
+func TestHandlerListAnswers_Authorization(t *testing.T) {
+	questionID := uuid.New()
+	actorID := uuid.New()
+
+	newQuerier := func() *fakeQuerier {
+		return &fakeQuerier{
+			getQuestionFn: func(context.Context, uuid.UUID) (Question, error) {
+				return Question{ID: questionID, Type: "TEXT", Content: "q"}, nil
+			},
+			listAnswersFn: func(context.Context, uuid.UUID) ([]Answer, error) {
+				return []Answer{{ID: uuid.New(), QuestionID: questionID, UserID: uuid.New(), TextAnswer: pgtype.Text{String: "a", Valid: true}}}, nil
+			},
+		}
+	}
+
+	tests := []struct {
+		name     string
+		roles    []auth.Role
+		method   string
+		wantCode int
+	}{
+		{name: "student cannot read answers", roles: []auth.Role{auth.STUDENT}, method: http.MethodGet, wantCode: http.StatusForbidden},
+		{name: "experimenter can read answers", roles: []auth.Role{auth.EXPERIMENTER}, method: http.MethodGet, wantCode: http.StatusOK},
+		{name: "admin can read answers", roles: []auth.Role{auth.ADMIN}, method: http.MethodGet, wantCode: http.StatusOK},
+		{name: "student can still submit answers", roles: []auth.Role{auth.STUDENT}, method: http.MethodPost, wantCode: http.StatusCreated},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := newAuthorizedMux(newQuerier(), actorID, tt.roles)
+			url := "/api/questions/" + questionID.String() + "/answers"
+
+			var req *http.Request
+			if tt.method == http.MethodPost {
+				req = httptest.NewRequest(http.MethodPost, url, strings.NewReader(`{"textAnswer":"my answer"}`))
+			} else {
+				req = httptest.NewRequest(http.MethodGet, url, nil)
+			}
+
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantCode {
+				t.Fatalf("status mismatch: want %d got %d, body=%s", tt.wantCode, rec.Code, rec.Body.String())
 			}
 		})
 	}

@@ -134,7 +134,7 @@ func main() {
 
 	authHandler.RegisterRoutes(mux, middlewareSet)
 	userHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
-	questionHandler.RegisterRoutes(mux, protectedMiddlewareSet)
+	questionHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
 	contentHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	chatHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 
