@@ -273,13 +273,5 @@ func isKnownRole(role string) bool {
 }
 
 func buildUserResponse(u Profile) userResponse {
-	return userResponse{
-		ID:        u.ID,
-		Email:     u.Email,
-		Name:      u.Name,
-		AvatarURL: u.AvatarURL,
-		Roles:     u.Roles,
-		CreatedAt: u.CreatedAt,
-		UpdatedAt: u.UpdatedAt,
-	}
+	return userResponse(u)
 }
