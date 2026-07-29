@@ -148,4 +148,22 @@ func TestStoreListAndCount(t *testing.T) {
 		require.Len(t, users, 1)
 		assert.Equal(t, prefix+"Alice", users[0].Name)
 	})
+
+	t.Run("wildcard characters in search are treated literally", func(t *testing.T) {
+		// literalNeedle embeds a raw '%' right after the unique prefix. Under
+		// unescaped ILIKE, '%' collapses into the pattern's own wildcards and
+		// this degrades into a plain prefix search, matching every user
+		// inserted above instead of only the one with a literal '%' in its name.
+		literalNeedle := prefix + "%"
+		insertUser(t, pool, prefix+"eve@example.com", literalNeedle+"Eve", []string{"STUDENT"})
+
+		users, err := store.ListUsers(ctx, ListParams{ListFilter: ListFilter{Search: &literalNeedle}, Limit: 10, Offset: 0})
+		require.NoError(t, err)
+		require.Len(t, users, 1)
+		assert.Equal(t, literalNeedle+"Eve", users[0].Name)
+
+		total, err := store.CountUsers(ctx, ListFilter{Search: &literalNeedle})
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), total)
+	})
 }

@@ -4,8 +4,8 @@ FROM users
 WHERE disabled_at IS NULL
   AND (
     sqlc.narg('search')::text IS NULL
-    OR name ILIKE '%' || sqlc.narg('search') || '%'
-    OR email ILIKE '%' || sqlc.narg('search') || '%'
+    OR strpos(lower(name), lower(sqlc.narg('search')::text)) > 0
+    OR strpos(lower(email), lower(sqlc.narg('search')::text)) > 0
   )
   AND (
     sqlc.narg('role')::text IS NULL
@@ -20,8 +20,8 @@ FROM users
 WHERE disabled_at IS NULL
   AND (
     sqlc.narg('search')::text IS NULL
-    OR name ILIKE '%' || sqlc.narg('search') || '%'
-    OR email ILIKE '%' || sqlc.narg('search') || '%'
+    OR strpos(lower(name), lower(sqlc.narg('search')::text)) > 0
+    OR strpos(lower(email), lower(sqlc.narg('search')::text)) > 0
   )
   AND (
     sqlc.narg('role')::text IS NULL
