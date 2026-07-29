@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"fmt"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	"github.com/google/uuid"
@@ -100,6 +101,11 @@ func (s *Service) Delete(ctx context.Context, actorID, targetID uuid.UUID) error
 func (s *Service) ReplaceRoles(ctx context.Context, actorID, targetID uuid.UUID, roles []string) (Profile, error) {
 	if actorID == targetID {
 		return Profile{}, errSelfOperation
+	}
+	for _, role := range roles {
+		if !isKnownRole(role) {
+			return Profile{}, fmt.Errorf("%w: unknown role %q", errInvalidUserPayload, role)
+		}
 	}
 	u, err := s.repo.ReplaceRoles(ctx, targetID, roles)
 	if err != nil {

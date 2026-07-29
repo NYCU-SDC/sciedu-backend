@@ -129,8 +129,10 @@ func TestServiceReplaceRolesSelfOperation(t *testing.T) {
 		name           string
 		actorID        uuid.UUID
 		targetID       uuid.UUID
+		roles          []string
 		replaceFn      func(ctx context.Context, id uuid.UUID, roles []string) (Profile, error)
 		wantSelfErr    bool
+		wantInvalidErr bool
 		wantErr        bool
 		wantReplaceHit int
 	}{
@@ -138,6 +140,7 @@ func TestServiceReplaceRolesSelfOperation(t *testing.T) {
 			name:           "self role change is rejected before touching the DB",
 			actorID:        actor,
 			targetID:       actor,
+			roles:          []string{"ADMIN"},
 			wantSelfErr:    true,
 			wantErr:        true,
 			wantReplaceHit: 0,
@@ -146,6 +149,7 @@ func TestServiceReplaceRolesSelfOperation(t *testing.T) {
 			name:     "replacing another user's roles calls the repository",
 			actorID:  actor,
 			targetID: other,
+			roles:    []string{"ADMIN"},
 			replaceFn: func(ctx context.Context, id uuid.UUID, roles []string) (Profile, error) {
 				return Profile{ID: id, Roles: roles}, nil
 			},
@@ -155,11 +159,24 @@ func TestServiceReplaceRolesSelfOperation(t *testing.T) {
 			name:     "missing target surfaces the repository error",
 			actorID:  actor,
 			targetID: other,
+			roles:    []string{"ADMIN"},
 			replaceFn: func(ctx context.Context, id uuid.UUID, roles []string) (Profile, error) {
 				return Profile{}, pgx.ErrNoRows
 			},
 			wantErr:        true,
 			wantReplaceHit: 1,
+		},
+		{
+			// Guards against callers other than the HTTP handler (whose
+			// validator tag is the only other check today) reaching the DB
+			// with a role string that isn't one of the known roles.
+			name:           "unknown role is rejected before touching the DB",
+			actorID:        actor,
+			targetID:       other,
+			roles:          []string{"SUPERADMIN"},
+			wantInvalidErr: true,
+			wantErr:        true,
+			wantReplaceHit: 0,
 		},
 	}
 
@@ -168,11 +185,14 @@ func TestServiceReplaceRolesSelfOperation(t *testing.T) {
 			repo := &fakeRepo{replaceRolesFn: tt.replaceFn}
 			svc := NewService(repo, nil)
 
-			_, err := svc.ReplaceRoles(context.Background(), tt.actorID, tt.targetID, []string{"ADMIN"})
+			_, err := svc.ReplaceRoles(context.Background(), tt.actorID, tt.targetID, tt.roles)
 
 			assert.Equal(t, tt.wantReplaceHit, repo.replaceRolesCalls)
 			if tt.wantSelfErr {
 				assert.ErrorIs(t, err, errSelfOperation)
+			}
+			if tt.wantInvalidErr {
+				assert.ErrorIs(t, err, errInvalidUserPayload)
 			}
 			if tt.wantErr {
 				assert.Error(t, err)
