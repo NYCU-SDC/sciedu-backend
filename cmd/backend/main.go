@@ -12,6 +12,7 @@ import (
 	"sciedu-backend/internal/content"
 	"sciedu-backend/internal/cors"
 	"sciedu-backend/internal/question"
+	"sciedu-backend/internal/user"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
@@ -52,7 +53,8 @@ func main() {
 	questionStore := question.NewStore(pool)
 	optionService := question.NewOptionService(questionStore, logger)
 	questionService := question.NewQuestionService(questionStore, optionService, logger)
-	questionHandler := question.NewHandler(questionService, logger)
+	answerService := question.NewAnswerService(questionStore, questionService, logger)
+	questionHandler := question.NewHandler(questionService, answerService, logger)
 
 	contentQueries := content.New(pool)
 	contentService := content.NewService(contentQueries, logger)
@@ -108,12 +110,18 @@ func main() {
 		OAuthProvider:         oauthProvider,
 		RedirectURLAllowlist:  parseAllowOrigins(cfg.AuthRedirectAllowlist),
 		RedirectPreviewDomain: cfg.AuthRedirectPreviewDomain,
+		BootstrapAdminEmail:   cfg.AuthBootstrapAdminEmail,
 	}, logger)
 	authHandler := auth.NewHandler(authService, auth.CookieConfig{
 		Environment: cfg.Environment,
 	}, logger)
 	authMiddleware := auth.NewMiddleware(authService, logger)
 	protectedMiddlewareSet := middlewareSet.Append(authMiddleware.HandlerFunc)
+	authorizer := auth.NewAuthorizer(authStore, logger)
+
+	userStore := user.NewStore(pool)
+	userService := user.NewService(userStore, logger)
+	userHandler := user.NewHandler(userService, logger)
 
 	// Health check route
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +133,8 @@ func main() {
 	})
 
 	authHandler.RegisterRoutes(mux, middlewareSet)
-	questionHandler.RegisterRoutes(mux, protectedMiddlewareSet)
+	userHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
+	questionHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
 	contentHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	chatHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 

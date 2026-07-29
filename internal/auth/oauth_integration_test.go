@@ -10,9 +10,11 @@ import (
 	"net/url"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 )
@@ -151,4 +153,214 @@ func (p integrationOAuthProvider) ExchangeIDToken(context.Context, string, strin
 
 func (p integrationOAuthProvider) VerifyIDToken(context.Context, string) (GoogleIDTokenClaims, error) {
 	return p.claims, nil
+}
+
+func TestOAuthCallbackRejectsDisabledUser(t *testing.T) {
+	databaseURL := os.Getenv("AUTH_INTEGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AUTH_INTEGRATION_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	require.NoError(t, pool.Ping(ctx))
+
+	testID := uuid.NewString()
+	email := "oauth-disabled-" + testID + "@example.com"
+	userAgent := "sciedu-auth-disabled-" + testID
+	subject := "oauth-disabled-" + testID
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DELETE FROM oauth_login_states WHERE user_agent = $1", userAgent)
+		_, _ = pool.Exec(context.Background(), "DELETE FROM users WHERE email = $1", email)
+	})
+
+	provider := integrationOAuthProvider{
+		claims: GoogleIDTokenClaims{
+			Email:         email,
+			EmailVerified: true,
+			Name:          "OAuth Disabled User",
+			RegisteredClaims: jwt.RegisteredClaims{
+				Subject: subject,
+			},
+		},
+	}
+	service := NewService(NewStore(pool), ServiceConfig{
+		Secret:               "integration-test-secret",
+		Environment:          EnvironmentDev,
+		OAuthProvider:        provider,
+		RedirectURLAllowlist: []string{"http://localhost:5173"},
+	}, nil)
+	handler := NewHandler(service, CookieConfig{Environment: EnvironmentDev}, nil)
+	mux := http.NewServeMux()
+	handler.RegisterRoutes(mux, nil)
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	client := &http.Client{
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	firstCallback := completeOAuthCallback(t, ctx, client, server.URL, userAgent)
+	require.Equal(t, http.StatusFound, firstCallback.StatusCode)
+	require.Equal(t, 1, countRefreshFamiliesByEmail(t, ctx, pool, email))
+
+	_, err = pool.Exec(ctx, "UPDATE users SET disabled_at = now() WHERE email = $1", email)
+	require.NoError(t, err)
+
+	secondCallback := completeOAuthCallback(t, ctx, client, server.URL, userAgent)
+	require.Equal(t, http.StatusUnauthorized, secondCallback.StatusCode)
+
+	require.Equal(t, 1, countRefreshFamiliesByEmail(t, ctx, pool, email))
+
+	var userCount int
+	require.NoError(t, pool.QueryRow(ctx, "SELECT count(*) FROM users WHERE email = $1", email).Scan(&userCount))
+	require.Equal(t, 1, userCount)
+}
+
+func completeOAuthCallback(t *testing.T, ctx context.Context, client *http.Client, baseURL, userAgent string) *http.Response {
+	t.Helper()
+
+	loginRequest, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		baseURL+"/api/login/oauth/google?r="+url.QueryEscape("http://localhost:5173/"),
+		nil,
+	)
+	require.NoError(t, err)
+	loginRequest.Header.Set("User-Agent", userAgent)
+	loginResponse, err := client.Do(loginRequest)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = loginResponse.Body.Close() })
+	require.Equal(t, http.StatusFound, loginResponse.StatusCode)
+
+	authURL, err := url.Parse(loginResponse.Header.Get("Location"))
+	require.NoError(t, err)
+	state := authURL.Query().Get("state")
+	require.NotEmpty(t, state)
+
+	callbackRequest, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		baseURL+"/api/auth/callback?code=integration-code&state="+url.QueryEscape(state),
+		nil,
+	)
+	require.NoError(t, err)
+	callbackRequest.Header.Set("User-Agent", userAgent)
+	callbackResponse, err := client.Do(callbackRequest)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = callbackResponse.Body.Close() })
+	return callbackResponse
+}
+
+func countRefreshFamiliesByEmail(t *testing.T, ctx context.Context, pool *pgxpool.Pool, email string) int {
+	t.Helper()
+	var count int
+	require.NoError(t, pool.QueryRow(
+		ctx,
+		"SELECT count(*) FROM refresh_token_families f JOIN users u ON u.id = f.user_id WHERE u.email = $1",
+		email,
+	).Scan(&count))
+	return count
+}
+
+func TestStoreActiveUserRoles(t *testing.T) {
+	databaseURL := os.Getenv("AUTH_INTEGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AUTH_INTEGRATION_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	require.NoError(t, pool.Ping(ctx))
+
+	testID := uuid.NewString()
+	email := "roles-" + testID + "@example.com"
+	subject := "roles-" + testID
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DELETE FROM users WHERE email = $1", email)
+	})
+
+	store := NewStore(pool)
+	record, err := store.FindOrCreateOAuthUser(ctx, OAuthIdentity{
+		Provider:       googleProviderName,
+		ProviderUserID: subject,
+		Email:          email,
+		EmailVerified:  true,
+		Name:           "Roles User",
+		Now:            time.Now(),
+	})
+	require.NoError(t, err)
+
+	roles, err := store.ActiveUserRoles(ctx, record.UserID)
+	require.NoError(t, err)
+	require.Equal(t, []Role{STUDENT}, roles)
+
+	_, err = pool.Exec(ctx, "UPDATE users SET roles = ARRAY['STUDENT','EXPERIMENTER']::user_role[] WHERE email = $1", email)
+	require.NoError(t, err)
+	roles, err = store.ActiveUserRoles(ctx, record.UserID)
+	require.NoError(t, err)
+	require.Equal(t, []Role{STUDENT, EXPERIMENTER}, roles)
+
+	_, err = pool.Exec(ctx, "UPDATE users SET disabled_at = now() WHERE email = $1", email)
+	require.NoError(t, err)
+	_, err = store.ActiveUserRoles(ctx, record.UserID)
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+
+	_, err = store.ActiveUserRoles(ctx, uuid.New())
+	require.ErrorIs(t, err, pgx.ErrNoRows)
+}
+
+func TestStoreGrantAdminRole(t *testing.T) {
+	databaseURL := os.Getenv("AUTH_INTEGRATION_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AUTH_INTEGRATION_DATABASE_URL is not set")
+	}
+
+	ctx := t.Context()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	require.NoError(t, pool.Ping(ctx))
+
+	testID := uuid.NewString()
+	email := "grant-" + testID + "@example.com"
+	subject := "grant-" + testID
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), "DELETE FROM users WHERE email = $1", email)
+	})
+
+	store := NewStore(pool)
+	record, err := store.FindOrCreateOAuthUser(ctx, OAuthIdentity{
+		Provider:       googleProviderName,
+		ProviderUserID: subject,
+		Email:          email,
+		EmailVerified:  true,
+		Name:           "Grant User",
+		Now:            time.Now(),
+	})
+	require.NoError(t, err)
+
+	granted, err := store.GrantAdminRole(ctx, record.UserID)
+	require.NoError(t, err)
+	require.True(t, granted)
+
+	roles, err := store.ActiveUserRoles(ctx, record.UserID)
+	require.NoError(t, err)
+	require.Contains(t, roles, ADMIN)
+
+	granted, err = store.GrantAdminRole(ctx, record.UserID)
+	require.NoError(t, err)
+	require.False(t, granted)
+
+	_, err = pool.Exec(ctx, "UPDATE users SET disabled_at = now() WHERE email = $1", email)
+	require.NoError(t, err)
+	granted, err = store.GrantAdminRole(ctx, record.UserID)
+	require.NoError(t, err)
+	require.False(t, granted)
 }

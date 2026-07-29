@@ -55,6 +55,16 @@ func (ns NullContentType) Value() (driver.Value, error) {
 	return string(ns.ContentType), nil
 }
 
+type Answer struct {
+	ID               uuid.UUID
+	QuestionID       uuid.UUID
+	UserID           uuid.UUID
+	SelectedOptionID pgtype.UUID
+	TextAnswer       pgtype.Text
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type Chat struct {
 	ID        uuid.UUID
 	CreatedAt pgtype.Timestamptz

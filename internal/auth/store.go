@@ -190,6 +190,13 @@ func (s *Store) FindOrCreateOAuthUser(ctx context.Context, identity OAuthIdentit
 		ProviderUserID: identity.ProviderUserID,
 	})
 	if err == nil {
+		// GetUserProfile filters disabled_at IS NULL, so ErrNoRows means a disabled user.
+		if _, err := q.GetUserProfile(ctx, account.UserID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return OAuthUserRecord{}, errUserDisabled
+			}
+			return OAuthUserRecord{}, err
+		}
 		if err := q.TouchOAuthAccount(ctx, TouchOAuthAccountParams{
 			ID:            account.ID,
 			UserID:        account.UserID,
@@ -250,6 +257,26 @@ func (s *Store) GetUserProfile(ctx context.Context, userID uuid.UUID) (UserProfi
 		Username: row.Name,
 		Email:    string(row.Email),
 	}, nil
+}
+
+func (s *Store) ActiveUserRoles(ctx context.Context, userID uuid.UUID) ([]Role, error) {
+	roleStrings, err := s.queries.ActiveUserRoles(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	roles := make([]Role, len(roleStrings))
+	for i, roleString := range roleStrings {
+		roles[i] = Role(roleString)
+	}
+	return roles, nil
+}
+
+func (s *Store) GrantAdminRole(ctx context.Context, userID uuid.UUID) (bool, error) {
+	rows, err := s.queries.GrantUserAdminRole(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
 }
 
 func refreshTokenRecordFromRow(row GetRefreshTokenByHashRow) RefreshTokenRecord {

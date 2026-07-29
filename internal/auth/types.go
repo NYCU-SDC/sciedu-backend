@@ -30,6 +30,7 @@ var (
 	errInvalidRedirectURL   = errors.New("invalid redirect url")
 	errOAuthCodeExchange    = errors.New("oauth code exchange failed")
 	errInvalidIDToken       = errors.New("invalid id token")
+	errUserDisabled         = errors.New("oauth user disabled")
 	ErrRefreshReuseDetected = errors.New("refresh token reuse detected")
 )
 

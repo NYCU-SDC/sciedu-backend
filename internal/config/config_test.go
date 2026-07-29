@@ -282,6 +282,40 @@ func TestValidateAuthRedirectPreviewDomain(t *testing.T) {
 	}
 }
 
+func TestValidateBootstrapAdminEmail(t *testing.T) {
+	tests := []struct {
+		name      string
+		email     string
+		wantError error
+	}{
+		{name: "empty is allowed", email: ""},
+		{name: "blank is allowed", email: "   "},
+		{name: "plain address", email: "admin@example.com"},
+		{name: "surrounding spaces are trimmed", email: "  admin@example.com  "},
+		{name: "missing domain", email: "admin@", wantError: ErrInvalidBootstrapAdminEmail},
+		{name: "missing local part", email: "@example.com", wantError: ErrInvalidBootstrapAdminEmail},
+		{name: "not an email", email: "not-an-email", wantError: ErrInvalidBootstrapAdminEmail},
+		{name: "named address form is rejected", email: "Admin <admin@example.com>", wantError: ErrInvalidBootstrapAdminEmail},
+		{name: "multiple addresses are rejected", email: "a@example.com, b@example.com", wantError: ErrInvalidBootstrapAdminEmail},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := Config{
+				Environment:             "dev",
+				Secret:                  DefaultSecret,
+				AuthBootstrapAdminEmail: tt.email,
+			}
+			err := config.Validate()
+			if tt.wantError != nil {
+				require.ErrorIs(t, err, tt.wantError)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func resetFlags(t *testing.T) {
 	t.Helper()
 	oldCommandLine := flag.CommandLine

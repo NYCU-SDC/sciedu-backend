@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"net"
+	"net/mail"
 	"net/url"
 	"os"
 	"strings"
@@ -21,6 +22,7 @@ var (
 	ErrLocalhostRequiresDev         = errors.New("localhost origins require dev environment")
 	ErrPreviewRedirectRequiresDev   = errors.New("preview redirect domain requires dev environment")
 	ErrInvalidPreviewRedirectDomain = errors.New("preview redirect domain must be a valid DNS domain")
+	ErrInvalidBootstrapAdminEmail   = errors.New("bootstrap admin email must be a valid email address")
 )
 
 type Config struct {
@@ -39,6 +41,7 @@ type Config struct {
 	GoogleOAuthCredentialsFile string `yaml:"google_oauth_credentials_file" envconfig:"GOOGLE_OAUTH_CREDENTIALS_FILE"`
 	AuthRedirectAllowlist      string `yaml:"auth_redirect_allowlist"      envconfig:"AUTH_REDIRECT_ALLOWLIST"`
 	AuthRedirectPreviewDomain  string `yaml:"auth_redirect_preview_domain" envconfig:"AUTH_REDIRECT_PREVIEW_DOMAIN"`
+	AuthBootstrapAdminEmail    string `yaml:"auth_bootstrap_admin_email"   envconfig:"AUTH_BOOTSTRAP_ADMIN_EMAIL"`
 }
 
 type LogBuffer struct {
@@ -92,6 +95,7 @@ func Load() (Config, *LogBuffer) {
 		GoogleOAuthCredentialsFile: "",
 		AuthRedirectAllowlist:      "",
 		AuthRedirectPreviewDomain:  "",
+		AuthBootstrapAdminEmail:    "",
 	}
 
 	var err error
@@ -162,6 +166,7 @@ func FromEnv(config *Config, logger *LogBuffer) (*Config, error) {
 		GoogleOAuthCredentialsFile: os.Getenv("GOOGLE_OAUTH_CREDENTIALS_FILE"),
 		AuthRedirectAllowlist:      os.Getenv("AUTH_REDIRECT_ALLOWLIST"),
 		AuthRedirectPreviewDomain:  os.Getenv("AUTH_REDIRECT_PREVIEW_DOMAIN"),
+		AuthBootstrapAdminEmail:    os.Getenv("AUTH_BOOTSTRAP_ADMIN_EMAIL"),
 	}
 
 	merged, err := configutil.Merge[Config](config, envConfig)
@@ -191,6 +196,7 @@ func FromFlags(config *Config) (*Config, error) {
 	flag.StringVar(&flagConfig.GoogleOAuthCredentialsFile, "google_oauth_credentials_file", "", "Google OAuth client secret JSON path")
 	flag.StringVar(&flagConfig.AuthRedirectAllowlist, "auth_redirect_allowlist", "", "allowed post-login redirect URL prefixes (comma-separated)")
 	flag.StringVar(&flagConfig.AuthRedirectPreviewDomain, "auth_redirect_preview_domain", "", "DNS domain for dev PR preview redirects")
+	flag.StringVar(&flagConfig.AuthBootstrapAdminEmail, "auth_bootstrap_admin_email", "", "verified OAuth email granted ADMIN on login (remove after bootstrap)")
 
 	flag.Parse()
 
@@ -211,6 +217,11 @@ func (c Config) Validate() error {
 		}
 		if environment != "dev" {
 			return ErrPreviewRedirectRequiresDev
+		}
+	}
+	if trimmed := strings.TrimSpace(c.AuthBootstrapAdminEmail); trimmed != "" {
+		if addr, err := mail.ParseAddress(trimmed); err != nil || addr.Address != trimmed {
+			return ErrInvalidBootstrapAdminEmail
 		}
 	}
 	return nil
