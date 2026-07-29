@@ -804,8 +804,8 @@ func TestHandlerSubmitAnswer_PassesUserAndConversions(t *testing.T) {
 	if body["selectedOptionId"] != optionID.String() {
 		t.Fatalf("response selectedOptionId mismatch: %v", body["selectedOptionId"])
 	}
-	if body["textAnswer"] != nil {
-		t.Fatalf("response textAnswer should be null, got %v", body["textAnswer"])
+	if _, ok := body["textAnswer"]; ok {
+		t.Fatalf("response textAnswer should be omitted for a choice answer, got %v", body["textAnswer"])
 	}
 }
 

@@ -58,8 +58,8 @@ type answerResponse struct {
 	ID               uuid.UUID  `json:"id"`
 	QuestionID       uuid.UUID  `json:"questionId"`
 	UserID           uuid.UUID  `json:"userId"`
-	SelectedOptionID *uuid.UUID `json:"selectedOptionId"`
-	TextAnswer       *string    `json:"textAnswer"`
+	SelectedOptionID *uuid.UUID `json:"selectedOptionId,omitempty"`
+	TextAnswer       *string    `json:"textAnswer,omitempty"`
 	CreatedAt        time.Time  `json:"createdAt"`
 }
 
