@@ -65,9 +65,9 @@ func TestHandlerMe(t *testing.T) {
 			wantCode: http.StatusOK,
 		},
 		{
-			name:     "missing user is 404",
+			name:     "missing or disabled current user is 401, not 404",
 			getFn:    func(ctx context.Context, id uuid.UUID) (Profile, error) { return Profile{}, pgx.ErrNoRows },
-			wantCode: http.StatusNotFound,
+			wantCode: http.StatusUnauthorized,
 		},
 	}
 

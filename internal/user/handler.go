@@ -108,6 +108,14 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 
 	u, err := h.service.Get(ctx, userID)
 	if err != nil {
+		var notFoundErr handlerutil.NotFoundError
+		if errors.As(err, &notFoundErr) {
+			// A missing/disabled current user isn't a resource that's absent, it's a
+			// caller who isn't a valid authenticated user anymore (e.g. their access
+			// token was issued before an admin disabled them). GET /users/{id} keeps
+			// 404 for this same underlying error; only the "self" lookup remaps it.
+			err = handlerutil.ErrUnauthorized
+		}
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
