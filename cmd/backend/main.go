@@ -11,6 +11,7 @@ import (
 	"sciedu-backend/internal/config"
 	"sciedu-backend/internal/content"
 	"sciedu-backend/internal/cors"
+	"sciedu-backend/internal/course"
 	"sciedu-backend/internal/question"
 	"sciedu-backend/internal/user"
 
@@ -73,36 +74,9 @@ func main() {
 		corsMiddleware.HandlerFunc,
 	)
 	authStore := auth.NewStore(pool)
-	var oauthProvider auth.OAuthProvider
-	googleClientID := cfg.GoogleOAuthClientID
-	googleClientSecret := cfg.GoogleOAuthClientSecret
-	googleRedirectURL := cfg.GoogleOAuthRedirectURL
-	if cfg.GoogleOAuthCredentialsFile != "" {
-		credentials, err := auth.LoadGoogleOAuthCredentials(cfg.GoogleOAuthCredentialsFile)
-		if err != nil {
-			logger.Fatal("Failed to load Google OAuth credentials", zap.Error(err))
-		}
-		if googleClientID == "" {
-			googleClientID = credentials.ClientID
-		}
-		if googleClientSecret == "" {
-			googleClientSecret = credentials.ClientSecret
-		}
-		if googleRedirectURL == "" && len(credentials.RedirectURIs) > 0 {
-			googleRedirectURL = credentials.RedirectURIs[0]
-		}
-	}
-	if googleClientID != "" || googleClientSecret != "" || googleRedirectURL != "" {
-		googleProvider, err := auth.NewGoogleOAuthProvider(auth.GoogleOAuthConfig{
-			ClientID:     googleClientID,
-			ClientSecret: googleClientSecret,
-			RedirectURL:  googleRedirectURL,
-			HTTPClient:   http.DefaultClient,
-		})
-		if err != nil {
-			logger.Fatal("Failed to initialize Google OAuth provider", zap.Error(err))
-		}
-		oauthProvider = googleProvider
+	oauthProvider, err := initGoogleOAuthProvider(cfg)
+	if err != nil {
+		logger.Fatal("Failed to initialize Google OAuth provider", zap.Error(err))
 	}
 	authService := auth.NewService(authStore, auth.ServiceConfig{
 		Secret:                cfg.Secret,
@@ -123,6 +97,12 @@ func main() {
 	userService := user.NewService(userStore, logger)
 	userHandler := user.NewHandler(userService, logger)
 
+	courseStore := course.NewStore(pool)
+	// Temporary development mock until the Experiment domain provides its checker.
+	studentCourseAccess := course.NewDevelopmentMockStudentCourseAccessChecker()
+	courseService := course.NewService(courseStore, authStore, studentCourseAccess, logger)
+	courseHandler := course.NewHandler(courseService, logger)
+
 	// Health check route
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -134,6 +114,7 @@ func main() {
 
 	authHandler.RegisterRoutes(mux, middlewareSet)
 	userHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
+	courseHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
 	questionHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
 	contentHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	chatHandler.RegisterRoutes(mux, protectedMiddlewareSet)
@@ -144,6 +125,41 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func initGoogleOAuthProvider(cfg config.Config) (auth.OAuthProvider, error) {
+	googleClientID := cfg.GoogleOAuthClientID
+	googleClientSecret := cfg.GoogleOAuthClientSecret
+	googleRedirectURL := cfg.GoogleOAuthRedirectURL
+	if cfg.GoogleOAuthCredentialsFile != "" {
+		credentials, err := auth.LoadGoogleOAuthCredentials(cfg.GoogleOAuthCredentialsFile)
+		if err != nil {
+			return nil, err
+		}
+		if googleClientID == "" {
+			googleClientID = credentials.ClientID
+		}
+		if googleClientSecret == "" {
+			googleClientSecret = credentials.ClientSecret
+		}
+		if googleRedirectURL == "" && len(credentials.RedirectURIs) > 0 {
+			googleRedirectURL = credentials.RedirectURIs[0]
+		}
+	}
+
+	if cfg.Environment == auth.EnvironmentDev && googleClientID == "" && googleClientSecret == "" {
+		return nil, nil
+	}
+	if googleClientID == "" && googleClientSecret == "" && googleRedirectURL == "" {
+		return nil, nil
+	}
+
+	return auth.NewGoogleOAuthProvider(auth.GoogleOAuthConfig{
+		ClientID:     googleClientID,
+		ClientSecret: googleClientSecret,
+		RedirectURL:  googleRedirectURL,
+		HTTPClient:   http.DefaultClient,
+	})
 }
 
 func initLogger() (*zap.Logger, error) {
