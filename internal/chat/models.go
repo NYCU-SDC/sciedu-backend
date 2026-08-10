@@ -79,6 +79,16 @@ type Content struct {
 	Content string
 }
 
+type Course struct {
+	ID          uuid.UUID
+	Code        string
+	Title       string
+	Description pgtype.Text
+	Status      string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type Message struct {
 	ID         uuid.UUID
 	ChatID     uuid.UUID
@@ -120,6 +130,26 @@ type Option struct {
 	Label      string
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+}
+
+type Page struct {
+	ID           uuid.UUID
+	CourseID     uuid.UUID
+	Title        string
+	DisplayOrder int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type PageBlock struct {
+	ID           uuid.UUID
+	PageID       uuid.UUID
+	ContentID    pgtype.UUID
+	QuestionID   pgtype.UUID
+	DisplayOrder int32
+	Required     bool
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type Question struct {

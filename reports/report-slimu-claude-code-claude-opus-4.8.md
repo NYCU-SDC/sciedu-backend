@@ -435,3 +435,24 @@ Why I still got it wrong despite the doc existing:
 - **All five phases of the plan are now implemented.** Remaining is Phase 4 (manual Yaak smoke against a live stack) and Phase 5 (PR). Suggested per-Phase commits are with the user; Phase 3's is a single `feat:` on top of merge commit `7bae366`.
 - **Out of scope (unchanged, disclosed)**: `POST .../answers` stays authenticated-only; other Questions/Content routes keep existing permissions (any authenticated student can still POST/PUT/DELETE questions) — spec explicitly excludes widening those.
 - **When `feat/answer` (PR #57) later merges to main**, a `git rebase main` on `feat/users-rbac` should fold the identical answer commits by SHA without conflict.
+
+## [2026-08-10 14:35] Task Record — Pages/PageBlocks Phase 0-3
+
+### Task Description
+- Implement `pages`/`page_blocks` API following an internal implementation plan (Phase 0-3 of a multi-phase rollout). Most open questions (courses scope, package layout, reorder strategy, branch/task-id) were already settled with the user beforehand; how a block's `resourceId` gets validated (query the referenced table first vs. rely on the FK failing) is still open and blocks Phase 4. Branch: `feat/SCIEDU-115-pages`.
+
+### Why a `courses` table at all
+- `pages.course_id` is `NOT NULL REFERENCES courses(id)`, but no `courses`/`experiments` tables exist anywhere in the repo. Building full `experiments` just to satisfy this FK was out of scope for this feature.
+- Migration creates a `courses` table with the *full* field set from `courses.tsp` (code/title/description/status), but **no** service/handler/routes/CRUD this round. Rationale: get the schema right once so a future CRUD implementation only adds the three layers on top and never touches the schema again. No Courses API exists yet, so integration test data must be seeded via raw SQL.
+- Pages/PageBlocks routes will be EXPERIMENTER/ADMIN-only for now; STUDENT access needs "current experiment" logic that doesn't exist yet — deferred, tracked as a follow-up.
+
+### Actions Taken
+- Phase 0: branch created, baseline `make test` green.
+- Phase 1: `internal/database/migrations/12_courses.{up,down}.sql` + `internal/course/schema.sql`. Case-insensitive unique index on `code` (`LOWER(code)`), `status` as `TEXT + CHECK` (not a Postgres ENUM — matches `question.type`'s existing convention, avoids touching the shared `create_sqlc_full_schema.sh` override list).
+- Phase 2: `internal/database/migrations/13_pages.{up,down}.sql` + `internal/page/schema.sql` — `pages` + `page_blocks`, `UNIQUE(course_id/page_id, display_order)`, mutual-exclusion CHECK on `content_id`/`question_id`. User committed these as `5bae567`.
+- Phase 3: `internal/course/queries.sql` (`GetCourseByID`), `internal/page/page_queries.sql`, `internal/page/block_queries.sql`. Reorder queries use `unnest($2::uuid[]) WITH ORDINALITY` (array position = new display_order) as the write-back step of a temp-offset reorder scheme (bump every row's `display_order` out of the way first, then write final values, so a bulk reorder never trips the `UNIQUE(..., display_order)` constraint mid-write). Create/Update block queries split into `*ContentBlock`/`*QuestionBlock` pairs, mirroring `content` package's `CreateTextContent`/`CreateMediaContent` style. Hand-verified every query (incl. reorder, CHECK, UNIQUE, CASCADE/RESTRICT) via `psql`/`PREPARE`/`EXECUTE` before generation.
+- User ran `make gen`. `content_id`/`question_id` correctly generated as `pgtype.UUID`. The new `pages` table's generated `Page` struct collided with an existing hand-written `type Page struct` in `internal/user/service.go` (pagination wrapper, unrelated concept, same name — every package's `models.go` includes a struct per table in the shared schema). User chose to rename the `user` package's type: `Page` → `ProfilePage` (3 call sites in `service.go`; `handler.go`/tests untouched, they only use inferred var types). `go build`/`vet`/`gofmt`/`make test` all clean after the rename.
+
+### Next Steps
+- How block `resourceId`s get validated (query the referenced `contents`/`questions` table first vs. rely on the FK failing) is still open; must be confirmed before Phase 4 (Service layer) starts.
+- Phase 4 must wrap the offset+set-order queries in one explicit `pgx.Tx` (`Queries.WithTx`, already generated) — this is required for the temp-offset reorder scheme to be safe. Test that a mid-transaction failure rolls back to the original `display_order`, not the offset intermediate state.
