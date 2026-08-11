@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
@@ -85,6 +86,17 @@ func NewHandler(service HandlerService, logger *zap.Logger) *Handler {
 			}
 			if errors.Is(err, errInvalidContentPayload) {
 				return problemutil.NewValidateProblem(err.Error())
+			}
+			// A content still referenced elsewhere (today: page_blocks) is protected by
+			// ON DELETE RESTRICT. summer has no 409 problem and leaves FK violations
+			// unmapped, so without this they would surface as a 500.
+			if errors.Is(err, databaseutil.ErrForeignKeyViolation) {
+				return problemutil.Problem{
+					Title:  "Conflict",
+					Status: http.StatusConflict,
+					Type:   "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/409",
+					Detail: "content is still referenced by another resource",
+				}
 			}
 			return problemutil.Problem{}
 		}),
