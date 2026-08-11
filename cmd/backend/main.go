@@ -11,6 +11,8 @@ import (
 	"sciedu-backend/internal/config"
 	"sciedu-backend/internal/content"
 	"sciedu-backend/internal/cors"
+	"sciedu-backend/internal/course"
+	"sciedu-backend/internal/page"
 	"sciedu-backend/internal/question"
 	"sciedu-backend/internal/user"
 
@@ -123,6 +125,12 @@ func main() {
 	userService := user.NewService(userStore, logger)
 	userHandler := user.NewHandler(userService, logger)
 
+	pageStore := page.NewStore(pool)
+	courseQueries := course.New(pool)
+	blockService := page.NewBlockService(pageStore, pageStore, contentService, questionService, logger)
+	pageService := page.NewPageService(pageStore, blockService, courseQueries, logger)
+	pageHandler := page.NewHandler(pageService, blockService, logger)
+
 	// Health check route
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -137,6 +145,7 @@ func main() {
 	questionHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
 	contentHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	chatHandler.RegisterRoutes(mux, protectedMiddlewareSet)
+	pageHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
 
 	logger.Info("Start listening on port: 8080")
 

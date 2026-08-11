@@ -489,3 +489,47 @@ Why I still got it wrong despite the doc existing:
 
 ### Next Steps
 - Handler layer must include: `ErrUniqueViolation` → 409 and the two payload sentinels → 400 in the problem mapping; `RequireAnyRole(EXPERIMENTER, ADMIN)` on every route with a second `TODO(experiments)` anchor beside it; camelCase DTO tags matching `pages.tsp`; and validator tags `lte=99999` on `displayOrder` and `max=200` on `title` as an early-failure layer in front of (not instead of) the service checks — a `VARCHAR(200)` overflow is `22001`, unmapped by summer → 500, the same class of bug as the displayOrder one fixed here.
+
+## [2026-08-11 11:30] Task Record — Phase 5 (Handler layer) review + fixes
+
+### Task Description
+- Review the newly implemented Phase 5 handler layer (`internal/page/handler.go`, `handler_test.go`, `cmd/backend/main.go` wiring). User then selected which findings to act on: fix the FK-violation mapping, the authorization test gap, and the nitpicks; record the nil-authorizer finding without changing code; and write the malformed-JSON finding up as an issue document rather than fixing it.
+
+### Actions Taken
+- **FK violation → 409**: added `databaseutil.ErrForeignKeyViolation` to the handler's problem mapping with detail `"referenced resource no longer exists"`, plus a case in `TestHandlerErrorMapping_TableDriven`. Chose 409 over 400 because the resourceId *was* valid when the request arrived — the conflict is with concurrent state — and because `internal/content` already returns 409 for the same class of FK failure.
+- **Authorization test coverage**: `TestHandlerAuthorization` covered 7 of 11 routes, missing all four block write routes (`POST /blocks`, `PUT /blocks/order`, `PUT /blocks/{blockId}`, `DELETE /blocks/{blockId}`). Added them; now 11/11, which is what the plan's Phase 5 AC ("STUDENT 一律 403") actually claims.
+- **Nitpicks**: `parseBlockPath` no longer takes a receiver it never used; `wantForbiden` → `wantForbidden`.
+- **Documents**: `_mynotes/page/page_impl_log.md` restructured into two rounds and given a full round-2 section (7 findings, each with options and rationale). `_mynotes/page/page_impl_plan_0808.md` gained three new "未來待辦" entries (nil-authorizer, reorder/displayOrder limit mismatch, malformed JSON). `_mynotes/page/issue.md` created for the malformed-JSON problem, written to be pasted straight into GitHub.
+
+### Attempted Methods
+- Probed the handler's real edge-case behaviour with a throwaway test file (written, run, deleted) rather than reasoning about it: empty body → 500, `{` → 500, `{"displayOrder":"abc"}` → 500, `displayOrder:-1` → 400, unknown field → 201, `DELETE /blocks/order` → 400 invalid UUID, empty list → `[]`.
+- Traced the 500s to `summer/pkg/handler/payload.go` returning `json.Unmarshal`'s error verbatim while `summer/pkg/problem` only maps `validator.ValidationErrors`, UUID format and pagination — so validator failures become 400 but JSON parse failures do not. `grep -rn "SyntaxError\|UnmarshalTypeError" internal/` is empty: no handler in the repo maps them, so this is a platform-wide gap, not something Phase 5 introduced. That is why it became an issue document instead of a three-line local patch — fixing only `internal/page` would make `/api/pages` and `/api/questions` disagree on the same malformed input.
+- Verified `middlewareutil.Set.Append` copies its slice before appending, so `question` and `page` both calling it cannot corrupt each other's middleware chain.
+- Confirmed the `/blocks/order` vs `/blocks/{blockId}` routing is guaranteed rather than incidental: Go 1.22 ServeMux prefers the more specific pattern, and the literal segment matches a strict subset of the wildcard.
+
+### Issues & Blockers
+- **Left unfixed by decision** (recorded in the plan's 未來待辦): `RegisterRoutes` silently drops the role gate when `authorizer == nil` — same shape as `question/handler.go`'s `answerReadAccess`, so changing only `page` would create two conventions; should be fixed for both at once. Current wiring passes a real authorizer and is covered by tests.
+- **Left unfixed, spec-level**: `displayOrder` allows 0..99999 but `pages.tsp` caps reorder arrays at 500 items, so a course with more than 500 pages could never be reordered. Fixing means editing the TypeSpec, not the Go.
+- **Open question**: Phase 5 and Phase 6 ACs refer to a `yaak/` collection directory; `find . -iname "*yaak*"` finds nothing in this repo. Needs the user to confirm where those collections live before Phase 6's manual verification can run.
+- `go build ./...`, `go vet ./...`, `gofmt -l .` clean; `go test ./... -race -count=1` → 381 passed across 11 packages (page: 58).
+
+### Next Steps
+- Phase 6 manual verification, blocked on the yaak question.
+- File `_mynotes/page/issue.md` as a GitHub issue; recommendation there is a shared in-repo problem-mapping helper (option B), since `ErrForeignKeyViolation → 409` is now duplicated between `content` and `page` and wants the same home.
+- Phase 7: PR titled `[115] <imperative description>` per AGENTS.md.
+
+## [2026-08-11 12:10] Task Record — comment cleanup (English only, less noise)
+
+### Task Description
+- User asked to confirm no code comments are in Chinese (all must be English) and to trim comments that say more than they need to.
+
+### Actions Taken
+- **Chinese comments**: exactly four, all the same `TODO(experiments)` anchor (`internal/page/handler.go`, `page_service.go` x2, `block_service.go`). Rewrote as `// TODO(experiments): allow STUDENT once experiments provides current-experiment lookup`. The greppable prefix `TODO(experiments)` is unchanged, so the anchor still works, but the plan and log documents quote the full string verbatim, so both were updated to match. The only CJK left under `internal/` is multibyte *test data* in `internal/chat` (rune-truncation tests), not comments.
+- **Two stale comments found and fixed** — both still described the `CHECK (display_order < 100000)` constraint that ADR-7 removed: `validateDisplayOrder`'s doc comment (claimed it exists to keep values out of a CHECK; now states the real reason, INT overflow in the reorder offset) and the out-of-range table-test cases in `page_service_test.go` / `block_service_test.go`.
+- **Trimmed** roughly twenty comments across `handler.go`, `page_service.go`, `block_service.go`, `content/handler.go`, the four page test files, and the two `*_queries.sql` files — mostly three-line blocks restating what the code already shows, cut to one or two lines carrying only the non-obvious "why". Re-ran `sqlc generate` because the SQL comments are copied into the generated doc comments.
+
+### Issues & Blockers
+- None. `go build ./...`, `go vet ./...`, `go vet -tags integration ./internal/page/...`, `gofmt -l .` clean; `go test ./... -race -count=1` → 381 passed across 11 packages; integration → 60 passed.
+
+### Next Steps
+- Unchanged from the previous record: Phase 6 (blocked on the yaak question), file `_mynotes/page/issue.md`, then Phase 7 PR.
