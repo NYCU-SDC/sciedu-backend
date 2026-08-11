@@ -39,9 +39,10 @@ SET question_id = $2,
 WHERE id = $1
 RETURNING id, page_id, content_id, question_id, display_order, required, created_at, updated_at;
 
--- name: DeleteBlock :exec
+-- name: DeleteBlock :execrows
 DELETE FROM page_blocks
-WHERE id = $1;
+WHERE id = sqlc.arg(id)
+  AND page_id = sqlc.arg(page_id);
 
 -- name: OffsetBlockOrders :exec
 -- Step 1 of the temp-offset reorder: bump every block in the page out of the
@@ -57,8 +58,8 @@ WHERE page_id = $1;
 UPDATE page_blocks
 SET display_order = data.ord - 1,
     updated_at = NOW()
-FROM unnest($2::uuid[]) WITH ORDINALITY AS data(id, ord)
+FROM unnest(sqlc.arg(block_ids)::uuid[]) WITH ORDINALITY AS data(id, ord)
 WHERE page_blocks.id = data.id
-  AND page_blocks.page_id = $1
+  AND page_blocks.page_id = sqlc.arg(page_id)
 RETURNING page_blocks.id, page_blocks.page_id, page_blocks.content_id, page_blocks.question_id,
           page_blocks.display_order, page_blocks.required, page_blocks.created_at, page_blocks.updated_at;

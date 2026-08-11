@@ -80,14 +80,23 @@ func (q *Queries) CreateQuestionBlock(ctx context.Context, arg CreateQuestionBlo
 	return i, err
 }
 
-const deleteBlock = `-- name: DeleteBlock :exec
+const deleteBlock = `-- name: DeleteBlock :execrows
 DELETE FROM page_blocks
 WHERE id = $1
+  AND page_id = $2
 `
 
-func (q *Queries) DeleteBlock(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deleteBlock, id)
-	return err
+type DeleteBlockParams struct {
+	ID     uuid.UUID
+	PageID uuid.UUID
+}
+
+func (q *Queries) DeleteBlock(ctx context.Context, arg DeleteBlockParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteBlock, arg.ID, arg.PageID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getBlockByID = `-- name: GetBlockByID :one
@@ -173,15 +182,15 @@ RETURNING page_blocks.id, page_blocks.page_id, page_blocks.content_id, page_bloc
 `
 
 type SetBlockOrdersParams struct {
-	PageID  uuid.UUID
-	Column2 []uuid.UUID
+	PageID   uuid.UUID
+	BlockIds []uuid.UUID
 }
 
 // Step 2 of the temp-offset reorder: write final display_order values from
 // the caller-supplied order of block IDs (position in the array = new order).
 // Must run in the same transaction as OffsetBlockOrders.
 func (q *Queries) SetBlockOrders(ctx context.Context, arg SetBlockOrdersParams) ([]PageBlock, error) {
-	rows, err := q.db.Query(ctx, setBlockOrders, arg.PageID, arg.Column2)
+	rows, err := q.db.Query(ctx, setBlockOrders, arg.PageID, arg.BlockIds)
 	if err != nil {
 		return nil, err
 	}

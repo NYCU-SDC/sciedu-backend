@@ -22,7 +22,7 @@ SET title = $2,
 WHERE id = $1
 RETURNING id, course_id, title, display_order, created_at, updated_at;
 
--- name: DeletePage :exec
+-- name: DeletePage :execrows
 DELETE FROM pages
 WHERE id = $1;
 
@@ -40,7 +40,7 @@ WHERE course_id = $1;
 UPDATE pages
 SET display_order = data.ord - 1,
     updated_at = NOW()
-FROM unnest($2::uuid[]) WITH ORDINALITY AS data(id, ord)
+FROM unnest(sqlc.arg(page_ids)::uuid[]) WITH ORDINALITY AS data(id, ord)
 WHERE pages.id = data.id
-  AND pages.course_id = $1
+  AND pages.course_id = sqlc.arg(course_id)
 RETURNING pages.id, pages.course_id, pages.title, pages.display_order, pages.created_at, pages.updated_at;

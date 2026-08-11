@@ -23,6 +23,7 @@ type fakeMediaQuerier struct {
 	listTextContentsFn     func(ctx context.Context, arg ListTextContentsParams) ([]Content, error)
 	countTextContentsFn    func(ctx context.Context) (int64, error)
 	batchGetTextContentsFn func(ctx context.Context, ids []uuid.UUID) ([]Content, error)
+	batchGetContentsFn     func(ctx context.Context, ids []uuid.UUID) ([]Content, error)
 	deleteContentFn        func(ctx context.Context, id uuid.UUID) error
 }
 
@@ -80,6 +81,13 @@ func (f *fakeMediaQuerier) CountTextContents(ctx context.Context) (int64, error)
 func (f *fakeMediaQuerier) BatchGetTextContents(ctx context.Context, ids []uuid.UUID) ([]Content, error) {
 	if f.batchGetTextContentsFn != nil {
 		return f.batchGetTextContentsFn(ctx, ids)
+	}
+	return nil, nil
+}
+
+func (f *fakeMediaQuerier) BatchGetContents(ctx context.Context, ids []uuid.UUID) ([]Content, error) {
+	if f.batchGetContentsFn != nil {
+		return f.batchGetContentsFn(ctx, ids)
 	}
 	return nil, nil
 }

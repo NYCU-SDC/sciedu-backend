@@ -34,6 +34,7 @@ type Querier interface {
 	ListTextContents(ctx context.Context, arg ListTextContentsParams) ([]Content, error)
 	CountTextContents(ctx context.Context) (int64, error)
 	BatchGetTextContents(ctx context.Context, ids []uuid.UUID) ([]Content, error)
+	BatchGetContents(ctx context.Context, ids []uuid.UUID) ([]Content, error)
 	DeleteContent(ctx context.Context, id uuid.UUID) error
 }
 
@@ -202,6 +203,18 @@ func (s *Service) BatchGetTextContents(ctx context.Context, ids []uuid.UUID) ([]
 	items, err := s.querier.BatchGetTextContents(ctx, ids)
 	if err != nil {
 		return nil, databaseutil.WrapDBError(err, s.logger, "batch get text contents")
+	}
+	return items, nil
+}
+
+func (s *Service) BatchGetContents(ctx context.Context, ids []uuid.UUID) ([]Content, error) {
+	if len(ids) == 0 {
+		return []Content{}, nil
+	}
+
+	items, err := s.querier.BatchGetContents(ctx, ids)
+	if err != nil {
+		return nil, databaseutil.WrapDBError(err, s.logger, "batch get contents")
 	}
 	return items, nil
 }

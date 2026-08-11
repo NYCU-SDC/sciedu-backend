@@ -456,3 +456,36 @@ Why I still got it wrong despite the doc existing:
 ### Next Steps
 - How block `resourceId`s get validated (query the referenced `contents`/`questions` table first vs. rely on the FK failing) is still open; must be confirmed before Phase 4 (Service layer) starts.
 - Phase 4 must wrap the offset+set-order queries in one explicit `pgx.Tx` (`Queries.WithTx`, already generated) — this is required for the temp-offset reorder scheme to be safe. Test that a mid-transaction failure rolls back to the original `display_order`, not the offset intermediate state.
+
+## [2026-08-11 —] Task Record — Pages/PageBlocks Service layer
+
+### Task Description
+- Build the Service layer for `pages`/`page_blocks` on `feat/SCIEDU-115-pages`: page and block CRUD, atomic reorder, and validation of the `resourceId`+`type` pair each block exposes. Handler layer is not started. Includes the `internal/content` changes page blocks depend on.
+
+### Actions Taken
+- `internal/page/store.go` (new): `Store` wrapping the generated `Queries` plus `WithinTx`, modeled on `internal/question/store.go` (deferred rollback, commit on success).
+- `internal/page/page_service.go` / `block_service.go` (new): list/get/create/update/delete/reorder for both, plus `errors.go` sentinels. `Detail` bundles a page with its blocks to match the `PageDetail` model in `pages.tsp`.
+- **`resourceId` validation happens in the service, before the insert**, rather than letting the FK fail: `TEXT`/`MEDIA` both map to `content_id`, so only the `contents` row itself says which one a resource actually is — no FK can express that. `validateResource` switches on the requested type, looks the resource up through `content.Service`/`question.QuestionService`, and rejects a mismatch with a 400-mapped sentinel.
+- **Reading a block back needs the same information in reverse**, since `page_blocks` stores no type. Added `BatchGetContents` to `internal/content` (query + `Service` method) so a page resolves every content-backed block's type in one round trip instead of one per block.
+- Cross-package access is by narrow interfaces declared in `internal/page` (`CourseLookup`, `PageLookup`, `ContentLookup`, `QuestionLookup`), satisfied as-is by `*course.Queries`, `*Store`, `*content.Service` and `*question.QuestionService` — no adapters, and tests substitute fakes.
+- `internal/content/handler.go`: FK violations now map to 409. summer has no 409 constructor and leaves `23503` unmapped, so deleting a content still referenced by a block would otherwise surface as a 500. Comment on site records why.
+- Reorder queries switched from positional `$2::uuid[]` to `sqlc.arg(page_ids)`/`sqlc.arg(block_ids)`; sqlc was naming the generated field `Column2`.
+- Tests: table-driven service tests with hand-written fakes (matching the `content` package style), plus `store_integration_test.go` (`//go:build integration`) which runs the real transaction with the write-back step forced to fail and asserts the database still holds the original `display_order`.
+
+### Review pass (second session) and the fixes it produced
+- **`display_order` upper bound.** A client-supplied `displayOrder` near int32 max overflows the reorder's `display_order + 100000` step → PG `22003`, unmapped by summer → 500. First attempt added `CHECK (display_order >= 0 AND display_order < 100000)` to the schema. **That was wrong and would have broken reorder entirely** — reproduced against the real container: the offset step violates the constraint immediately (`23514`), and Postgres cannot declare a CHECK `DEFERRABLE` (only UNIQUE/PK/FK/EXCLUDE), so there is no way to relax it mid-transaction. Reverted the schema; the bound is enforced only by `validateDisplayOrder` (`maxDisplayOrder = 99999`) on the four create/update entry points. Migrations are byte-identical to their committed versions, so no database rebuild is needed.
+  - **Lesson worth carrying forward**: unit tests never caught this because fakes never touch a real constraint. A schema change has to be exercised against a real database — a green `go test` says nothing about SQL.
+- Replaced a runtime transactor type-assertion with `PageStore`/`BlockStore` interfaces that embed `Transactor`, so a store without transaction support is a compile error rather than a runtime sentinel. Removed the sentinel, the fallback branch, and the test that covered it.
+- `DeletePage`/`DeleteBlock` moved from `:exec` to `:execrows` and branch on rows-affected instead of a preceding existence query — one statement, no TOCTOU window. `DeleteBlock` is additionally scoped `AND page_id = ...`, so its check and its write finally use the same predicate.
+- `PageService.Get`/`Update` now use the unexported `listByPage`; every `GET /pages/{id}` had been issuing `GetPageByID` twice.
+- `isNotFound` simplified to `errors.Is(err, handlerutil.ErrNotFound)`, which matches both summer shapes; previously only the struct form matched, so an upstream service switching to `WrapDBError` would have silently turned a 400 into a 500.
+- Added the `// TODO(experiments): 開放 STUDENT 存取前需完成 experiments 的 current-experiment 邏輯` anchor on the three read entry points students will eventually reach.
+- Fixed a test that asserted `errors.Is(err, errInjectedWriteFailure)` — never true, because `WrapDBError` wraps unrecognised errors in summer's `InternalServerError`, a struct with no `Unwrap()`. Now reaches the original through `errors.As` + `.Source`.
+
+### Issues & Blockers
+- **Deferred to the handler layer**: `pages.tsp` declares a 409 on create/update/reorder, but a `UNIQUE(course_id/page_id, display_order)` violation currently reaches no mapping and would surface as a 500. The service already returns `databaseutil.ErrUniqueViolation` correctly; the fix belongs in the page handler's `problemutil.NewWithMapping` closure, and that file does not exist yet.
+- The `display_order` bound is enforced in exactly one place. Any future write path that bypasses `PageService`/`BlockService` owns that invariant itself.
+- `go build ./...`, `go vet ./...`, `go vet -tags integration ./internal/page/...`, `gofmt -l .` all clean; `go test ./... -race -count=1` → 349 passed across 11 packages; `go test -tags integration ./internal/page/... -race -count=1` against the local Postgres → 28 passed, with both reorder rollback/commit tests executing rather than skipping.
+
+### Next Steps
+- Handler layer must include: `ErrUniqueViolation` → 409 and the two payload sentinels → 400 in the problem mapping; `RequireAnyRole(EXPERIMENTER, ADMIN)` on every route with a second `TODO(experiments)` anchor beside it; camelCase DTO tags matching `pages.tsp`; and validator tags `lte=99999` on `displayOrder` and `max=200` on `title` as an early-failure layer in front of (not instead of) the service checks — a `VARCHAR(200)` overflow is `22001`, unmapped by summer → 500, the same class of bug as the displayOrder one fixed here.

@@ -37,14 +37,17 @@ func (q *Queries) CreatePage(ctx context.Context, arg CreatePageParams) (Page, e
 	return i, err
 }
 
-const deletePage = `-- name: DeletePage :exec
+const deletePage = `-- name: DeletePage :execrows
 DELETE FROM pages
 WHERE id = $1
 `
 
-func (q *Queries) DeletePage(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, deletePage, id)
-	return err
+func (q *Queries) DeletePage(ctx context.Context, id uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deletePage, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getPageByID = `-- name: GetPageByID :one
@@ -126,14 +129,14 @@ RETURNING pages.id, pages.course_id, pages.title, pages.display_order, pages.cre
 
 type SetPageOrdersParams struct {
 	CourseID uuid.UUID
-	Column2  []uuid.UUID
+	PageIds  []uuid.UUID
 }
 
 // Step 2 of the temp-offset reorder: write final display_order values from
 // the caller-supplied order of page IDs (position in the array = new order).
 // Must run in the same transaction as OffsetPageOrders.
 func (q *Queries) SetPageOrders(ctx context.Context, arg SetPageOrdersParams) ([]Page, error) {
-	rows, err := q.db.Query(ctx, setPageOrders, arg.CourseID, arg.Column2)
+	rows, err := q.db.Query(ctx, setPageOrders, arg.CourseID, arg.PageIds)
 	if err != nil {
 		return nil, err
 	}
