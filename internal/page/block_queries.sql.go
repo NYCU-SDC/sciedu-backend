@@ -163,8 +163,8 @@ SET display_order = display_order + 100000
 WHERE page_id = $1
 `
 
-// Step 1 of the temp-offset reorder: bump every block in the page out of the
-// way so step 2 can't collide with UNIQUE(page_id, display_order).
+// Step 1 of the temp-offset reorder: move every block out of the way so step 2
+// cannot collide with UNIQUE(page_id, display_order).
 func (q *Queries) OffsetBlockOrders(ctx context.Context, pageID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, offsetBlockOrders, pageID)
 	return err
@@ -186,8 +186,7 @@ type SetBlockOrdersParams struct {
 	BlockIds []uuid.UUID
 }
 
-// Step 2 of the temp-offset reorder: write final display_order values from
-// the caller-supplied order of block IDs (position in the array = new order).
+// Step 2 of the temp-offset reorder: array position becomes the new display_order.
 // Must run in the same transaction as OffsetBlockOrders.
 func (q *Queries) SetBlockOrders(ctx context.Context, arg SetBlockOrdersParams) ([]PageBlock, error) {
 	rows, err := q.db.Query(ctx, setBlockOrders, arg.PageID, arg.BlockIds)

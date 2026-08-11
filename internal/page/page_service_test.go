@@ -44,8 +44,7 @@ func TestPageServiceCreate_TableDriven(t *testing.T) {
 			wantCalls:    nil,
 		},
 		{
-			// Out of range for the CHECK constraint, and past the point where the
-			// reorder offset would still fit in an INT column.
+			// Past the point where the reorder offset still fits in an INT column.
 			name:         "rejects a display order above the allowed range",
 			courses:      &fakeCourseLookup{},
 			displayOrder: maxDisplayOrder + 1,
@@ -204,9 +203,8 @@ func TestPageServiceReorderPropagatesWriteFailure(t *testing.T) {
 	}
 	svc := newPageService(querier, &fakeCourseLookup{})
 
-	// The offset step has already run here, so the caller must see a failure
-	// rather than a partial success; the rollback itself is Store.WithinTx's job
-	// and is covered by store_integration_test.go.
+	// The offset has already run, so the caller must see a failure rather than a
+	// partial success. The rollback itself is covered by store_integration_test.go.
 	if _, err := svc.Reorder(context.Background(), courseID, []uuid.UUID{pageID}); err == nil {
 		t.Fatal("expected the write-back failure to propagate, got nil")
 	}
@@ -217,8 +215,7 @@ func TestPageServiceReorderPropagatesWriteFailure(t *testing.T) {
 	}
 }
 
-// Delete no longer pre-checks existence; it reads the row count back from the
-// DELETE itself, so a missing page is one statement rather than two.
+// Delete reads the row count back from the DELETE itself rather than pre-checking.
 func TestPageServiceDeleteReturnsNotFound(t *testing.T) {
 	querier := &fakeQuerier{
 		deletePageFn: func(context.Context, uuid.UUID) (int64, error) {

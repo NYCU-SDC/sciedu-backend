@@ -38,9 +38,8 @@ func (failingPageQuerier) SetPageOrders(context.Context, SetPageOrdersParams) ([
 	return nil, errInjectedWriteFailure
 }
 
-// blockServiceForPages satisfies PageService's dependency without wiring the content
-// and question services: these tests only exercise page reordering, which never
-// reaches a block lookup.
+// blockServiceForPages skips the content and question services: these tests only
+// exercise page reordering, which never reaches a block lookup.
 func blockServiceForPages(store *Store) *BlockService {
 	return NewBlockService(store, store, nil, nil, zap.NewNop())
 }
@@ -126,9 +125,8 @@ func readDisplayOrders(t *testing.T, pool *pgxpool.Pool, courseID uuid.UUID) map
 	return orders
 }
 
-// TestStoreReorderRollsBackOffset is the reason the offset and the write-back
-// steps have to share one transaction: if they did not, a failure here would
-// leave every display_order parked in the temporary range with no way back.
+// TestStoreReorderRollsBackOffset is why the offset and write-back steps share a
+// transaction: without it, a failure here strands every display_order.
 func TestStoreReorderRollsBackOffset(t *testing.T) {
 	pool := newIntegrationPool(t)
 	courseID, pageIDs := seedCourseWithPages(t, pool, "First", "Second", "Third")
@@ -142,9 +140,8 @@ func TestStoreReorderRollsBackOffset(t *testing.T) {
 	reversed := []uuid.UUID{pageIDs[2], pageIDs[1], pageIDs[0]}
 	_, err := svc.Reorder(t.Context(), courseID, reversed)
 
-	// WrapDBError turns an error it does not recognise into summer's
-	// InternalServerError, which has no Unwrap — errors.Is alone never sees through
-	// it, so reach the original through Source.
+	// WrapDBError wraps unrecognised errors in summer's InternalServerError, which
+	// has no Unwrap, so errors.Is cannot see through it. Reach it through Source.
 	var internal databaseutil.InternalServerError
 	if !errors.As(err, &internal) || !errors.Is(internal.Source, errInjectedWriteFailure) {
 		t.Fatalf("expected the injected write failure, got %v", err)

@@ -89,8 +89,7 @@ func TestBlockServiceCreateValidatesResource_TableDriven(t *testing.T) {
 			wantErr: errInvalidBlockPayload,
 		},
 		{
-			// Out of range for the CHECK constraint, and past the point where the
-			// reorder offset would still fit in an INT column.
+			// Past the point where the reorder offset still fits in an INT column.
 			name:    "rejects a display order above the allowed range",
 			request: BlockRequest{Type: BlockTypeText, ResourceID: resourceID, DisplayOrder: maxDisplayOrder + 1},
 			wantErr: errInvalidBlockPayload,
@@ -211,8 +210,8 @@ func TestBlockServiceUpdateRejectsForeignPage(t *testing.T) {
 	}
 }
 
-// Delete is scoped by page_id in SQL, so a block belonging to another page simply
-// matches nothing — no separate ownership lookup, and no window between the two.
+// Delete is scoped by page_id in SQL, so a block on another page simply matches
+// nothing: no separate ownership lookup, and no window between the two.
 func TestBlockServiceDeleteScopesByPage(t *testing.T) {
 	pageID, blockID := uuid.New(), uuid.New()
 

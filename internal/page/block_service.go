@@ -34,8 +34,7 @@ type BlockQuerier interface {
 	SetBlockOrders(ctx context.Context, arg SetBlockOrdersParams) ([]PageBlock, error)
 }
 
-// BlockStore is what *Store provides. Requiring the transaction capability here rather
-// than type-asserting it at runtime makes a store without it a compile error.
+// BlockStore is the block-side counterpart of PageStore.
 type BlockStore interface {
 	BlockQuerier
 	Transactor
@@ -64,8 +63,8 @@ type BlockRequest struct {
 	Required     bool
 }
 
-// Block is the API-facing shape of a page_blocks row: the mutually exclusive
-// content_id/question_id columns are collapsed into one resource reference.
+// Block collapses the mutually exclusive content_id/question_id columns into the
+// single resource reference the API exposes.
 type Block struct {
 	ID           uuid.UUID
 	PageID       uuid.UUID
@@ -99,7 +98,7 @@ func NewBlockService(querier BlockStore, pages PageLookup, contents ContentLooku
 	}
 }
 
-// TODO(experiments): 開放 STUDENT 存取前需完成 experiments 的 current-experiment 邏輯
+// TODO(experiments): allow STUDENT once experiments provides current-experiment lookup
 func (s *BlockService) ListByPage(ctx context.Context, pageID uuid.UUID) ([]Block, error) {
 	if err := s.ensurePageExists(ctx, pageID); err != nil {
 		return nil, err
@@ -190,9 +189,8 @@ func (s *BlockService) Update(ctx context.Context, pageID, blockID uuid.UUID, re
 	return blockFromRow(row, req.Type, req.ResourceID), nil
 }
 
-// Delete scopes the statement by page_id, so a block that belongs to another page is
-// indistinguishable from a missing one without a second lookup — and without the race
-// a separate existence check would leave open.
+// Delete scopes the statement by page_id, so a block on another page is
+// indistinguishable from a missing one without a second, racy lookup.
 func (s *BlockService) Delete(ctx context.Context, pageID, blockID uuid.UUID) error {
 	rows, err := s.querier.DeleteBlock(ctx, DeleteBlockParams{ID: blockID, PageID: pageID})
 	if err != nil {
@@ -204,17 +202,17 @@ func (s *BlockService) Delete(ctx context.Context, pageID, blockID uuid.UUID) er
 	return nil
 }
 
-// Reorder replaces the display order of every block in a page in one transaction.
-// The offset step and the write-back step must share a transaction: on its own, the
-// offset leaves display_order values parked in the temporary range with no way back.
+// Reorder replaces the display order of every block in a page. The offset and
+// write-back steps must share a transaction: alone, the offset leaves every
+// display_order parked in the temporary range with no way back.
 func (s *BlockService) Reorder(ctx context.Context, pageID uuid.UUID, blockIDs []uuid.UUID) ([]Block, error) {
 	if err := s.ensurePageExists(ctx, pageID); err != nil {
 		return nil, err
 	}
 
 	var rows []PageBlock
-	// The requested set is validated against a read inside the transaction, so a
-	// concurrent create/delete cannot slip between the check and the write.
+	// Validated against a read inside the transaction, so a concurrent create or
+	// delete cannot slip between the check and the write.
 	err := s.querier.WithinTx(ctx, func(_ PageQuerier, blockQuerier BlockQuerier) error {
 		existing, err := blockQuerier.ListBlocksByPage(ctx, pageID)
 		if err != nil {
@@ -255,9 +253,9 @@ func (s *BlockService) Reorder(ctx context.Context, pageID uuid.UUID, blockIDs [
 	return s.toBlocks(ctx, rows)
 }
 
-// validateResource checks that resourceID exists in the table implied by blockType.
-// TEXT/MEDIA additionally have to match contents.type, which no FK can enforce:
-// both map to content_id, and only the contents row itself tells them apart.
+// validateResource checks resourceID against the table implied by blockType. The
+// TEXT/MEDIA match on contents.type cannot be an FK: both map to content_id, and
+// only the contents row tells them apart.
 func (s *BlockService) validateResource(ctx context.Context, blockType string, resourceID uuid.UUID) error {
 	switch blockType {
 	case BlockTypeText, BlockTypeMedia:
@@ -285,8 +283,8 @@ func (s *BlockService) validateResource(ctx context.Context, blockType string, r
 	return nil
 }
 
-// toBlocks resolves TEXT vs MEDIA for content-backed rows, which requires the
-// contents rows themselves; they are fetched in one batch rather than per block.
+// toBlocks needs the contents rows to tell TEXT from MEDIA, so it fetches them in
+// one batch rather than per block.
 func (s *BlockService) toBlocks(ctx context.Context, rows []PageBlock) ([]Block, error) {
 	contentIDs := make([]uuid.UUID, 0, len(rows))
 	for _, row := range rows {
@@ -359,9 +357,8 @@ func toPgUUID(id uuid.UUID) pgtype.UUID {
 	return pgtype.UUID{Bytes: id, Valid: true}
 }
 
-// isNotFound matches both shapes summer produces: the NotFoundError struct from
-// WrapDBErrorWithKeyValue (its Is method reports ErrNotFound) and the bare
-// ErrNotFound sentinel from WrapDBError.
+// isNotFound matches both shapes summer produces: the NotFoundError struct and the
+// bare ErrNotFound sentinel.
 func isNotFound(err error) bool {
 	return errors.Is(err, handlerutil.ErrNotFound)
 }

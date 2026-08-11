@@ -33,9 +33,8 @@ type fakeQuerier struct {
 	offsetBlockOrdersFn  func(ctx context.Context, pageID uuid.UUID) error
 	setBlockOrdersFn     func(ctx context.Context, arg SetBlockOrdersParams) ([]PageBlock, error)
 
-	// calls records the order of write operations so tests can assert that the
-	// offset step ran before the write-back step, and that neither ran at all
-	// when validation rejected the request.
+	// calls records write operations in order, so tests can assert that offset ran
+	// before write-back and that neither ran when validation rejected the request.
 	calls []string
 }
 

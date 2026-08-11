@@ -87,9 +87,8 @@ func NewHandler(service HandlerService, logger *zap.Logger) *Handler {
 			if errors.Is(err, errInvalidContentPayload) {
 				return problemutil.NewValidateProblem(err.Error())
 			}
-			// A content still referenced elsewhere (today: page_blocks) is protected by
-			// ON DELETE RESTRICT. summer has no 409 problem and leaves FK violations
-			// unmapped, so without this they would surface as a 500.
+			// Contents referenced elsewhere (today: page_blocks) are protected by ON
+			// DELETE RESTRICT. summer leaves FK violations unmapped.
 			if errors.Is(err, databaseutil.ErrForeignKeyViolation) {
 				return problemutil.Problem{
 					Title:  "Conflict",

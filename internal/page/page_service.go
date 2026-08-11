@@ -13,9 +13,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// maxDisplayOrder keeps display_order below the +100000 offset used by the reorder
-// queries, so the temporary range can never overlap real values or overflow the INT
-// column. Enforced here only: a DB CHECK would reject the offset step itself.
+// maxDisplayOrder must stay below the +100000 offset the reorder queries apply.
+// Enforced here rather than as a CHECK: a CHECK would reject the offset step itself.
 const maxDisplayOrder = 99999
 
 type PageQuerier interface {
@@ -32,8 +31,8 @@ type Transactor interface {
 	WithinTx(ctx context.Context, fn func(PageQuerier, BlockQuerier) error) error
 }
 
-// PageStore is what *Store provides. Requiring the transaction capability here rather
-// than type-asserting it at runtime makes a store without it a compile error.
+// PageStore is what *Store provides. Embedding Transactor rather than asserting for
+// it at runtime makes a store without transaction support a compile error.
 type PageStore interface {
 	PageQuerier
 	Transactor
@@ -78,7 +77,7 @@ func NewPageService(querier PageStore, blockService *BlockService, courses Cours
 	}
 }
 
-// TODO(experiments): 開放 STUDENT 存取前需完成 experiments 的 current-experiment 邏輯
+// TODO(experiments): allow STUDENT once experiments provides current-experiment lookup
 func (s *PageService) ListByCourse(ctx context.Context, courseID uuid.UUID) ([]Page, error) {
 	if err := s.ensureCourseExists(ctx, courseID); err != nil {
 		return nil, err
@@ -91,7 +90,7 @@ func (s *PageService) ListByCourse(ctx context.Context, courseID uuid.UUID) ([]P
 	return pages, nil
 }
 
-// TODO(experiments): 開放 STUDENT 存取前需完成 experiments 的 current-experiment 邏輯
+// TODO(experiments): allow STUDENT once experiments provides current-experiment lookup
 func (s *PageService) Get(ctx context.Context, id uuid.UUID) (Detail, error) {
 	page, err := s.querier.GetPageByID(ctx, id)
 	if err != nil {
@@ -159,17 +158,17 @@ func (s *PageService) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// Reorder replaces the display order of every page in a course in one transaction.
-// The offset step and the write-back step must share a transaction: on its own, the
-// offset leaves display_order values parked in the temporary range with no way back.
+// Reorder replaces the display order of every page in a course. The offset and
+// write-back steps must share a transaction: alone, the offset leaves every
+// display_order parked in the temporary range with no way back.
 func (s *PageService) Reorder(ctx context.Context, courseID uuid.UUID, pageIDs []uuid.UUID) ([]Page, error) {
 	if err := s.ensureCourseExists(ctx, courseID); err != nil {
 		return nil, err
 	}
 
 	var reordered []Page
-	// The requested set is validated against a read inside the transaction, so a
-	// concurrent create/delete cannot slip between the check and the write.
+	// Validated against a read inside the transaction, so a concurrent create or
+	// delete cannot slip between the check and the write.
 	err := s.querier.WithinTx(ctx, func(pageQuerier PageQuerier, _ BlockQuerier) error {
 		existing, err := pageQuerier.ListPagesByCourse(ctx, courseID)
 		if err != nil {
@@ -238,8 +237,8 @@ func validateReorderIDs(requested, existing []uuid.UUID, base error) error {
 	return nil
 }
 
-// validateDisplayOrder keeps out-of-range values out of the CHECK constraint, which
-// Postgres reports as 23514 — a code summer leaves unmapped, so it would be a 500.
+// validateDisplayOrder is the only guard on maxDisplayOrder: a value above it makes
+// the reorder offset overflow the INT column, which summer reports as a 500.
 func validateDisplayOrder(order int32, base error) error {
 	if order < 0 || order > maxDisplayOrder {
 		return fmt.Errorf("%w: displayOrder must be between 0 and %d, got %d", base, maxDisplayOrder, order)
