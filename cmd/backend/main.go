@@ -11,6 +11,7 @@ import (
 	"sciedu-backend/internal/config"
 	"sciedu-backend/internal/content"
 	"sciedu-backend/internal/cors"
+	"sciedu-backend/internal/experiment"
 	"sciedu-backend/internal/question"
 	"sciedu-backend/internal/user"
 
@@ -122,6 +123,9 @@ func main() {
 	userStore := user.NewStore(pool)
 	userService := user.NewService(userStore, logger)
 	userHandler := user.NewHandler(userService, logger)
+	experimentStore := experiment.NewStore(pool)
+	experimentService := experiment.NewService(experimentStore, logger)
+	experimentHandler := experiment.NewHandler(experimentService, logger)
 
 	// Health check route
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -134,6 +138,7 @@ func main() {
 
 	authHandler.RegisterRoutes(mux, middlewareSet)
 	userHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
+	experimentHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
 	questionHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
 	contentHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	chatHandler.RegisterRoutes(mux, protectedMiddlewareSet)
