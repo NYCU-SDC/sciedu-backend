@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS courses;
+DROP TYPE IF EXISTS course_status;

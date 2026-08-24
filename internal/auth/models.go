@@ -55,6 +55,49 @@ func (ns NullContentType) Value() (driver.Value, error) {
 	return string(ns.ContentType), nil
 }
 
+type CourseStatus string
+
+const (
+	CourseStatusDRAFT     CourseStatus = "DRAFT"
+	CourseStatusPUBLISHED CourseStatus = "PUBLISHED"
+	CourseStatusARCHIVED  CourseStatus = "ARCHIVED"
+)
+
+func (e *CourseStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = CourseStatus(s)
+	case string:
+		*e = CourseStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for CourseStatus: %T", src)
+	}
+	return nil
+}
+
+type NullCourseStatus struct {
+	CourseStatus CourseStatus
+	Valid        bool // Valid is true if CourseStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullCourseStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.CourseStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.CourseStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullCourseStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.CourseStatus), nil
+}
+
 type Answer struct {
 	ID               uuid.UUID
 	QuestionID       uuid.UUID
@@ -77,6 +120,16 @@ type Content struct {
 	ID      uuid.UUID
 	Type    string
 	Content string
+}
+
+type Course struct {
+	ID          uuid.UUID
+	Code        string
+	Title       string
+	Description pgtype.Text
+	Status      CourseStatus
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
 }
 
 type Message struct {

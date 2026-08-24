@@ -79,6 +79,62 @@ func TestHandlerSession(t *testing.T) {
 	}
 }
 
+func TestHandlerDevLogin(t *testing.T) {
+	now := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	session := Session{
+		UserID:                uuid.MustParse(DevelopmentMockStudentID),
+		AccessToken:           "dev-access",
+		RefreshToken:          "dev-refresh",
+		Username:              "Mock User",
+		Email:                 "mock@dev.local",
+		AccessTokenExpiresAt:  now.Add(accessTokenLifetime),
+		RefreshTokenExpiresAt: now.Add(refreshTokenLifetime),
+	}
+
+	t.Run("dev route issues deterministic student session and cookies", func(t *testing.T) {
+		svc := &fakeHandlerService{session: session}
+		handler := NewHandler(svc, CookieConfig{Environment: EnvironmentDev}, nil)
+		mux := http.NewServeMux()
+		handler.RegisterRoutes(mux, nil)
+		recorder := httptest.NewRecorder()
+
+		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/auth/dev-login", nil))
+
+		require.Equal(t, http.StatusOK, recorder.Code)
+		require.Equal(t, 1, svc.issueSessionCalls)
+		require.Equal(t, uuid.MustParse(DevelopmentMockStudentID), svc.issueSessionParams.UserID)
+		requireCookie(t, recorder.Result().Cookies(), accessTokenCookieName, "dev-access", true)
+		requireCookie(t, recorder.Result().Cookies(), refreshTokenCookieName, "dev-refresh", true)
+		require.Contains(t, recorder.Body.String(), `"username":"Mock User"`)
+		require.NotContains(t, recorder.Body.String(), "dev-access")
+		require.NotContains(t, recorder.Body.String(), "dev-refresh")
+	})
+
+	t.Run("prod route is not registered", func(t *testing.T) {
+		svc := &fakeHandlerService{session: session}
+		handler := NewHandler(svc, CookieConfig{Environment: EnvironmentProd}, nil)
+		mux := http.NewServeMux()
+		handler.RegisterRoutes(mux, nil)
+		recorder := httptest.NewRecorder()
+
+		mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/auth/dev-login", nil))
+
+		require.Equal(t, http.StatusNotFound, recorder.Code)
+		require.Zero(t, svc.issueSessionCalls)
+	})
+
+	t.Run("handler rejects direct invocation outside dev", func(t *testing.T) {
+		svc := &fakeHandlerService{session: session}
+		handler := NewHandler(svc, CookieConfig{Environment: EnvironmentProd}, nil)
+		recorder := httptest.NewRecorder()
+
+		handler.DevLogin(recorder, httptest.NewRequest(http.MethodPost, "/api/auth/dev-login", nil))
+
+		require.Equal(t, http.StatusNotFound, recorder.Code)
+		require.Zero(t, svc.issueSessionCalls)
+	})
+}
+
 func TestHandlerRefresh(t *testing.T) {
 	now := time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC)
 	session := Session{
@@ -387,17 +443,19 @@ func TestClientIP(t *testing.T) {
 }
 
 type fakeHandlerService struct {
-	session      Session
-	begin        BeginOAuthResult
-	complete     CompleteOAuthResult
-	beginErr     error
-	completeErr  error
-	sessionErr   error
-	refreshErr   error
-	logoutErr    error
-	accessToken  string
-	refreshToken string
-	logoutToken  string
+	session            Session
+	begin              BeginOAuthResult
+	complete           CompleteOAuthResult
+	beginErr           error
+	completeErr        error
+	sessionErr         error
+	refreshErr         error
+	logoutErr          error
+	accessToken        string
+	refreshToken       string
+	logoutToken        string
+	issueSessionParams IssueSessionParams
+	issueSessionCalls  int
 }
 
 func (s *fakeHandlerService) BeginOAuth(ctx context.Context, params BeginOAuthParams) (BeginOAuthResult, error) {
@@ -412,6 +470,12 @@ func (s *fakeHandlerService) CompleteOAuth(ctx context.Context, params CompleteO
 		return CompleteOAuthResult{}, s.completeErr
 	}
 	return s.complete, nil
+}
+
+func (s *fakeHandlerService) IssueSession(_ context.Context, params IssueSessionParams) (Session, error) {
+	s.issueSessionCalls++
+	s.issueSessionParams = params
+	return s.session, nil
 }
 
 func (s *fakeHandlerService) Session(ctx context.Context, accessToken, refreshToken string) (Session, error) {

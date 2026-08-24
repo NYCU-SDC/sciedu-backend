@@ -11,6 +11,8 @@ const (
 	EnvironmentDev  = "dev"
 	EnvironmentProd = "prod"
 
+	DevelopmentMockStudentID = "00000000-0000-0000-0000-000000000001"
+
 	accessTokenCookieName  = "access_token"
 	refreshTokenCookieName = "refresh_token"
 
