@@ -21,8 +21,9 @@ import (
 )
 
 type fakePageService struct {
-	listByCourseFn func(ctx context.Context, courseID uuid.UUID) ([]Page, error)
-	getFn          func(ctx context.Context, id uuid.UUID) (Detail, error)
+	listByCourseFn func(ctx context.Context, actorID, courseID uuid.UUID) ([]Page, error)
+	getFn          func(ctx context.Context, actorID, id uuid.UUID) (Detail, error)
+	listBlocksFn   func(ctx context.Context, actorID, pageID uuid.UUID) ([]Block, error)
 	createFn       func(ctx context.Context, courseID uuid.UUID, req PageRequest) (Detail, error)
 	updateFn       func(ctx context.Context, id uuid.UUID, req PageRequest) (Detail, error)
 	deleteFn       func(ctx context.Context, id uuid.UUID) error
@@ -33,20 +34,28 @@ type fakePageService struct {
 	callCount  int
 }
 
-func (f *fakePageService) ListByCourse(ctx context.Context, courseID uuid.UUID) ([]Page, error) {
+func (f *fakePageService) ListByCourseForActor(ctx context.Context, actorID, courseID uuid.UUID) ([]Page, error) {
 	f.callCount++
 	if f.listByCourseFn != nil {
-		return f.listByCourseFn(ctx, courseID)
+		return f.listByCourseFn(ctx, actorID, courseID)
 	}
 	return nil, nil
 }
 
-func (f *fakePageService) Get(ctx context.Context, id uuid.UUID) (Detail, error) {
+func (f *fakePageService) GetForActor(ctx context.Context, actorID, id uuid.UUID) (Detail, error) {
 	f.callCount++
 	if f.getFn != nil {
-		return f.getFn(ctx, id)
+		return f.getFn(ctx, actorID, id)
 	}
 	return Detail{Page: Page{ID: id}, Blocks: []Block{}}, nil
+}
+
+func (f *fakePageService) ListBlocksForActor(ctx context.Context, actorID, pageID uuid.UUID) ([]Block, error) {
+	f.callCount++
+	if f.listBlocksFn != nil {
+		return f.listBlocksFn(ctx, actorID, pageID)
+	}
+	return nil, nil
 }
 
 func (f *fakePageService) Create(ctx context.Context, courseID uuid.UUID, req PageRequest) (Detail, error) {
@@ -161,6 +170,7 @@ func doRequest(t *testing.T, mux *http.ServeMux, method, url, body string) *http
 		req = httptest.NewRequest(method, url, strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 	}
+	req = req.WithContext(auth.ContextWithUserID(req.Context(), uuid.New()))
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -270,66 +280,71 @@ func TestHandlerBlockRoutes_TableDriven(t *testing.T) {
 	blocksURL := "/api/pages/" + pageID.String() + "/blocks"
 
 	tests := []struct {
-		name      string
-		method    string
-		url       string
-		body      string
-		wantCode  int
-		wantCalls int
+		name           string
+		method         string
+		url            string
+		body           string
+		wantCode       int
+		wantPageCalls  int
+		wantBlockCalls int
 	}{
 		{
 			name: "list blocks", method: http.MethodGet,
-			url: blocksURL, wantCode: http.StatusOK, wantCalls: 1,
+			url: blocksURL, wantCode: http.StatusOK, wantPageCalls: 1,
 		},
 		{
 			name: "create block returns 201", method: http.MethodPost,
 			url:      blocksURL,
 			body:     fmt.Sprintf(`{"type":"TEXT","resourceId":"%s","displayOrder":0,"required":true}`, resourceID),
-			wantCode: http.StatusCreated, wantCalls: 1,
+			wantCode: http.StatusCreated, wantBlockCalls: 1,
 		},
 		{
 			name: "create block rejects an unknown type", method: http.MethodPost,
 			url:      blocksURL,
 			body:     fmt.Sprintf(`{"type":"AUDIO","resourceId":"%s","displayOrder":0,"required":true}`, resourceID),
-			wantCode: http.StatusBadRequest, wantCalls: 0,
+			wantCode: http.StatusBadRequest,
 		},
 		{
 			name: "create block rejects a missing resourceId", method: http.MethodPost,
 			url:      blocksURL,
 			body:     `{"type":"TEXT","displayOrder":0,"required":true}`,
-			wantCode: http.StatusBadRequest, wantCalls: 0,
+			wantCode: http.StatusBadRequest,
 		},
 		{
 			name: "update block", method: http.MethodPut,
 			url:      blocksURL + "/" + blockID.String(),
 			body:     fmt.Sprintf(`{"type":"QUESTION","resourceId":"%s","displayOrder":1,"required":false}`, resourceID),
-			wantCode: http.StatusOK, wantCalls: 1,
+			wantCode: http.StatusOK, wantBlockCalls: 1,
 		},
 		{
 			name: "delete block returns 204", method: http.MethodDelete,
 			url:      blocksURL + "/" + blockID.String(),
-			wantCode: http.StatusNoContent, wantCalls: 1,
+			wantCode: http.StatusNoContent, wantBlockCalls: 1,
 		},
 		{
 			name: "reorder blocks", method: http.MethodPut,
 			url:      blocksURL + "/order",
 			body:     fmt.Sprintf(`{"blockIds":["%s"]}`, blockID),
-			wantCode: http.StatusOK, wantCalls: 1,
+			wantCode: http.StatusOK, wantBlockCalls: 1,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			pages := &fakePageService{}
 			blocks := &fakeBlockService{}
-			mux := newTestMux(&fakePageService{}, blocks)
+			mux := newTestMux(pages, blocks)
 
 			rec := doRequest(t, mux, tt.method, tt.url, tt.body)
 
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status mismatch: want %d got %d, body=%s", tt.wantCode, rec.Code, rec.Body.String())
 			}
-			if blocks.callCount != tt.wantCalls {
-				t.Fatalf("expected %d service calls, got %d", tt.wantCalls, blocks.callCount)
+			if pages.callCount != tt.wantPageCalls {
+				t.Fatalf("expected %d page service calls, got %d", tt.wantPageCalls, pages.callCount)
+			}
+			if blocks.callCount != tt.wantBlockCalls {
+				t.Fatalf("expected %d block service calls, got %d", tt.wantBlockCalls, blocks.callCount)
 			}
 		})
 	}
@@ -419,7 +434,7 @@ func TestHandlerGetPageResponseShape(t *testing.T) {
 	now := pgtype.Timestamptz{Time: mustParseTime(t, "2026-08-11T00:00:00Z"), Valid: true}
 
 	pages := &fakePageService{
-		getFn: func(context.Context, uuid.UUID) (Detail, error) {
+		getFn: func(context.Context, uuid.UUID, uuid.UUID) (Detail, error) {
 			return Detail{
 				Page: Page{ID: pageID, CourseID: courseID, Title: "Intro", DisplayOrder: 3, CreatedAt: now, UpdatedAt: now},
 				Blocks: []Block{
@@ -474,12 +489,12 @@ func TestHandlerGetPageResponseShape(t *testing.T) {
 // An empty page must serialise blocks as [] rather than null, so clients can index
 // into it without a nil check.
 func TestHandlerListBlocksEmptyIsArray(t *testing.T) {
-	blocks := &fakeBlockService{
-		listByPageFn: func(context.Context, uuid.UUID) ([]Block, error) {
+	pages := &fakePageService{
+		listBlocksFn: func(context.Context, uuid.UUID, uuid.UUID) ([]Block, error) {
 			return nil, nil
 		},
 	}
-	mux := newTestMux(&fakePageService{}, blocks)
+	mux := newTestMux(pages, &fakeBlockService{})
 
 	rec := doRequest(t, mux, http.MethodGet, "/api/pages/"+uuid.New().String()+"/blocks", "")
 
@@ -496,8 +511,9 @@ func (f fakeRoleQuerier) ActiveUserRoles(ctx context.Context, userID uuid.UUID) 
 	return f.roles, nil
 }
 
-// TestHandlerAuthorization exercises the real RequireAnyRole wiring: every page
-// route is EXPERIMENTER/ADMIN only until the experiments work lands.
+// TestHandlerAuthorization exercises the real route split: authenticated
+// Students reach reads so the service can apply Experiment-backed access, while
+// writes remain EXPERIMENTER/ADMIN only.
 func TestHandlerAuthorization(t *testing.T) {
 	courseID, pageID := uuid.New(), uuid.New()
 	blockID, resourceID := uuid.New(), uuid.New()
@@ -519,29 +535,29 @@ func TestHandlerAuthorization(t *testing.T) {
 		method string
 		url    string
 		body   string
+		read   bool
 	}{
-		{http.MethodGet, "/api/courses/" + courseID.String() + "/pages", ""},
-		{http.MethodPost, "/api/courses/" + courseID.String() + "/pages", `{"title":"t","displayOrder":0}`},
-		{http.MethodPut, "/api/courses/" + courseID.String() + "/pages/order", fmt.Sprintf(`{"pageIds":["%s"]}`, pageID)},
-		{http.MethodGet, "/api/pages/" + pageID.String(), ""},
-		{http.MethodPut, "/api/pages/" + pageID.String(), `{"title":"t","displayOrder":0}`},
-		{http.MethodDelete, "/api/pages/" + pageID.String(), ""},
-		{http.MethodGet, "/api/pages/" + pageID.String() + "/blocks", ""},
+		{http.MethodGet, "/api/courses/" + courseID.String() + "/pages", "", true},
+		{http.MethodPost, "/api/courses/" + courseID.String() + "/pages", `{"title":"t","displayOrder":0}`, false},
+		{http.MethodPut, "/api/courses/" + courseID.String() + "/pages/order", fmt.Sprintf(`{"pageIds":["%s"]}`, pageID), false},
+		{http.MethodGet, "/api/pages/" + pageID.String(), "", true},
+		{http.MethodPut, "/api/pages/" + pageID.String(), `{"title":"t","displayOrder":0}`, false},
+		{http.MethodDelete, "/api/pages/" + pageID.String(), "", false},
+		{http.MethodGet, "/api/pages/" + pageID.String() + "/blocks", "", true},
 		{http.MethodPost, "/api/pages/" + pageID.String() + "/blocks",
-			fmt.Sprintf(`{"type":"TEXT","resourceId":"%s","displayOrder":0,"required":true}`, resourceID)},
+			fmt.Sprintf(`{"type":"TEXT","resourceId":"%s","displayOrder":0,"required":true}`, resourceID), false},
 		{http.MethodPut, "/api/pages/" + pageID.String() + "/blocks/order",
-			fmt.Sprintf(`{"blockIds":["%s"]}`, blockID)},
+			fmt.Sprintf(`{"blockIds":["%s"]}`, blockID), false},
 		{http.MethodPut, "/api/pages/" + pageID.String() + "/blocks/" + blockID.String(),
-			fmt.Sprintf(`{"type":"TEXT","resourceId":"%s","displayOrder":0,"required":true}`, resourceID)},
-		{http.MethodDelete, "/api/pages/" + pageID.String() + "/blocks/" + blockID.String(), ""},
+			fmt.Sprintf(`{"type":"TEXT","resourceId":"%s","displayOrder":0,"required":true}`, resourceID), false},
+		{http.MethodDelete, "/api/pages/" + pageID.String() + "/blocks/" + blockID.String(), "", false},
 	}
 
 	tests := []struct {
-		name          string
-		roles         []auth.Role
-		wantForbidden bool
+		name  string
+		roles []auth.Role
 	}{
-		{name: "student is refused everywhere", roles: []auth.Role{auth.STUDENT}, wantForbidden: true},
+		{name: "student reaches reads only", roles: []auth.Role{auth.STUDENT}},
 		{name: "experimenter is allowed", roles: []auth.Role{auth.EXPERIMENTER}},
 		{name: "admin is allowed", roles: []auth.Role{auth.ADMIN}},
 	}
@@ -552,9 +568,9 @@ func TestHandlerAuthorization(t *testing.T) {
 			for _, route := range routes {
 				rec := doRequest(t, mux, route.method, route.url, route.body)
 
-				if tt.wantForbidden {
+				if tt.roles[0] == auth.STUDENT && !route.read {
 					if rec.Code != http.StatusForbidden {
-						t.Fatalf("%s %s: want 403 got %d", route.method, route.url, rec.Code)
+						t.Fatalf("%s %s: want 403 for Student write, got %d", route.method, route.url, rec.Code)
 					}
 					continue
 				}
@@ -563,5 +579,21 @@ func TestHandlerAuthorization(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHandlerReadRequiresActor(t *testing.T) {
+	pages := &fakePageService{}
+	mux := newTestMux(pages, &fakeBlockService{})
+	req := httptest.NewRequest(http.MethodGet, "/api/pages/"+uuid.NewString(), nil)
+	rec := httptest.NewRecorder()
+
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without an actor, got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if pages.callCount != 0 {
+		t.Fatalf("expected no service call without an actor, got %d", pages.callCount)
 	}
 }

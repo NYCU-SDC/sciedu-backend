@@ -98,7 +98,6 @@ func NewBlockService(querier BlockStore, pages PageLookup, contents ContentLooku
 	}
 }
 
-// TODO(experiments): allow STUDENT once experiments provides current-experiment lookup
 func (s *BlockService) ListByPage(ctx context.Context, pageID uuid.UUID) ([]Block, error) {
 	if err := s.ensurePageExists(ctx, pageID); err != nil {
 		return nil, err

@@ -7,13 +7,141 @@ import (
 
 	"sciedu-backend/internal/course"
 
+	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
-func newPageService(querier *fakeQuerier, courses CourseLookup) *PageService {
+func newPageService(querier *fakeQuerier, courses CourseAccess) *PageService {
 	blocks := newBlockService(querier, querier, &fakeContentLookup{}, &fakeQuestionLookup{})
 	return NewPageService(querier, blocks, courses, zap.NewNop())
+}
+
+func TestPageServiceReadAuthorization(t *testing.T) {
+	actorID, courseID, pageID := uuid.New(), uuid.New(), uuid.New()
+
+	t.Run("list authorizes the requested course before querying pages", func(t *testing.T) {
+		queried := false
+		querier := &fakeQuerier{
+			listPagesByCourseFn: func(_ context.Context, gotCourseID uuid.UUID) ([]Page, error) {
+				queried = true
+				if gotCourseID != courseID {
+					t.Fatalf("expected course %s, got %s", courseID, gotCourseID)
+				}
+				return []Page{{ID: pageID, CourseID: courseID}}, nil
+			},
+		}
+		courses := &fakeCourseLookup{}
+
+		pages, err := newPageService(querier, courses).ListByCourseForActor(t.Context(), actorID, courseID)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !queried || len(pages) != 1 {
+			t.Fatalf("expected one queried page, got %#v", pages)
+		}
+		assertCourseAccessCall(t, courses, actorID, courseID)
+	})
+
+	t.Run("list denial prevents the page query", func(t *testing.T) {
+		queried := false
+		querier := &fakeQuerier{
+			listPagesByCourseFn: func(context.Context, uuid.UUID) ([]Page, error) {
+				queried = true
+				return nil, nil
+			},
+		}
+		courses := &fakeCourseLookup{
+			byIDForActorFn: func(context.Context, uuid.UUID, uuid.UUID) (course.Record, error) {
+				return course.Record{}, handlerutil.ErrForbidden
+			},
+		}
+
+		_, err := newPageService(querier, courses).ListByCourseForActor(t.Context(), actorID, courseID)
+		if !errors.Is(err, handlerutil.ErrForbidden) {
+			t.Fatalf("expected forbidden, got %v", err)
+		}
+		if queried {
+			t.Fatal("page query ran after access was denied")
+		}
+	})
+
+	t.Run("page detail authorizes the page course before loading blocks", func(t *testing.T) {
+		blocksQueried := false
+		querier := &fakeQuerier{
+			getPageByIDFn: func(context.Context, uuid.UUID) (Page, error) {
+				return Page{ID: pageID, CourseID: courseID}, nil
+			},
+			listBlocksByPageFn: func(context.Context, uuid.UUID) ([]PageBlock, error) {
+				blocksQueried = true
+				return nil, nil
+			},
+		}
+		courses := &fakeCourseLookup{}
+
+		_, err := newPageService(querier, courses).GetForActor(t.Context(), actorID, pageID)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !blocksQueried {
+			t.Fatal("expected blocks to be loaded after authorization")
+		}
+		assertCourseAccessCall(t, courses, actorID, courseID)
+	})
+
+	t.Run("page detail denial prevents loading blocks", func(t *testing.T) {
+		blocksQueried := false
+		querier := &fakeQuerier{
+			getPageByIDFn: func(context.Context, uuid.UUID) (Page, error) {
+				return Page{ID: pageID, CourseID: courseID}, nil
+			},
+			listBlocksByPageFn: func(context.Context, uuid.UUID) ([]PageBlock, error) {
+				blocksQueried = true
+				return nil, nil
+			},
+		}
+		courses := &fakeCourseLookup{
+			byIDForActorFn: func(context.Context, uuid.UUID, uuid.UUID) (course.Record, error) {
+				return course.Record{}, handlerutil.ErrForbidden
+			},
+		}
+
+		_, err := newPageService(querier, courses).GetForActor(t.Context(), actorID, pageID)
+		if !errors.Is(err, handlerutil.ErrForbidden) {
+			t.Fatalf("expected forbidden, got %v", err)
+		}
+		if blocksQueried {
+			t.Fatal("blocks were loaded after access was denied")
+		}
+	})
+
+	t.Run("block list authorizes using the owning page course", func(t *testing.T) {
+		querier := &fakeQuerier{
+			getPageByIDFn: func(context.Context, uuid.UUID) (Page, error) {
+				return Page{ID: pageID, CourseID: courseID}, nil
+			},
+			listBlocksByPageFn: func(context.Context, uuid.UUID) ([]PageBlock, error) {
+				return []PageBlock{}, nil
+			},
+		}
+		courses := &fakeCourseLookup{}
+
+		_, err := newPageService(querier, courses).ListBlocksForActor(t.Context(), actorID, pageID)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		assertCourseAccessCall(t, courses, actorID, courseID)
+	})
+}
+
+func assertCourseAccessCall(t *testing.T, courses *fakeCourseLookup, actorID, courseID uuid.UUID) {
+	t.Helper()
+	if courses.byIDForActorCalls != 1 || courses.lastActorID != actorID || courses.lastAccessCourseID != courseID {
+		t.Fatalf(
+			"expected one access check for actor %s and course %s; got calls=%d actor=%s course=%s",
+			actorID, courseID, courses.byIDForActorCalls, courses.lastActorID, courses.lastAccessCourseID,
+		)
+	}
 }
 
 func TestPageServiceCreate_TableDriven(t *testing.T) {
@@ -35,8 +163,8 @@ func TestPageServiceCreate_TableDriven(t *testing.T) {
 		{
 			name: "returns not found when course is missing",
 			courses: &fakeCourseLookup{
-				getCourseByIDFn: func(context.Context, uuid.UUID) (course.Course, error) {
-					return course.Course{}, noRowsErr()
+				byIDFn: func(_ context.Context, id uuid.UUID) (course.Record, error) {
+					return course.Record{}, handlerutil.NewNotFoundError("courses", "id", id.String(), "")
 				},
 			},
 			wantErr:      true,

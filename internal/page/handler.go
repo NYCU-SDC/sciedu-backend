@@ -19,8 +19,9 @@ import (
 )
 
 type PageHandlerService interface {
-	ListByCourse(ctx context.Context, courseID uuid.UUID) ([]Page, error)
-	Get(ctx context.Context, id uuid.UUID) (Detail, error)
+	ListByCourseForActor(ctx context.Context, actorID, courseID uuid.UUID) ([]Page, error)
+	GetForActor(ctx context.Context, actorID, id uuid.UUID) (Detail, error)
+	ListBlocksForActor(ctx context.Context, actorID, pageID uuid.UUID) ([]Block, error)
 	Create(ctx context.Context, courseID uuid.UUID, req PageRequest) (Detail, error)
 	Update(ctx context.Context, id uuid.UUID, req PageRequest) (Detail, error)
 	Delete(ctx context.Context, id uuid.UUID) error
@@ -28,7 +29,6 @@ type PageHandlerService interface {
 }
 
 type BlockHandlerService interface {
-	ListByPage(ctx context.Context, pageID uuid.UUID) ([]Block, error)
 	Create(ctx context.Context, pageID uuid.UUID, req BlockRequest) (Block, error)
 	Update(ctx context.Context, pageID, blockID uuid.UUID, req BlockRequest) (Block, error)
 	Delete(ctx context.Context, pageID, blockID uuid.UUID) error
@@ -136,30 +136,35 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil
 		mux.HandleFunc(pattern, fn)
 	}
 
-	// TODO(experiments): allow STUDENT once experiments provides current-experiment lookup
-	access := middlewares
+	readAccess := middlewares
+	writeAccess := middlewares
 	if middlewares != nil && authorizer != nil {
-		access = middlewares.Append(authorizer.RequireAnyRole(auth.EXPERIMENTER, auth.ADMIN))
+		writeAccess = middlewares.Append(authorizer.RequireAnyRole(auth.EXPERIMENTER, auth.ADMIN))
 	}
 
-	handle("GET /api/courses/{courseId}/pages", access, h.ListPages)
-	handle("POST /api/courses/{courseId}/pages", access, h.CreatePage)
-	handle("PUT /api/courses/{courseId}/pages/order", access, h.ReorderPages)
+	handle("GET /api/courses/{courseId}/pages", readAccess, h.ListPages)
+	handle("POST /api/courses/{courseId}/pages", writeAccess, h.CreatePage)
+	handle("PUT /api/courses/{courseId}/pages/order", writeAccess, h.ReorderPages)
 
-	handle("GET /api/pages/{id}", access, h.GetPage)
-	handle("PUT /api/pages/{id}", access, h.UpdatePage)
-	handle("DELETE /api/pages/{id}", access, h.DeletePage)
+	handle("GET /api/pages/{id}", readAccess, h.GetPage)
+	handle("PUT /api/pages/{id}", writeAccess, h.UpdatePage)
+	handle("DELETE /api/pages/{id}", writeAccess, h.DeletePage)
 
-	handle("GET /api/pages/{id}/blocks", access, h.ListBlocks)
-	handle("POST /api/pages/{id}/blocks", access, h.CreateBlock)
-	handle("PUT /api/pages/{id}/blocks/order", access, h.ReorderBlocks)
-	handle("PUT /api/pages/{id}/blocks/{blockId}", access, h.UpdateBlock)
-	handle("DELETE /api/pages/{id}/blocks/{blockId}", access, h.DeleteBlock)
+	handle("GET /api/pages/{id}/blocks", readAccess, h.ListBlocks)
+	handle("POST /api/pages/{id}/blocks", writeAccess, h.CreateBlock)
+	handle("PUT /api/pages/{id}/blocks/order", writeAccess, h.ReorderBlocks)
+	handle("PUT /api/pages/{id}/blocks/{blockId}", writeAccess, h.UpdateBlock)
+	handle("DELETE /api/pages/{id}/blocks/{blockId}", writeAccess, h.DeleteBlock)
 }
 
 func (h *Handler) ListPages(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := logutil.WithContext(ctx, h.logger)
+	actorID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
 
 	courseID, err := handlerutil.ParseUUID(r.PathValue("courseId"))
 	if err != nil {
@@ -167,7 +172,7 @@ func (h *Handler) ListPages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pages, err := h.pageService.ListByCourse(ctx, courseID)
+	pages, err := h.pageService.ListByCourseForActor(ctx, actorID, courseID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -229,6 +234,11 @@ func (h *Handler) ReorderPages(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetPage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := logutil.WithContext(ctx, h.logger)
+	actorID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
 
 	id, err := handlerutil.ParseUUID(r.PathValue("id"))
 	if err != nil {
@@ -236,7 +246,7 @@ func (h *Handler) GetPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detail, err := h.pageService.Get(ctx, id)
+	detail, err := h.pageService.GetForActor(ctx, actorID, id)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -291,6 +301,11 @@ func (h *Handler) DeletePage(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListBlocks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger := logutil.WithContext(ctx, h.logger)
+	actorID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
 
 	pageID, err := handlerutil.ParseUUID(r.PathValue("id"))
 	if err != nil {
@@ -298,7 +313,7 @@ func (h *Handler) ListBlocks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	blocks, err := h.blockService.ListByPage(ctx, pageID)
+	blocks, err := h.pageService.ListBlocksForActor(ctx, actorID, pageID)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return

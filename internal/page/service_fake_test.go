@@ -10,7 +10,6 @@ import (
 
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 // fakeQuerier implements PageQuerier, BlockQuerier and Transactor so a single
@@ -167,14 +166,28 @@ func (f *fakeQuerier) WithinTx(ctx context.Context, fn func(PageQuerier, BlockQu
 }
 
 type fakeCourseLookup struct {
-	getCourseByIDFn func(ctx context.Context, id uuid.UUID) (course.Course, error)
+	byIDFn             func(ctx context.Context, id uuid.UUID) (course.Record, error)
+	byIDForActorFn     func(ctx context.Context, actorID, courseID uuid.UUID) (course.Record, error)
+	byIDForActorCalls  int
+	lastActorID        uuid.UUID
+	lastAccessCourseID uuid.UUID
 }
 
-func (f *fakeCourseLookup) GetCourseByID(ctx context.Context, id uuid.UUID) (course.Course, error) {
-	if f.getCourseByIDFn != nil {
-		return f.getCourseByIDFn(ctx, id)
+func (f *fakeCourseLookup) ByID(ctx context.Context, id uuid.UUID) (course.Record, error) {
+	if f.byIDFn != nil {
+		return f.byIDFn(ctx, id)
 	}
-	return course.Course{ID: id}, nil
+	return course.Record{ID: id}, nil
+}
+
+func (f *fakeCourseLookup) ByIDForActor(ctx context.Context, actorID, courseID uuid.UUID) (course.Record, error) {
+	f.byIDForActorCalls++
+	f.lastActorID = actorID
+	f.lastAccessCourseID = courseID
+	if f.byIDForActorFn != nil {
+		return f.byIDForActorFn(ctx, actorID, courseID)
+	}
+	return course.Record{ID: courseID}, nil
 }
 
 type fakeContentLookup struct {
@@ -217,10 +230,6 @@ func (f *fakeQuestionLookup) Get(ctx context.Context, id uuid.UUID) (question.Qu
 
 func notFoundErr(table string, id uuid.UUID) error {
 	return handlerutil.NewNotFoundError(table, "id", id.String(), "")
-}
-
-func noRowsErr() error {
-	return pgx.ErrNoRows
 }
 
 func isNotFoundError(err error) bool {

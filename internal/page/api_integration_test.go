@@ -10,10 +10,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"sciedu-backend/internal/auth"
 	"sciedu-backend/internal/content"
 	"sciedu-backend/internal/course"
+	"sciedu-backend/internal/experiment"
 	"sciedu-backend/internal/question"
 
 	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
@@ -40,22 +42,29 @@ func (q integrationRoleQuerier) ActiveUserRoles(context.Context, uuid.UUID) ([]a
 // with a middleware that injects an actor carrying the given roles.
 func newAPI(t *testing.T, pool *pgxpool.Pool, roles ...auth.Role) *http.ServeMux {
 	t.Helper()
+	return newAPIForActor(t, pool, uuid.New(), roles...)
+}
+
+func newAPIForActor(t *testing.T, pool *pgxpool.Pool, actorID uuid.UUID, roles ...auth.Role) *http.ServeMux {
+	t.Helper()
 
 	if len(roles) == 0 {
 		roles = []auth.Role{auth.EXPERIMENTER}
 	}
 	logger := zap.NewNop()
+	roleQuerier := integrationRoleQuerier{roles: roles}
 
 	store := NewStore(pool)
 	contentService := content.NewService(content.New(pool), logger)
 	questionStore := question.NewStore(pool)
 	questionService := question.NewQuestionService(questionStore, question.NewOptionService(questionStore, logger), logger)
+	experimentStore := experiment.NewStore(pool)
+	courseService := course.NewService(course.NewStore(pool), roleQuerier, experimentStore, logger)
 
 	blockService := NewBlockService(store, store, contentService, questionService, logger)
-	pageService := NewPageService(store, blockService, course.New(pool), logger)
+	pageService := NewPageService(store, blockService, courseService, logger)
 	handler := NewHandler(pageService, blockService, logger)
 
-	actorID := uuid.New()
 	set := middlewareutil.NewSet(func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			next(w, r.WithContext(auth.ContextWithUserID(r.Context(), actorID)))
@@ -63,7 +72,7 @@ func newAPI(t *testing.T, pool *pgxpool.Pool, roles ...auth.Role) *http.ServeMux
 	})
 
 	mux := http.NewServeMux()
-	handler.RegisterRoutes(mux, set, auth.NewAuthorizer(integrationRoleQuerier{roles: roles}, nil))
+	handler.RegisterRoutes(mux, set, auth.NewAuthorizer(roleQuerier, nil))
 	return mux
 }
 
@@ -119,6 +128,50 @@ func seedCourse(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
 	})
 
 	return courseID
+}
+
+func seedStudentExperimentAccess(t *testing.T, pool *pgxpool.Pool, courseID uuid.UUID) uuid.UUID {
+	t.Helper()
+
+	studentID := uuid.New()
+	_, err := pool.Exec(t.Context(), `
+		INSERT INTO users (id, email, name, roles)
+		VALUES ($1, $2, $3, ARRAY['STUDENT']::user_role[])
+	`, studentID, "page-api-"+studentID.String()+"@example.test", "Page API student")
+	if err != nil {
+		t.Fatalf("failed to seed Student: %v", err)
+	}
+
+	configuration := `{"maxAttempts":3,"allowRetry":true,"showScore":true,"showExplanations":true,"gradingMode":"AUTOMATIC","correctAnswerReleaseMode":"NEVER"}`
+	var experimentID uuid.UUID
+	err = pool.QueryRow(t.Context(), `
+		INSERT INTO experiments (
+			created_by, name, configuration, status, scheduled_start_at, scheduled_end_at
+		) VALUES ($1, $2, $3::jsonb, 'ACTIVE', $4, $5)
+		RETURNING id
+	`, studentID, "Page API access", configuration, time.Now().Add(-time.Hour), time.Now().Add(time.Hour)).Scan(&experimentID)
+	if err != nil {
+		t.Fatalf("failed to seed Experiment: %v", err)
+	}
+
+	if _, err := pool.Exec(t.Context(), `
+		INSERT INTO experiment_participants (experiment_id, user_id) VALUES ($1, $2)
+	`, experimentID, studentID); err != nil {
+		t.Fatalf("failed to seed Experiment participant: %v", err)
+	}
+	if _, err := pool.Exec(t.Context(), `
+		INSERT INTO experiment_courses (experiment_id, course_id) VALUES ($1, $2)
+	`, experimentID, courseID); err != nil {
+		t.Fatalf("failed to seed Experiment course: %v", err)
+	}
+
+	t.Cleanup(func() {
+		//nolint:errcheck // cascades remove participant and course links
+		pool.Exec(context.Background(), "DELETE FROM experiments WHERE id = $1", experimentID)
+		//nolint:errcheck // best-effort cleanup for an isolated integration fixture
+		pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", studentID)
+	})
+	return studentID
 }
 
 func seedContent(t *testing.T, pool *pgxpool.Pool, contentType string) uuid.UUID {
@@ -406,42 +459,62 @@ func TestAPIDeletePageCascadesBlocks(t *testing.T) {
 	}
 }
 
-func TestAPIStudentIsRefusedEverywhere(t *testing.T) {
+func TestAPIStudentReadAccessAndWriteDenial(t *testing.T) {
 	pool := newIntegrationPool(t)
 	courseID := seedCourse(t, pool)
 
 	experimenter := newAPI(t, pool, auth.EXPERIMENTER)
 	pageID := newPageViaAPI(t, experimenter, courseID, "Locked", 0)
 
-	student := newAPI(t, pool, auth.STUDENT)
+	studentID := seedStudentExperimentAccess(t, pool, courseID)
+	student := newAPIForActor(t, pool, studentID, auth.STUDENT)
 	blocksURL := "/api/pages/" + pageID.String() + "/blocks"
 
-	routes := []struct {
+	readRoutes := []struct {
+		url string
+	}{
+		{"/api/courses/" + courseID.String() + "/pages"},
+		{"/api/pages/" + pageID.String()},
+		{blocksURL},
+	}
+	for _, route := range readRoutes {
+		code, body := call(t, student, http.MethodGet, route.url, "")
+		if code != http.StatusOK {
+			t.Fatalf("GET %s: expected 200 for assigned Student, got %d %s", route.url, code, body)
+		}
+	}
+
+	writeRoutes := []struct {
 		method string
 		url    string
 		body   string
 	}{
-		{http.MethodGet, "/api/courses/" + courseID.String() + "/pages", ""},
 		{http.MethodPost, "/api/courses/" + courseID.String() + "/pages", `{"title":"x","displayOrder":9}`},
 		{http.MethodPut, "/api/courses/" + courseID.String() + "/pages/order", fmt.Sprintf(`{"pageIds":["%s"]}`, pageID)},
-		{http.MethodGet, "/api/pages/" + pageID.String(), ""},
 		{http.MethodPut, "/api/pages/" + pageID.String(), `{"title":"x","displayOrder":0}`},
 		{http.MethodDelete, "/api/pages/" + pageID.String(), ""},
-		{http.MethodGet, blocksURL, ""},
 		{http.MethodPost, blocksURL, `{"type":"TEXT","resourceId":"` + uuid.New().String() + `","displayOrder":0,"required":true}`},
 		{http.MethodPut, blocksURL + "/order", fmt.Sprintf(`{"blockIds":["%s"]}`, uuid.New())},
 		{http.MethodPut, blocksURL + "/" + uuid.New().String(), `{"type":"TEXT","resourceId":"` + uuid.New().String() + `","displayOrder":0,"required":true}`},
 		{http.MethodDelete, blocksURL + "/" + uuid.New().String(), ""},
 	}
 
-	for _, route := range routes {
+	for _, route := range writeRoutes {
 		code, body := call(t, student, route.method, route.url, route.body)
 		if code != http.StatusForbidden {
-			t.Fatalf("%s %s: expected 403 for a student, got %d %s", route.method, route.url, code, body)
+			t.Fatalf("%s %s: expected 403 for a Student write, got %d %s", route.method, route.url, code, body)
 		}
 	}
 
-	// The page must still be intact: none of those calls should have reached the DB.
+	unassigned := newAPIForActor(t, pool, uuid.New(), auth.STUDENT)
+	for _, route := range readRoutes {
+		code, body := call(t, unassigned, http.MethodGet, route.url, "")
+		if code != http.StatusForbidden {
+			t.Fatalf("GET %s: expected 403 for unassigned Student, got %d %s", route.url, code, body)
+		}
+	}
+
+	// The page must still be intact: Student writes never reach the DB.
 	var pageCount int
 	if err := pool.QueryRow(t.Context(),
 		"SELECT count(*) FROM pages WHERE course_id = $1", courseID).Scan(&pageCount); err != nil {

@@ -38,9 +38,10 @@ type PageStore interface {
 	Transactor
 }
 
-// CourseLookup is satisfied by *course.Queries; pages only need to confirm a course exists.
-type CourseLookup interface {
-	GetCourseByID(ctx context.Context, id uuid.UUID) (course.Course, error)
+// CourseAccess centralizes role- and Experiment-backed Course read authorization.
+type CourseAccess interface {
+	ByID(ctx context.Context, id uuid.UUID) (course.Record, error)
+	ByIDForActor(ctx context.Context, actorID, courseID uuid.UUID) (course.Record, error)
 }
 
 type PageRequest struct {
@@ -58,10 +59,10 @@ type PageService struct {
 	logger       *zap.Logger
 	querier      PageStore
 	blockService *BlockService
-	courses      CourseLookup
+	courses      CourseAccess
 }
 
-func NewPageService(querier PageStore, blockService *BlockService, courses CourseLookup, logger *zap.Logger) *PageService {
+func NewPageService(querier PageStore, blockService *BlockService, courses CourseAccess, logger *zap.Logger) *PageService {
 	if logger == nil {
 		logger = zap.NewNop()
 	}
@@ -77,9 +78,8 @@ func NewPageService(querier PageStore, blockService *BlockService, courses Cours
 	}
 }
 
-// TODO(experiments): allow STUDENT once experiments provides current-experiment lookup
-func (s *PageService) ListByCourse(ctx context.Context, courseID uuid.UUID) ([]Page, error) {
-	if err := s.ensureCourseExists(ctx, courseID); err != nil {
+func (s *PageService) ListByCourseForActor(ctx context.Context, actorID, courseID uuid.UUID) ([]Page, error) {
+	if _, err := s.courses.ByIDForActor(ctx, actorID, courseID); err != nil {
 		return nil, err
 	}
 
@@ -90,11 +90,13 @@ func (s *PageService) ListByCourse(ctx context.Context, courseID uuid.UUID) ([]P
 	return pages, nil
 }
 
-// TODO(experiments): allow STUDENT once experiments provides current-experiment lookup
-func (s *PageService) Get(ctx context.Context, id uuid.UUID) (Detail, error) {
+func (s *PageService) GetForActor(ctx context.Context, actorID, id uuid.UUID) (Detail, error) {
 	page, err := s.querier.GetPageByID(ctx, id)
 	if err != nil {
 		return Detail{}, databaseutil.WrapDBErrorWithKeyValue(err, "pages", "id", id.String(), s.logger, "get page")
+	}
+	if _, err := s.courses.ByIDForActor(ctx, actorID, page.CourseID); err != nil {
+		return Detail{}, err
 	}
 
 	blocks, err := s.blockService.listByPage(ctx, id)
@@ -103,6 +105,17 @@ func (s *PageService) Get(ctx context.Context, id uuid.UUID) (Detail, error) {
 	}
 
 	return Detail{Page: page, Blocks: blocks}, nil
+}
+
+func (s *PageService) ListBlocksForActor(ctx context.Context, actorID, pageID uuid.UUID) ([]Block, error) {
+	page, err := s.querier.GetPageByID(ctx, pageID)
+	if err != nil {
+		return nil, databaseutil.WrapDBErrorWithKeyValue(err, "pages", "id", pageID.String(), s.logger, "get page")
+	}
+	if _, err := s.courses.ByIDForActor(ctx, actorID, page.CourseID); err != nil {
+		return nil, err
+	}
+	return s.blockService.listByPage(ctx, pageID)
 }
 
 func (s *PageService) Create(ctx context.Context, courseID uuid.UUID, req PageRequest) (Detail, error) {
@@ -210,8 +223,8 @@ func (s *PageService) Reorder(ctx context.Context, courseID uuid.UUID, pageIDs [
 }
 
 func (s *PageService) ensureCourseExists(ctx context.Context, courseID uuid.UUID) error {
-	_, err := s.courses.GetCourseByID(ctx, courseID)
-	return databaseutil.WrapDBErrorWithKeyValue(err, "courses", "id", courseID.String(), s.logger, "get course")
+	_, err := s.courses.ByID(ctx, courseID)
+	return err
 }
 
 // validateReorderIDs enforces that the requested order names every existing item exactly once.

@@ -107,9 +107,8 @@ func main() {
 	courseHandler := course.NewHandler(courseService, logger)
 
 	pageStore := page.NewStore(pool)
-	courseQueries := course.New(pool)
 	blockService := page.NewBlockService(pageStore, pageStore, contentService, questionService, logger)
-	pageService := page.NewPageService(pageStore, blockService, courseQueries, logger)
+	pageService := page.NewPageService(pageStore, blockService, courseService, logger)
 	pageHandler := page.NewHandler(pageService, blockService, logger)
 
 	// Health check route

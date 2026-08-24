@@ -134,7 +134,7 @@ func TestStoreReorderRollsBackOffset(t *testing.T) {
 	before := readDisplayOrders(t, pool, courseID)
 
 	store := NewStore(pool)
-	courses := course.New(pool)
+	courses := course.NewService(course.NewStore(pool), nil, nil, zap.NewNop())
 	svc := NewPageService(failingTransactor{Store: store}, blockServiceForPages(store), courses, zap.NewNop())
 
 	reversed := []uuid.UUID{pageIDs[2], pageIDs[1], pageIDs[0]}
@@ -166,7 +166,7 @@ func TestStoreReorderCommitsNewOrder(t *testing.T) {
 	courseID, pageIDs := seedCourseWithPages(t, pool, "First", "Second", "Third")
 
 	store := NewStore(pool)
-	svc := NewPageService(store, blockServiceForPages(store), course.New(pool), zap.NewNop())
+	svc := NewPageService(store, blockServiceForPages(store), course.NewService(course.NewStore(pool), nil, nil, zap.NewNop()), zap.NewNop())
 
 	reversed := []uuid.UUID{pageIDs[2], pageIDs[1], pageIDs[0]}
 	reordered, err := svc.Reorder(t.Context(), courseID, reversed)
