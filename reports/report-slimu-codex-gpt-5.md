@@ -344,3 +344,9 @@
 - The suite exercises create, detail, metadata/configuration update, status update, and list endpoints; verifies JSONB configuration round-trip, participant/Course counts, status preservation, status/schedule/search filters, pagination totals, and GET/PUT/status 404 behavior.
 - Focused normal tests, integration tests, integration race tests, and integration-tag vet passed. No product defect was exposed.
 - A combined formatting command accidentally passed the Markdown report to `gofmt`, which rejected the `#` character without modifying the file. The corrected Go-only formatting and `git diff --check` checks passed.
+
+### Commit 2 implementation evidence
+- Added an integration-tagged Course API suite that wires the real handler, Course service/Store, Experiment access Store, and PostgreSQL while injecting roles at the authentication boundary.
+- The suite exercises create, detail, metadata update, status update, and list endpoints; verifies status/search filters, pagination totals, case-insensitive duplicate-code 409 responses on create and update, and GET/PUT/status 404 behavior.
+- Direct Course GET coverage now proves that a Student with a current Experiment assignment receives 200 and an unassigned Course receives 403 through the production Experiment query; EXPERIMENTER/ADMIN management reads remain covered by the lifecycle and missing-resource cases.
+- Focused normal tests, integration tests, integration race tests, integration-tag vet, and integration-tag lint passed. No product defect was exposed.
