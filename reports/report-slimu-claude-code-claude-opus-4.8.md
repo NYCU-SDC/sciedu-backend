@@ -435,3 +435,101 @@ Why I still got it wrong despite the doc existing:
 - **All five phases of the plan are now implemented.** Remaining is Phase 4 (manual Yaak smoke against a live stack) and Phase 5 (PR). Suggested per-Phase commits are with the user; Phase 3's is a single `feat:` on top of merge commit `7bae366`.
 - **Out of scope (unchanged, disclosed)**: `POST .../answers` stays authenticated-only; other Questions/Content routes keep existing permissions (any authenticated student can still POST/PUT/DELETE questions) — spec explicitly excludes widening those.
 - **When `feat/answer` (PR #57) later merges to main**, a `git rebase main` on `feat/users-rbac` should fold the identical answer commits by SHA without conflict.
+
+## [2026-08-10 14:35] Task Record — Pages/PageBlocks Phase 0-3
+
+### Task Description
+- Implement `pages`/`page_blocks` API following an internal implementation plan (Phase 0-3 of a multi-phase rollout). Most open questions (courses scope, package layout, reorder strategy, branch/task-id) were already settled with the user beforehand; how a block's `resourceId` gets validated (query the referenced table first vs. rely on the FK failing) is still open and blocks Phase 4. Branch: `feat/SCIEDU-115-pages`.
+
+### Why a `courses` table at all
+- `pages.course_id` is `NOT NULL REFERENCES courses(id)`, but no `courses`/`experiments` tables exist anywhere in the repo. Building full `experiments` just to satisfy this FK was out of scope for this feature.
+- Migration creates a `courses` table with the *full* field set from `courses.tsp` (code/title/description/status), but **no** service/handler/routes/CRUD this round. Rationale: get the schema right once so a future CRUD implementation only adds the three layers on top and never touches the schema again. No Courses API exists yet, so integration test data must be seeded via raw SQL.
+- Pages/PageBlocks routes will be EXPERIMENTER/ADMIN-only for now; STUDENT access needs "current experiment" logic that doesn't exist yet — deferred, tracked as a follow-up.
+
+### Actions Taken
+- Phase 0: branch created, baseline `make test` green.
+- Phase 1: `internal/database/migrations/12_courses.{up,down}.sql` + `internal/course/schema.sql`. Case-insensitive unique index on `code` (`LOWER(code)`), `status` as `TEXT + CHECK` (not a Postgres ENUM — matches `question.type`'s existing convention, avoids touching the shared `create_sqlc_full_schema.sh` override list).
+- Phase 2: `internal/database/migrations/13_pages.{up,down}.sql` + `internal/page/schema.sql` — `pages` + `page_blocks`, `UNIQUE(course_id/page_id, display_order)`, mutual-exclusion CHECK on `content_id`/`question_id`. User committed these as `5bae567`.
+- Phase 3: `internal/course/queries.sql` (`GetCourseByID`), `internal/page/page_queries.sql`, `internal/page/block_queries.sql`. Reorder queries use `unnest($2::uuid[]) WITH ORDINALITY` (array position = new display_order) as the write-back step of a temp-offset reorder scheme (bump every row's `display_order` out of the way first, then write final values, so a bulk reorder never trips the `UNIQUE(..., display_order)` constraint mid-write). Create/Update block queries split into `*ContentBlock`/`*QuestionBlock` pairs, mirroring `content` package's `CreateTextContent`/`CreateMediaContent` style. Hand-verified every query (incl. reorder, CHECK, UNIQUE, CASCADE/RESTRICT) via `psql`/`PREPARE`/`EXECUTE` before generation.
+- User ran `make gen`. `content_id`/`question_id` correctly generated as `pgtype.UUID`. The new `pages` table's generated `Page` struct collided with an existing hand-written `type Page struct` in `internal/user/service.go` (pagination wrapper, unrelated concept, same name — every package's `models.go` includes a struct per table in the shared schema). User chose to rename the `user` package's type: `Page` → `ProfilePage` (3 call sites in `service.go`; `handler.go`/tests untouched, they only use inferred var types). `go build`/`vet`/`gofmt`/`make test` all clean after the rename.
+
+### Next Steps
+- How block `resourceId`s get validated (query the referenced `contents`/`questions` table first vs. rely on the FK failing) is still open; must be confirmed before Phase 4 (Service layer) starts.
+- Phase 4 must wrap the offset+set-order queries in one explicit `pgx.Tx` (`Queries.WithTx`, already generated) — this is required for the temp-offset reorder scheme to be safe. Test that a mid-transaction failure rolls back to the original `display_order`, not the offset intermediate state.
+
+## [2026-08-11 —] Task Record — Pages/PageBlocks Service layer
+
+### Task Description
+- Build the Service layer for `pages`/`page_blocks` on `feat/SCIEDU-115-pages`: page and block CRUD, atomic reorder, and validation of the `resourceId`+`type` pair each block exposes. Handler layer is not started. Includes the `internal/content` changes page blocks depend on.
+
+### Actions Taken
+- `internal/page/store.go` (new): `Store` wrapping the generated `Queries` plus `WithinTx`, modeled on `internal/question/store.go` (deferred rollback, commit on success).
+- `internal/page/page_service.go` / `block_service.go` (new): list/get/create/update/delete/reorder for both, plus `errors.go` sentinels. `Detail` bundles a page with its blocks to match the `PageDetail` model in `pages.tsp`.
+- **`resourceId` validation happens in the service, before the insert**, rather than letting the FK fail: `TEXT`/`MEDIA` both map to `content_id`, so only the `contents` row itself says which one a resource actually is — no FK can express that. `validateResource` switches on the requested type, looks the resource up through `content.Service`/`question.QuestionService`, and rejects a mismatch with a 400-mapped sentinel.
+- **Reading a block back needs the same information in reverse**, since `page_blocks` stores no type. Added `BatchGetContents` to `internal/content` (query + `Service` method) so a page resolves every content-backed block's type in one round trip instead of one per block.
+- Cross-package access is by narrow interfaces declared in `internal/page` (`CourseLookup`, `PageLookup`, `ContentLookup`, `QuestionLookup`), satisfied as-is by `*course.Queries`, `*Store`, `*content.Service` and `*question.QuestionService` — no adapters, and tests substitute fakes.
+- `internal/content/handler.go`: FK violations now map to 409. summer has no 409 constructor and leaves `23503` unmapped, so deleting a content still referenced by a block would otherwise surface as a 500. Comment on site records why.
+- Reorder queries switched from positional `$2::uuid[]` to `sqlc.arg(page_ids)`/`sqlc.arg(block_ids)`; sqlc was naming the generated field `Column2`.
+- Tests: table-driven service tests with hand-written fakes (matching the `content` package style), plus `store_integration_test.go` (`//go:build integration`) which runs the real transaction with the write-back step forced to fail and asserts the database still holds the original `display_order`.
+
+### Review pass (second session) and the fixes it produced
+- **`display_order` upper bound.** A client-supplied `displayOrder` near int32 max overflows the reorder's `display_order + 100000` step → PG `22003`, unmapped by summer → 500. First attempt added `CHECK (display_order >= 0 AND display_order < 100000)` to the schema. **That was wrong and would have broken reorder entirely** — reproduced against the real container: the offset step violates the constraint immediately (`23514`), and Postgres cannot declare a CHECK `DEFERRABLE` (only UNIQUE/PK/FK/EXCLUDE), so there is no way to relax it mid-transaction. Reverted the schema; the bound is enforced only by `validateDisplayOrder` (`maxDisplayOrder = 99999`) on the four create/update entry points. Migrations are byte-identical to their committed versions, so no database rebuild is needed.
+  - **Lesson worth carrying forward**: unit tests never caught this because fakes never touch a real constraint. A schema change has to be exercised against a real database — a green `go test` says nothing about SQL.
+- Replaced a runtime transactor type-assertion with `PageStore`/`BlockStore` interfaces that embed `Transactor`, so a store without transaction support is a compile error rather than a runtime sentinel. Removed the sentinel, the fallback branch, and the test that covered it.
+- `DeletePage`/`DeleteBlock` moved from `:exec` to `:execrows` and branch on rows-affected instead of a preceding existence query — one statement, no TOCTOU window. `DeleteBlock` is additionally scoped `AND page_id = ...`, so its check and its write finally use the same predicate.
+- `PageService.Get`/`Update` now use the unexported `listByPage`; every `GET /pages/{id}` had been issuing `GetPageByID` twice.
+- `isNotFound` simplified to `errors.Is(err, handlerutil.ErrNotFound)`, which matches both summer shapes; previously only the struct form matched, so an upstream service switching to `WrapDBError` would have silently turned a 400 into a 500.
+- Added the `// TODO(experiments): 開放 STUDENT 存取前需完成 experiments 的 current-experiment 邏輯` anchor on the three read entry points students will eventually reach.
+- Fixed a test that asserted `errors.Is(err, errInjectedWriteFailure)` — never true, because `WrapDBError` wraps unrecognised errors in summer's `InternalServerError`, a struct with no `Unwrap()`. Now reaches the original through `errors.As` + `.Source`.
+
+### Issues & Blockers
+- **Deferred to the handler layer**: `pages.tsp` declares a 409 on create/update/reorder, but a `UNIQUE(course_id/page_id, display_order)` violation currently reaches no mapping and would surface as a 500. The service already returns `databaseutil.ErrUniqueViolation` correctly; the fix belongs in the page handler's `problemutil.NewWithMapping` closure, and that file does not exist yet.
+- The `display_order` bound is enforced in exactly one place. Any future write path that bypasses `PageService`/`BlockService` owns that invariant itself.
+- `go build ./...`, `go vet ./...`, `go vet -tags integration ./internal/page/...`, `gofmt -l .` all clean; `go test ./... -race -count=1` → 349 passed across 11 packages; `go test -tags integration ./internal/page/... -race -count=1` against the local Postgres → 28 passed, with both reorder rollback/commit tests executing rather than skipping.
+
+### Next Steps
+- Handler layer must include: `ErrUniqueViolation` → 409 and the two payload sentinels → 400 in the problem mapping; `RequireAnyRole(EXPERIMENTER, ADMIN)` on every route with a second `TODO(experiments)` anchor beside it; camelCase DTO tags matching `pages.tsp`; and validator tags `lte=99999` on `displayOrder` and `max=200` on `title` as an early-failure layer in front of (not instead of) the service checks — a `VARCHAR(200)` overflow is `22001`, unmapped by summer → 500, the same class of bug as the displayOrder one fixed here.
+
+## [2026-08-11 11:30] Task Record — Phase 5 (Handler layer) review + fixes
+
+### Task Description
+- Review the newly implemented Phase 5 handler layer (`internal/page/handler.go`, `handler_test.go`, `cmd/backend/main.go` wiring). User then selected which findings to act on: fix the FK-violation mapping, the authorization test gap, and the nitpicks; record the nil-authorizer finding without changing code; and write the malformed-JSON finding up as an issue document rather than fixing it.
+
+### Actions Taken
+- **FK violation → 409**: added `databaseutil.ErrForeignKeyViolation` to the handler's problem mapping with detail `"referenced resource no longer exists"`, plus a case in `TestHandlerErrorMapping_TableDriven`. Chose 409 over 400 because the resourceId *was* valid when the request arrived — the conflict is with concurrent state — and because `internal/content` already returns 409 for the same class of FK failure.
+- **Authorization test coverage**: `TestHandlerAuthorization` covered 7 of 11 routes, missing all four block write routes (`POST /blocks`, `PUT /blocks/order`, `PUT /blocks/{blockId}`, `DELETE /blocks/{blockId}`). Added them; now 11/11, which is what the plan's Phase 5 AC ("STUDENT 一律 403") actually claims.
+- **Nitpicks**: `parseBlockPath` no longer takes a receiver it never used; `wantForbiden` → `wantForbidden`.
+- **Documents**: `_mynotes/page/page_impl_log.md` restructured into two rounds and given a full round-2 section (7 findings, each with options and rationale). `_mynotes/page/page_impl_plan_0808.md` gained three new "未來待辦" entries (nil-authorizer, reorder/displayOrder limit mismatch, malformed JSON). `_mynotes/page/issue.md` created for the malformed-JSON problem, written to be pasted straight into GitHub.
+
+### Attempted Methods
+- Probed the handler's real edge-case behaviour with a throwaway test file (written, run, deleted) rather than reasoning about it: empty body → 500, `{` → 500, `{"displayOrder":"abc"}` → 500, `displayOrder:-1` → 400, unknown field → 201, `DELETE /blocks/order` → 400 invalid UUID, empty list → `[]`.
+- Traced the 500s to `summer/pkg/handler/payload.go` returning `json.Unmarshal`'s error verbatim while `summer/pkg/problem` only maps `validator.ValidationErrors`, UUID format and pagination — so validator failures become 400 but JSON parse failures do not. `grep -rn "SyntaxError\|UnmarshalTypeError" internal/` is empty: no handler in the repo maps them, so this is a platform-wide gap, not something Phase 5 introduced. That is why it became an issue document instead of a three-line local patch — fixing only `internal/page` would make `/api/pages` and `/api/questions` disagree on the same malformed input.
+- Verified `middlewareutil.Set.Append` copies its slice before appending, so `question` and `page` both calling it cannot corrupt each other's middleware chain.
+- Confirmed the `/blocks/order` vs `/blocks/{blockId}` routing is guaranteed rather than incidental: Go 1.22 ServeMux prefers the more specific pattern, and the literal segment matches a strict subset of the wildcard.
+
+### Issues & Blockers
+- **Left unfixed by decision** (recorded in the plan's 未來待辦): `RegisterRoutes` silently drops the role gate when `authorizer == nil` — same shape as `question/handler.go`'s `answerReadAccess`, so changing only `page` would create two conventions; should be fixed for both at once. Current wiring passes a real authorizer and is covered by tests.
+- **Left unfixed, spec-level**: `displayOrder` allows 0..99999 but `pages.tsp` caps reorder arrays at 500 items, so a course with more than 500 pages could never be reordered. Fixing means editing the TypeSpec, not the Go.
+- **Open question**: Phase 5 and Phase 6 ACs refer to a `yaak/` collection directory; `find . -iname "*yaak*"` finds nothing in this repo. Needs the user to confirm where those collections live before Phase 6's manual verification can run.
+- `go build ./...`, `go vet ./...`, `gofmt -l .` clean; `go test ./... -race -count=1` → 381 passed across 11 packages (page: 58).
+
+### Next Steps
+- Phase 6 manual verification, blocked on the yaak question.
+- File `_mynotes/page/issue.md` as a GitHub issue; recommendation there is a shared in-repo problem-mapping helper (option B), since `ErrForeignKeyViolation → 409` is now duplicated between `content` and `page` and wants the same home.
+- Phase 7: PR titled `[115] <imperative description>` per AGENTS.md.
+
+## [2026-08-11 12:10] Task Record — comment cleanup (English only, less noise)
+
+### Task Description
+- User asked to confirm no code comments are in Chinese (all must be English) and to trim comments that say more than they need to.
+
+### Actions Taken
+- **Chinese comments**: exactly four, all the same `TODO(experiments)` anchor (`internal/page/handler.go`, `page_service.go` x2, `block_service.go`). Rewrote as `// TODO(experiments): allow STUDENT once experiments provides current-experiment lookup`. The greppable prefix `TODO(experiments)` is unchanged, so the anchor still works, but the plan and log documents quote the full string verbatim, so both were updated to match. The only CJK left under `internal/` is multibyte *test data* in `internal/chat` (rune-truncation tests), not comments.
+- **Two stale comments found and fixed** — both still described the `CHECK (display_order < 100000)` constraint that ADR-7 removed: `validateDisplayOrder`'s doc comment (claimed it exists to keep values out of a CHECK; now states the real reason, INT overflow in the reorder offset) and the out-of-range table-test cases in `page_service_test.go` / `block_service_test.go`.
+- **Trimmed** roughly twenty comments across `handler.go`, `page_service.go`, `block_service.go`, `content/handler.go`, the four page test files, and the two `*_queries.sql` files — mostly three-line blocks restating what the code already shows, cut to one or two lines carrying only the non-obvious "why". Re-ran `sqlc generate` because the SQL comments are copied into the generated doc comments.
+
+### Issues & Blockers
+- None. `go build ./...`, `go vet ./...`, `go vet -tags integration ./internal/page/...`, `gofmt -l .` clean; `go test ./... -race -count=1` → 381 passed across 11 packages; integration → 60 passed.
+
+### Next Steps
+- Unchanged from the previous record: Phase 6 (blocked on the yaak question), file `_mynotes/page/issue.md`, then Phase 7 PR.

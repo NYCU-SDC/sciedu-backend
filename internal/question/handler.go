@@ -76,6 +76,16 @@ func NewHandler(questionService *QuestionService, answerService *AnswerService, 
 			if errors.Is(err, errInvalidQuestionPayload) || errors.Is(err, errInvalidAnswerPayload) {
 				return problemutil.NewValidateProblem(err.Error())
 			}
+			// A question referenced by a page block is protected by ON DELETE
+			// RESTRICT, which summer leaves unmapped.
+			if errors.Is(err, errQuestionReferenced) {
+				return problemutil.Problem{
+					Title:  "Conflict",
+					Status: http.StatusConflict,
+					Type:   "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/409",
+					Detail: errQuestionReferenced.Error(),
+				}
+			}
 			return problemutil.Problem{}
 		}),
 		validator: validator.New(),

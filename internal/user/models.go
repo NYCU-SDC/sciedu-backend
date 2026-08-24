@@ -175,6 +175,26 @@ type Option struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
+type Page struct {
+	ID           uuid.UUID
+	CourseID     uuid.UUID
+	Title        string
+	DisplayOrder int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type PageBlock struct {
+	ID           uuid.UUID
+	PageID       uuid.UUID
+	ContentID    pgtype.UUID
+	QuestionID   pgtype.UUID
+	DisplayOrder int32
+	Required     bool
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type Question struct {
 	ID        uuid.UUID
 	Content   string

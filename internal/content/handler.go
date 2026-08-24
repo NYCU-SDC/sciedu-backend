@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
@@ -85,6 +86,16 @@ func NewHandler(service HandlerService, logger *zap.Logger) *Handler {
 			}
 			if errors.Is(err, errInvalidContentPayload) {
 				return problemutil.NewValidateProblem(err.Error())
+			}
+			// Contents referenced elsewhere (today: page_blocks) are protected by ON
+			// DELETE RESTRICT. summer maps neither that nor a plain FK violation.
+			if errors.Is(err, errContentReferenced) || errors.Is(err, databaseutil.ErrForeignKeyViolation) {
+				return problemutil.Problem{
+					Title:  "Conflict",
+					Status: http.StatusConflict,
+					Type:   "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/409",
+					Detail: errContentReferenced.Error(),
+				}
 			}
 			return problemutil.Problem{}
 		}),

@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.30.0
 
-package chat
+package page
 
 import (
 	"database/sql/driver"

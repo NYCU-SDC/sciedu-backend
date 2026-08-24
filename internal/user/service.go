@@ -24,7 +24,7 @@ type ListInput struct {
 	Role     *string
 }
 
-type Page struct {
+type ProfilePage struct {
 	Items       []Profile
 	TotalItems  int32
 	TotalPages  int32
@@ -48,7 +48,7 @@ func NewService(repo Repository, logger *zap.Logger) *Service {
 	}
 }
 
-func (s *Service) List(ctx context.Context, in ListInput) (Page, error) {
+func (s *Service) List(ctx context.Context, in ListInput) (ProfilePage, error) {
 	filter := ListFilter{Search: in.Search, Role: in.Role}
 
 	items, err := s.repo.ListUsers(ctx, ListParams{
@@ -57,12 +57,12 @@ func (s *Service) List(ctx context.Context, in ListInput) (Page, error) {
 		Offset:     (in.Page - 1) * in.PageSize,
 	})
 	if err != nil {
-		return Page{}, databaseutil.WrapDBError(err, s.logger, "list users")
+		return ProfilePage{}, databaseutil.WrapDBError(err, s.logger, "list users")
 	}
 
 	total, err := s.repo.CountUsers(ctx, filter)
 	if err != nil {
-		return Page{}, databaseutil.WrapDBError(err, s.logger, "count users")
+		return ProfilePage{}, databaseutil.WrapDBError(err, s.logger, "count users")
 	}
 
 	var totalPages int32
@@ -70,7 +70,7 @@ func (s *Service) List(ctx context.Context, in ListInput) (Page, error) {
 		totalPages = int32((total + int64(in.PageSize) - 1) / int64(in.PageSize))
 	}
 
-	return Page{
+	return ProfilePage{
 		Items:       items,
 		TotalItems:  int32(total),
 		TotalPages:  totalPages,

@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS page_blocks;
+DROP TABLE IF EXISTS pages;

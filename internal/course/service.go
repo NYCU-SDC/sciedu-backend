@@ -45,7 +45,7 @@ type ListInput struct {
 	Search   *string
 }
 
-type Page struct {
+type CoursePage struct {
 	Items       []Record
 	TotalPages  int32
 	TotalItems  int32
@@ -68,19 +68,19 @@ func NewService(repo Repository, roles auth.RoleQuerier, studentAccess StudentCo
 	return &Service{repo: repo, roles: roles, studentAccess: studentAccess, logger: logger}
 }
 
-func (s *Service) List(ctx context.Context, input ListInput) (Page, error) {
+func (s *Service) List(ctx context.Context, input ListInput) (CoursePage, error) {
 	if input.Page < 1 || input.PageSize < 1 || input.PageSize > maxPageSize {
-		return Page{}, fmt.Errorf("%w: page must be positive and pageSize must be between 1 and %d", errInvalidCoursePayload, maxPageSize)
+		return CoursePage{}, fmt.Errorf("%w: page must be positive and pageSize must be between 1 and %d", errInvalidCoursePayload, maxPageSize)
 	}
 	if input.Status != nil && !validCourseStatus(*input.Status) {
-		return Page{}, fmt.Errorf("%w: unknown course status", errInvalidCoursePayload)
+		return CoursePage{}, fmt.Errorf("%w: unknown course status", errInvalidCoursePayload)
 	}
 	if input.Search != nil && (utf8.RuneCountInString(*input.Search) < 1 || utf8.RuneCountInString(*input.Search) > maxCourseTitleLength) {
-		return Page{}, fmt.Errorf("%w: search must be between 1 and %d characters", errInvalidCoursePayload, maxCourseTitleLength)
+		return CoursePage{}, fmt.Errorf("%w: search must be between 1 and %d characters", errInvalidCoursePayload, maxCourseTitleLength)
 	}
 	offset := (int64(input.Page) - 1) * int64(input.PageSize)
 	if offset > math.MaxInt32 {
-		return Page{}, fmt.Errorf("%w: page offset is too large", errInvalidCoursePayload)
+		return CoursePage{}, fmt.Errorf("%w: page offset is too large", errInvalidCoursePayload)
 	}
 
 	filter := ListFilter{Status: input.Status, Search: input.Search}
@@ -90,15 +90,15 @@ func (s *Service) List(ctx context.Context, input ListInput) (Page, error) {
 		Offset:     int32(offset),
 	})
 	if err != nil {
-		return Page{}, databaseutil.WrapDBError(err, s.logger, "list courses")
+		return CoursePage{}, databaseutil.WrapDBError(err, s.logger, "list courses")
 	}
 
 	total, err := s.repo.Count(ctx, filter)
 	if err != nil {
-		return Page{}, databaseutil.WrapDBError(err, s.logger, "count courses")
+		return CoursePage{}, databaseutil.WrapDBError(err, s.logger, "count courses")
 	}
 	if total > math.MaxInt32 {
-		return Page{}, fmt.Errorf("%w: course count exceeds the supported range", errInvalidCoursePayload)
+		return CoursePage{}, fmt.Errorf("%w: course count exceeds the supported range", errInvalidCoursePayload)
 	}
 
 	var totalPages int32
@@ -106,7 +106,7 @@ func (s *Service) List(ctx context.Context, input ListInput) (Page, error) {
 		totalPages = int32((total + int64(input.PageSize) - 1) / int64(input.PageSize))
 	}
 
-	return Page{
+	return CoursePage{
 		Items:       items,
 		TotalPages:  totalPages,
 		TotalItems:  int32(total),
