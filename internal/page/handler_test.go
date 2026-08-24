@@ -209,6 +209,12 @@ func TestHandlerRoutes_TableDriven(t *testing.T) {
 			wantCode: http.StatusBadRequest, wantCalls: 0,
 		},
 		{
+			name: "create page rejects a missing displayOrder", method: http.MethodPost,
+			url:      "/api/courses/" + courseID.String() + "/pages",
+			body:     `{"title":"Intro"}`,
+			wantCode: http.StatusBadRequest, wantCalls: 0,
+		},
+		{
 			name: "create page rejects an out of range displayOrder", method: http.MethodPost,
 			url:  "/api/courses/" + courseID.String() + "/pages",
 			body: `{"title":"Intro","displayOrder":100000}`,
@@ -250,6 +256,12 @@ func TestHandlerRoutes_TableDriven(t *testing.T) {
 			url:      "/api/pages/" + pageID.String(),
 			body:     `{"title":"Renamed","displayOrder":2}`,
 			wantCode: http.StatusOK, wantCalls: 1,
+		},
+		{
+			name: "update page rejects a missing displayOrder", method: http.MethodPut,
+			url:      "/api/pages/" + pageID.String(),
+			body:     `{"title":"Renamed"}`,
+			wantCode: http.StatusBadRequest, wantCalls: 0,
 		},
 		{
 			name: "delete page returns 204", method: http.MethodDelete,
@@ -299,6 +311,12 @@ func TestHandlerBlockRoutes_TableDriven(t *testing.T) {
 			wantCode: http.StatusCreated, wantBlockCalls: 1,
 		},
 		{
+			name: "create block accepts explicit zero and false", method: http.MethodPost,
+			url:      blocksURL,
+			body:     fmt.Sprintf(`{"type":"TEXT","resourceId":"%s","displayOrder":0,"required":false}`, resourceID),
+			wantCode: http.StatusCreated, wantBlockCalls: 1,
+		},
+		{
 			name: "create block rejects an unknown type", method: http.MethodPost,
 			url:      blocksURL,
 			body:     fmt.Sprintf(`{"type":"AUDIO","resourceId":"%s","displayOrder":0,"required":true}`, resourceID),
@@ -311,10 +329,34 @@ func TestHandlerBlockRoutes_TableDriven(t *testing.T) {
 			wantCode: http.StatusBadRequest,
 		},
 		{
+			name: "create block rejects a missing displayOrder", method: http.MethodPost,
+			url:      blocksURL,
+			body:     fmt.Sprintf(`{"type":"TEXT","resourceId":"%s","required":true}`, resourceID),
+			wantCode: http.StatusBadRequest,
+		},
+		{
+			name: "create block rejects a missing required", method: http.MethodPost,
+			url:      blocksURL,
+			body:     fmt.Sprintf(`{"type":"TEXT","resourceId":"%s","displayOrder":0}`, resourceID),
+			wantCode: http.StatusBadRequest,
+		},
+		{
 			name: "update block", method: http.MethodPut,
 			url:      blocksURL + "/" + blockID.String(),
 			body:     fmt.Sprintf(`{"type":"QUESTION","resourceId":"%s","displayOrder":1,"required":false}`, resourceID),
 			wantCode: http.StatusOK, wantBlockCalls: 1,
+		},
+		{
+			name: "update block rejects a missing displayOrder", method: http.MethodPut,
+			url:      blocksURL + "/" + blockID.String(),
+			body:     fmt.Sprintf(`{"type":"QUESTION","resourceId":"%s","required":false}`, resourceID),
+			wantCode: http.StatusBadRequest,
+		},
+		{
+			name: "update block rejects a missing required", method: http.MethodPut,
+			url:      blocksURL + "/" + blockID.String(),
+			body:     fmt.Sprintf(`{"type":"QUESTION","resourceId":"%s","displayOrder":1}`, resourceID),
+			wantCode: http.StatusBadRequest,
 		},
 		{
 			name: "delete block returns 204", method: http.MethodDelete,
@@ -345,6 +387,41 @@ func TestHandlerBlockRoutes_TableDriven(t *testing.T) {
 			}
 			if blocks.callCount != tt.wantBlockCalls {
 				t.Fatalf("expected %d block service calls, got %d", tt.wantBlockCalls, blocks.callCount)
+			}
+		})
+	}
+}
+
+func TestHandlerInvalidJSONReturnsBadRequest(t *testing.T) {
+	courseID, pageID, blockID := uuid.New(), uuid.New(), uuid.New()
+	routes := []struct {
+		name   string
+		method string
+		url    string
+		body   string
+	}{
+		{name: "create page malformed", method: http.MethodPost, url: "/api/courses/" + courseID.String() + "/pages", body: `{`},
+		{name: "reorder pages empty", method: http.MethodPut, url: "/api/courses/" + courseID.String() + "/pages/order", body: ""},
+		{name: "update page wrong type", method: http.MethodPut, url: "/api/pages/" + pageID.String(), body: `{"title":"x","displayOrder":"zero"}`},
+		{name: "create block malformed", method: http.MethodPost, url: "/api/pages/" + pageID.String() + "/blocks", body: `{`},
+		{name: "reorder blocks empty", method: http.MethodPut, url: "/api/pages/" + pageID.String() + "/blocks/order", body: ""},
+		{name: "update block wrong type", method: http.MethodPut, url: "/api/pages/" + pageID.String() + "/blocks/" + blockID.String(), body: `{"required":"false"}`},
+	}
+
+	for _, route := range routes {
+		t.Run(route.name, func(t *testing.T) {
+			pages := &fakePageService{}
+			blocks := &fakeBlockService{}
+			rec := doRequest(t, newTestMux(pages, blocks), route.method, route.url, route.body)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d, body=%s", rec.Code, rec.Body.String())
+			}
+			if rec.Header().Get("Content-Type") != "application/problem+json" {
+				t.Fatalf("expected problem+json, got %q", rec.Header().Get("Content-Type"))
+			}
+			if pages.callCount != 0 || blocks.callCount != 0 {
+				t.Fatalf("invalid JSON reached services: page calls=%d block calls=%d", pages.callCount, blocks.callCount)
 			}
 		})
 	}

@@ -2,7 +2,9 @@ package page
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -43,11 +45,9 @@ type Handler struct {
 	validator     *validator.Validate
 }
 
-// displayOrder has no `required` tag on purpose: validator reads a zero int as
-// missing, and 0 is a legitimate position.
 type createUpdatePageRequest struct {
 	Title        string `json:"title" validate:"required,min=1,max=200"`
-	DisplayOrder int32  `json:"displayOrder" validate:"gte=0,lte=99999"`
+	DisplayOrder *int32 `json:"displayOrder" validate:"required,gte=0,lte=99999"`
 }
 
 type reorderPagesRequest struct {
@@ -57,8 +57,8 @@ type reorderPagesRequest struct {
 type createUpdateBlockRequest struct {
 	Type         string    `json:"type" validate:"required,oneof=TEXT MEDIA QUESTION"`
 	ResourceID   uuid.UUID `json:"resourceId" validate:"required"`
-	DisplayOrder int32     `json:"displayOrder" validate:"gte=0,lte=99999"`
-	Required     bool      `json:"required"`
+	DisplayOrder *int32    `json:"displayOrder" validate:"required,gte=0,lte=99999"`
+	Required     *bool     `json:"required" validate:"required"`
 }
 
 type reorderBlocksRequest struct {
@@ -100,9 +100,13 @@ func NewHandler(pageService PageHandlerService, blockService BlockHandlerService
 		blockService: blockService,
 		logger:       logger,
 		problemWriter: problemutil.NewWithMapping(func(err error) problemutil.Problem {
+			var syntaxErr *json.SyntaxError
+			var typeErr *json.UnmarshalTypeError
 			switch {
 			case errors.Is(err, errInvalidPagePayload), errors.Is(err, errInvalidBlockPayload):
 				return problemutil.NewValidateProblem(err.Error())
+			case errors.Is(err, io.EOF), errors.As(err, &syntaxErr), errors.As(err, &typeErr):
+				return problemutil.NewValidateProblem("invalid JSON request body")
 			case errors.Is(err, databaseutil.ErrUniqueViolation):
 				// summer has no 409 problem and leaves unique violations unmapped.
 				return problemutil.Problem{
@@ -197,7 +201,10 @@ func (h *Handler) CreatePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detail, err := h.pageService.Create(ctx, courseID, PageRequest(req))
+	detail, err := h.pageService.Create(ctx, courseID, PageRequest{
+		Title:        req.Title,
+		DisplayOrder: *req.DisplayOrder,
+	})
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -271,7 +278,10 @@ func (h *Handler) UpdatePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detail, err := h.pageService.Update(ctx, id, PageRequest(req))
+	detail, err := h.pageService.Update(ctx, id, PageRequest{
+		Title:        req.Title,
+		DisplayOrder: *req.DisplayOrder,
+	})
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -435,7 +445,12 @@ func (h *Handler) parseBlockRequest(ctx context.Context, r *http.Request) (Block
 		return BlockRequest{}, err
 	}
 
-	return BlockRequest(req), nil
+	return BlockRequest{
+		Type:         req.Type,
+		ResourceID:   req.ResourceID,
+		DisplayOrder: *req.DisplayOrder,
+		Required:     *req.Required,
+	}, nil
 }
 
 func buildPageResponse(p Page) pageResponse {
