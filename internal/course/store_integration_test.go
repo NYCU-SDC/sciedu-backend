@@ -87,7 +87,8 @@ func TestStoreListAndCountCourses(t *testing.T) {
 
 	t.Run("filters by status", func(t *testing.T) {
 		status := CourseStatusPUBLISHED
-		records, err := store.List(ctx, ListParams{ListFilter: ListFilter{Status: &status}, Limit: 10})
+		search := prefix
+		records, err := store.List(ctx, ListParams{ListFilter: ListFilter{Status: &status, Search: &search}, Limit: 10})
 		require.NoError(t, err)
 		require.Len(t, records, 1)
 		assert.Equal(t, first.ID, records[0].ID)

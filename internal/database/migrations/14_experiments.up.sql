@@ -46,11 +46,9 @@ CREATE TABLE experiment_participants (
 
 CREATE INDEX experiment_participants_user_id_idx ON experiment_participants (user_id);
 
--- The courses table is owned by the course domain. Its migration must add the
--- course_id foreign key after that table exists.
 CREATE TABLE experiment_courses (
     experiment_id UUID NOT NULL REFERENCES experiments (id) ON DELETE CASCADE,
-    course_id UUID NOT NULL,
+    course_id UUID NOT NULL REFERENCES courses (id) ON DELETE CASCADE,
     linked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (experiment_id, course_id)
 );
