@@ -508,6 +508,80 @@ func TestAPIDeletePageCascadesBlocks(t *testing.T) {
 	}
 }
 
+func TestAPIPageAndBlockUpdateDeleteLifecycle(t *testing.T) {
+	pool := newIntegrationPool(t)
+	mux := newAPI(t, pool)
+	courseID := seedCourse(t, pool)
+	pageID := newPageViaAPI(t, mux, courseID, "Initial page", 0)
+	initialContentID := seedContent(t, pool, "TEXT")
+	updatedContentID := seedContent(t, pool, "TEXT")
+	blockID := newBlockViaAPI(t, mux, pageID, initialContentID, 0)
+
+	code, body := call(t, mux, http.MethodPut, "/api/pages/"+pageID.String(), `{"title":"Updated page","displayOrder":0}`)
+	if code != http.StatusOK {
+		t.Fatalf("expected 200 updating page, got %d %s", code, body)
+	}
+	var updatedPage pageDetailResponse
+	if err := json.Unmarshal([]byte(body), &updatedPage); err != nil {
+		t.Fatalf("failed to decode updated page: %v", err)
+	}
+	if updatedPage.Title != "Updated page" || updatedPage.DisplayOrder != 0 {
+		t.Fatalf("unexpected updated page response: %s", body)
+	}
+	if len(updatedPage.Blocks) != 1 || updatedPage.Blocks[0].ID != blockID {
+		t.Fatalf("page update did not retain its block: %s", body)
+	}
+
+	blocksURL := "/api/pages/" + pageID.String() + "/blocks"
+	code, body = call(t, mux, http.MethodPut, blocksURL+"/"+blockID.String(), fmt.Sprintf(
+		`{"type":"TEXT","resourceId":"%s","displayOrder":0,"required":true}`, updatedContentID,
+	))
+	if code != http.StatusOK {
+		t.Fatalf("expected 200 updating block, got %d %s", code, body)
+	}
+	var updatedBlock blockResponse
+	if err := json.Unmarshal([]byte(body), &updatedBlock); err != nil {
+		t.Fatalf("failed to decode updated block: %v", err)
+	}
+	if updatedBlock.ID != blockID || updatedBlock.ResourceID != updatedContentID || !updatedBlock.Required {
+		t.Fatalf("unexpected updated block response: %s", body)
+	}
+
+	code, body = call(t, mux, http.MethodGet, "/api/pages/"+pageID.String(), "")
+	if code != http.StatusOK {
+		t.Fatalf("expected 200 reading updated page, got %d %s", code, body)
+	}
+	var fetched pageDetailResponse
+	if err := json.Unmarshal([]byte(body), &fetched); err != nil {
+		t.Fatalf("failed to decode fetched page: %v", err)
+	}
+	if fetched.Title != "Updated page" || len(fetched.Blocks) != 1 || fetched.Blocks[0].ResourceID != updatedContentID {
+		t.Fatalf("updates were not persisted: %s", body)
+	}
+
+	code, body = call(t, mux, http.MethodDelete, blocksURL+"/"+blockID.String(), "")
+	if code != http.StatusNoContent || len(body) != 0 {
+		t.Fatalf("expected empty 204 deleting block, got %d %s", code, body)
+	}
+
+	code, body = call(t, mux, http.MethodGet, blocksURL, "")
+	if code != http.StatusOK {
+		t.Fatalf("expected 200 listing blocks after delete, got %d %s", code, body)
+	}
+	var blocks []blockResponse
+	if err := json.Unmarshal([]byte(body), &blocks); err != nil || len(blocks) != 0 {
+		t.Fatalf("expected an empty block list after delete, got %s: %v", body, err)
+	}
+
+	var remaining int
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM page_blocks WHERE id = $1", blockID).Scan(&remaining); err != nil {
+		t.Fatalf("failed to verify block deletion: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("expected block %s to be deleted, found %d rows", blockID, remaining)
+	}
+}
+
 func TestAPIStudentReadAccessAndWriteDenial(t *testing.T) {
 	pool := newIntegrationPool(t)
 	courseID := seedCourse(t, pool)

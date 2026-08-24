@@ -350,3 +350,38 @@
 - The suite exercises create, detail, metadata update, status update, and list endpoints; verifies status/search filters, pagination totals, case-insensitive duplicate-code 409 responses on create and update, and GET/PUT/status 404 behavior.
 - Direct Course GET coverage now proves that a Student with a current Experiment assignment receives 200 and an unassigned Course receives 403 through the production Experiment query; EXPERIMENTER/ADMIN management reads remain covered by the lifecycle and missing-resource cases.
 - Focused normal tests, integration tests, integration race tests, integration-tag vet, and integration-tag lint passed. No product defect was exposed.
+
+### Commit 3 implementation evidence
+- Extended the real-PostgreSQL Page API suite with a Page/PageBlock lifecycle that successfully updates Page metadata, updates a Block's resource and required flag, reads the persisted Page detail, deletes the Block with an empty 204 response, and verifies both the API list and database row are empty afterward.
+- This closes successful full-stack coverage for Update Page, Update PageBlock, and Delete PageBlock without repeating the existing create/list/get/delete-Page/reorder/access/resource-validation cases.
+- Focused normal tests, integration tests, integration race tests, integration-tag vet, and integration-tag lint passed. No product defect was exposed.
+
+## [2026-08-25] Task Record — SCIEDU-119 Phase 5 complete
+
+### Task Description
+- Complete the remaining automated verification for all 21 in-scope Experiment, Course, and Page endpoints without expanding into the seven deferred Experiment operations or Phase 6 manual/contract work.
+
+### Actions Taken
+- Committed `test: verify Experiment API against PostgreSQL` with `Refs: #61`.
+- Committed `test: verify Course API against PostgreSQL` with `Refs: #60, #61`.
+- Committed `test: complete Page API lifecycle coverage` with `Refs: #62`.
+- Added successful HTTP-to-service-to-PostgreSQL evidence for all previously uncovered endpoint paths, including Experiment JSONB/count/filter behavior, direct Course Student access, Course conflict/not-found mapping, and Page/PageBlock update/delete persistence.
+- No Phase 5 test exposed a product defect, so all three commits remain test/report-only and no behavior fix was mixed into them.
+
+### Verification
+- Passed the migration race lifecycle `empty → 14 → empty → 14` on an isolated PostgreSQL 18.1 container.
+- Passed complete Experiment, Course, and Page PostgreSQL integration suites sequentially with `-race`.
+- Passed full repository unit and race suites, build, normal and integration-tag vet, and normal and integration-tag lint with zero issues.
+- Ran sqlc v1.30.0 generation and confirmed it produced no tracked diff; formatting and `git diff --check` passed.
+- Stopped and auto-removed the exact no-volume `sciedu-119-phase5-postgres` container.
+
+### Attempted Methods
+- Running normal and integration-tag golangci-lint concurrently caused the integration process to stop on golangci-lint's global parallel-run lock. The completed normal run had zero issues; rerunning the integration command sequentially also reported zero issues.
+
+### Issues & Blockers
+- No Phase 5 blocker remains.
+- Real session/login behavior, pinned OpenAPI/Prism contract checks, and the Yaak cross-domain workflow remain intentionally assigned to Phase 6.
+- Pre-existing untracked `.codebase-tutor/` and `CLAUDE.md` remain untouched. No remote push was performed.
+
+### Next Steps
+- Stop before Phase 6 and discuss its contract-test, backend-runtime, fixture, and manual Yaak workflow boundaries before starting services or changing API artifacts.
