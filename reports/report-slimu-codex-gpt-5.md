@@ -311,3 +311,36 @@
 
 ### Next Steps
 - Stop before Phase 5 and discuss whether any meaningful automated coverage gaps remain.
+
+## [2026-08-25] Task Record — SCIEDU-119 Phase 5 entry decisions
+
+### Task Description
+- Add only the remaining high-value automated verification for the 21 in-scope Experiment, Course, and Page endpoints.
+
+### Decisions
+- Phase 5 uses three domain-attributable test commits and does not repeat the migration, Student-access truth table, Page reorder, or request-contract coverage already established in Phases 2–4.
+- Commit 1: `test: verify Experiment API against PostgreSQL` with `Refs: #61`.
+  - Exercise all five in-scope Experiment endpoints through HTTP, the real service, and PostgreSQL.
+  - Verify configuration JSON round-trip, detail counts, metadata/status updates, list filtering/pagination/counts, and missing-resource behavior.
+- Commit 2: `test: verify Course API against PostgreSQL` with `Refs: #60, #61`.
+  - Exercise all five Course endpoints through HTTP, the real service, and PostgreSQL.
+  - Verify list filters/pagination, duplicate-code conflict, missing-resource behavior, and direct Student Course reads backed by Experiment assignments.
+- Commit 3: `test: complete Page API lifecycle coverage` with `Refs: #62`.
+  - Add real-PostgreSQL success coverage for Update Page, Update PageBlock, and Delete PageBlock, which are the remaining Page endpoints without successful full-stack database evidence.
+- Do not optimize for an aggregate coverage percentage. The Phase 5 invariant is that each of the 21 endpoints has successful HTTP-to-database evidence where applicable, while focused negative and cross-domain cases remain covered.
+- Keep real session-cookie/login, OpenAPI/Prism, and Yaak verification in Phase 6. Phase 5 integration handlers may inject an actor while retaining real domain wiring.
+- If a new test exposes a product defect, preserve the failing evidence and separate the behavior fix from the `test:` commit. Stop for discussion first if the correction requires a new contract or authorization decision.
+
+### Verification Agreement
+- Run focused integration tests, including race variants, for each domain commit.
+- At phase exit, run the migration lifecycle and all three domain PostgreSQL suites against one disposable no-volume PostgreSQL instance.
+- Run deterministic sqlc v1.30.0 generation, full build, unit/race tests, normal and integration-tag vet/lint, formatting/diff checks, and a tracked-tree cleanliness check.
+
+### Status
+- Decisions approved; Experiment PostgreSQL API verification started.
+
+### Commit 1 implementation evidence
+- Added an integration-tagged Experiment API suite that wires the real handler, service, Store, and PostgreSQL while injecting an EXPERIMENTER actor at the authentication boundary.
+- The suite exercises create, detail, metadata/configuration update, status update, and list endpoints; verifies JSONB configuration round-trip, participant/Course counts, status preservation, status/schedule/search filters, pagination totals, and GET/PUT/status 404 behavior.
+- Focused normal tests, integration tests, integration race tests, and integration-tag vet passed. No product defect was exposed.
+- A combined formatting command accidentally passed the Markdown report to `gofmt`, which rejected the `#` character without modifying the file. The corrected Go-only formatting and `git diff --check` checks passed.
