@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"sciedu-backend/internal/auth"
@@ -253,9 +252,10 @@ func parseListInput(r *http.Request) (ListInput, error) {
 	}
 
 	var search *string
-	if raw := strings.TrimSpace(query.Get("search")); raw != "" {
-		if len([]rune(raw)) > maxCourseSearchLength {
-			return ListInput{}, fmt.Errorf("%w: search must be at most %d characters", errInvalidCoursePayload, maxCourseSearchLength)
+	if query.Has("search") {
+		raw := query.Get("search")
+		if length := len([]rune(raw)); length < 1 || length > maxCourseSearchLength {
+			return ListInput{}, fmt.Errorf("%w: search must be between 1 and %d characters", errInvalidCoursePayload, maxCourseSearchLength)
 		}
 		search = &raw
 	}

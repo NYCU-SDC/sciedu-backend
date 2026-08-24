@@ -233,3 +233,36 @@
 
 ### Next Steps
 - Stop before Phase 4 and discuss its exact commit slicing and display-order strategy.
+
+## [2026-08-25] Task Record — SCIEDU-119 Phase 4 entry decisions
+
+### Task Description
+- Agree on the Phase 4 contract-gap boundaries, commit slicing, and Page display-order strategy before implementation.
+
+### Decisions
+- Phase 4 will use three behavior commits. Each commit includes its own failing-before/fixed-after tests and uses only the materially related source PR references. No commit will contain a `Task: SCIEDU-119` trailer.
+- Commit 1: `fix: reject empty Course search queries` with `Refs: #60`.
+  - An omitted `search` remains valid.
+  - A present empty value (`?search=`) returns 400, matching TypeSpec `@minLength(1)`.
+  - Whitespace-only search remains valid because the pinned TypeSpec has no non-blank pattern; the backend must not add a stricter trim-based rule implicitly.
+- Commit 2: `fix: validate Page request payloads` with `Refs: #62`.
+  - Page/Block request DTOs use pointer fields where TypeSpec requires zero-capable values, so omission is distinguishable from explicit `displayOrder: 0` and `required: false`.
+  - Missing required values and malformed/empty/wrong-type JSON return 400 Problem Details without reaching services.
+  - Unknown JSON fields remain accepted; strict unknown-field rejection is outside this phase because the pinned contract does not require it.
+- Commit 3: `fix: support full Page display order range` with `Refs: #62`.
+  - Backend will support the full TypeSpec range of non-negative `int32` values rather than adding the implementation-derived `99999` maximum to TypeSpec.
+  - Migration 13 and the Page sqlc schema may be amended because all databases remain disposable local/snapshot environments.
+  - Page and PageBlock order uniqueness becomes `DEFERRABLE INITIALLY IMMEDIATE`: ordinary create/update conflicts are still checked immediately, while reorder transactions defer only the relevant constraint and update directly to `0..N-1`.
+  - Remove the `+100000` temporary offset and the handler/service `99999` guards, preserving atomic reorder and rollback without integer overflow.
+
+### Verification Agreement
+- Run focused Course/Page handler and service tests per commit.
+- At phase exit, run migration `empty → 14 → empty → 14`, real PostgreSQL Page reorder/rollback/full-int32 cases, domain integration race tests, full unit/race/build/vet/lint, integration-tag vet/lint, and deterministic sqlc v1.30.0 generation.
+
+### Status
+- Decisions approved; Phase 4 implementation started with the Course search contract fix.
+
+### Commit 1 implementation evidence
+- Added handler cases proving the pre-fix behavior was wrong: `?search=` returned 200 and a whitespace-only value was discarded instead of being preserved.
+- Changed Course query parsing to distinguish an omitted parameter from a present empty value and to validate the untrimmed Unicode length exactly as declared by TypeSpec.
+- Focused Course tests, Course vet, and full repository build passed after the fix.

@@ -60,6 +60,8 @@ func TestHandlerListCourses(t *testing.T) {
 		{name: "rejects overflowing offset", query: "?page=2147483647&pageSize=100", wantCode: http.StatusBadRequest},
 		{name: "rejects large page size", query: "?pageSize=101", wantCode: http.StatusBadRequest},
 		{name: "rejects unknown status", query: "?status=UNKNOWN", wantCode: http.StatusBadRequest},
+		{name: "rejects a present empty search", query: "?search=", wantCode: http.StatusBadRequest},
+		{name: "preserves a whitespace search allowed by TypeSpec", query: "?search=+++", wantCode: http.StatusOK, wantSearch: stringPointer("   ")},
 		{name: "rejects long search", query: "?search=" + strings.Repeat("x", 201), wantCode: http.StatusBadRequest},
 	}
 
