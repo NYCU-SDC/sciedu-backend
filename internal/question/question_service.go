@@ -7,10 +7,15 @@ import (
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 )
 
 var errQuestionTransactionUnsupported = errors.New("question transaction unsupported")
+
+// pgErrRestrictViolation is Postgres' SQLSTATE for an ON DELETE RESTRICT violation.
+// It is distinct from 23503 (foreign_key_violation), which NO ACTION raises.
+const pgErrRestrictViolation = "23001"
 
 type QuestionRequest struct {
 	Type    string
@@ -91,7 +96,17 @@ func (s *QuestionService) Update(ctx context.Context, id uuid.UUID, arg Question
 }
 
 func (s *QuestionService) Delete(ctx context.Context, id uuid.UUID) error {
-	return databaseutil.WrapDBErrorWithKeyValue(s.querier.DeleteQuestion(ctx, id), "questions", "id", id.String(), s.logger, "delete question")
+	err := s.querier.DeleteQuestion(ctx, id)
+	// A question still referenced by a page block is protected by ON DELETE RESTRICT,
+	// which Postgres reports as 23001 -- not the 23503 that summer knows about. This
+	// has to be caught before WrapDBError buries it in an InternalServerError, which
+	// has no Unwrap for errors.As to see through.
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgErrRestrictViolation {
+		return errQuestionReferenced
+	}
+
+	return databaseutil.WrapDBErrorWithKeyValue(err, "questions", "id", id.String(), s.logger, "delete question")
 }
 
 func (s *QuestionService) CreateWithOptions(ctx context.Context, arg QuestionRequest, options []QuestionOptionRequest) (Question, error) {

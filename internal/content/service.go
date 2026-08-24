@@ -12,10 +12,15 @@ import (
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 )
 
 const defaultMediaDir = "contents"
+
+// pgErrRestrictViolation is Postgres' SQLSTATE for an ON DELETE RESTRICT violation.
+// It is distinct from 23503 (foreign_key_violation), which NO ACTION raises.
+const pgErrRestrictViolation = "23001"
 const (
 	defaultPage     int32 = 1
 	defaultPageSize int32 = 20
@@ -252,7 +257,17 @@ func (s *Service) ListTextContents(ctx context.Context, page, pageSize int32) (T
 }
 
 func (s *Service) DeleteContent(ctx context.Context, id uuid.UUID) error {
-	return databaseutil.WrapDBErrorWithKeyValue(s.querier.DeleteContent(ctx, id), "contents", "id", id.String(),
+	err := s.querier.DeleteContent(ctx, id)
+	// A content still referenced by a page block is protected by ON DELETE RESTRICT,
+	// which Postgres reports as 23001 -- not the 23503 that summer knows about. This
+	// has to be caught before WrapDBError buries it in an InternalServerError, which
+	// has no Unwrap for errors.As to see through.
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgErrRestrictViolation {
+		return errContentReferenced
+	}
+
+	return databaseutil.WrapDBErrorWithKeyValue(err, "contents", "id", id.String(),
 		s.logger, "delete content")
 }
 

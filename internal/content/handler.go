@@ -88,13 +88,13 @@ func NewHandler(service HandlerService, logger *zap.Logger) *Handler {
 				return problemutil.NewValidateProblem(err.Error())
 			}
 			// Contents referenced elsewhere (today: page_blocks) are protected by ON
-			// DELETE RESTRICT. summer leaves FK violations unmapped.
-			if errors.Is(err, databaseutil.ErrForeignKeyViolation) {
+			// DELETE RESTRICT. summer maps neither that nor a plain FK violation.
+			if errors.Is(err, errContentReferenced) || errors.Is(err, databaseutil.ErrForeignKeyViolation) {
 				return problemutil.Problem{
 					Title:  "Conflict",
 					Status: http.StatusConflict,
 					Type:   "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/409",
-					Detail: "content is still referenced by another resource",
+					Detail: errContentReferenced.Error(),
 				}
 			}
 			return problemutil.Problem{}
