@@ -164,41 +164,6 @@ func TestHandlerGetCourse(t *testing.T) {
 	}
 }
 
-func TestHandlerGetCourseWithDevelopmentMockAssignments(t *testing.T) {
-	studentID := uuid.MustParse(DevelopmentMockStudentID)
-	assignedCourseID := uuid.MustParse(DevelopmentMockAssignedCourseID)
-	unassignedCourseID := uuid.MustParse(DevelopmentMockUnassignedCourseID)
-	repo := &fakeRepository{byIDFn: func(_ context.Context, id uuid.UUID) (Record, error) {
-		return sampleCourse(id), nil
-	}}
-	handler := newCourseHandlerWithAuthorization(
-		repo,
-		&fakeCourseRoleQuerier{roles: []auth.Role{auth.STUDENT}},
-		NewDevelopmentMockStudentCourseAccessChecker(),
-	)
-
-	tests := []struct {
-		name     string
-		courseID uuid.UUID
-		wantCode int
-	}{
-		{name: "assigned course is allowed", courseID: assignedCourseID, wantCode: http.StatusOK},
-		{name: "unassigned course is forbidden", courseID: unassignedCourseID, wantCode: http.StatusForbidden},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, "/api/courses/"+tt.courseID.String(), nil)
-			request = request.WithContext(auth.ContextWithUserID(request.Context(), studentID))
-			recorder := httptest.NewRecorder()
-
-			handlerMux(handler).ServeHTTP(recorder, request)
-
-			assert.Equal(t, tt.wantCode, recorder.Code)
-		})
-	}
-}
-
 func TestHandlerUpdateCourse(t *testing.T) {
 	id := uuid.New()
 	tests := []struct {

@@ -75,3 +75,18 @@ WHERE experiment_id = $1;
 SELECT count(*)
 FROM experiment_courses
 WHERE experiment_id = $1;
+
+-- name: StudentCanAccessCourse :one
+SELECT EXISTS (
+    SELECT 1
+    FROM experiment_participants ep
+    JOIN experiments e ON e.id = ep.experiment_id
+    JOIN experiment_courses ec ON ec.experiment_id = e.id
+    JOIN courses c ON c.id = ec.course_id
+    WHERE ep.user_id = sqlc.arg('student_id')
+      AND ec.course_id = sqlc.arg('course_id')
+      AND e.status = 'ACTIVE'
+      AND e.scheduled_start_at <= CURRENT_TIMESTAMP
+      AND e.scheduled_end_at >= CURRENT_TIMESTAMP
+      AND c.status = 'PUBLISHED'
+);

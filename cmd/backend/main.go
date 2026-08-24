@@ -103,9 +103,7 @@ func main() {
 	experimentHandler := experiment.NewHandler(experimentService, logger)
 
 	courseStore := course.NewStore(pool)
-	// Temporary development mock until the Experiment domain provides its checker.
-	studentCourseAccess := course.NewDevelopmentMockStudentCourseAccessChecker()
-	courseService := course.NewService(courseStore, authStore, studentCourseAccess, logger)
+	courseService := course.NewService(courseStore, authStore, experimentStore, logger)
 	courseHandler := course.NewHandler(courseService, logger)
 
 	pageStore := page.NewStore(pool)

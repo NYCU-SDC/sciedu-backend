@@ -33,7 +33,6 @@ type Repository interface {
 }
 
 // StudentCourseAccessChecker determines whether a student may read a course.
-// The Experiment domain will provide the production implementation once it is available.
 type StudentCourseAccessChecker interface {
 	CanAccessCourse(ctx context.Context, studentID, courseID uuid.UUID) (bool, error)
 }

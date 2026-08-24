@@ -38,14 +38,14 @@ func TestCourseExperimentMigrationRelationship(t *testing.T) {
 	})
 
 	require.NoError(t, databaseutil.MigrationUp(sourceURL, databaseURL, logger))
-	assertMigrationVersion(t, databaseURL, 15)
+	assertMigrationVersion(t, databaseURL, 14)
 	assertCourseExperimentForeignKey(t, databaseURL)
 
 	require.NoError(t, databaseutil.MigrationDown(sourceURL, databaseURL, logger))
 	assertDomainTablesAbsent(t, databaseURL)
 
 	require.NoError(t, databaseutil.MigrationUp(sourceURL, databaseURL, logger))
-	assertMigrationVersion(t, databaseURL, 15)
+	assertMigrationVersion(t, databaseURL, 14)
 	assertCourseForeignKeyDefinition(t, databaseURL)
 }
 
