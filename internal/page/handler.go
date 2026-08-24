@@ -192,7 +192,7 @@ func (h *Handler) CreatePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detail, err := h.pageService.Create(ctx, courseID, PageRequest{Title: req.Title, DisplayOrder: req.DisplayOrder})
+	detail, err := h.pageService.Create(ctx, courseID, PageRequest(req))
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -261,7 +261,7 @@ func (h *Handler) UpdatePage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	detail, err := h.pageService.Update(ctx, id, PageRequest{Title: req.Title, DisplayOrder: req.DisplayOrder})
+	detail, err := h.pageService.Update(ctx, id, PageRequest(req))
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -420,12 +420,7 @@ func (h *Handler) parseBlockRequest(ctx context.Context, r *http.Request) (Block
 		return BlockRequest{}, err
 	}
 
-	return BlockRequest{
-		Type:         req.Type,
-		ResourceID:   req.ResourceID,
-		DisplayOrder: req.DisplayOrder,
-		Required:     req.Required,
-	}, nil
+	return BlockRequest(req), nil
 }
 
 func buildPageResponse(p Page) pageResponse {
