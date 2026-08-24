@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.30.0
 
-package page
+package experiment
 
 import (
 	"database/sql/driver"
