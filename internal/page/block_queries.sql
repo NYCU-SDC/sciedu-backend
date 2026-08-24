@@ -44,16 +44,9 @@ DELETE FROM page_blocks
 WHERE id = sqlc.arg(id)
   AND page_id = sqlc.arg(page_id);
 
--- name: OffsetBlockOrders :exec
--- Step 1 of the temp-offset reorder: move every block out of the way so step 2
--- cannot collide with UNIQUE(page_id, display_order).
-UPDATE page_blocks
-SET display_order = display_order + 100000
-WHERE page_id = $1;
-
 -- name: SetBlockOrders :many
--- Step 2 of the temp-offset reorder: array position becomes the new display_order.
--- Must run in the same transaction as OffsetBlockOrders.
+-- Array position becomes the new display_order. The unique constraint is
+-- deferred by the caller and rechecked when the transaction commits.
 UPDATE page_blocks
 SET display_order = data.ord - 1,
     updated_at = NOW()

@@ -30,7 +30,7 @@ type BlockQuerier interface {
 	UpdateContentBlock(ctx context.Context, arg UpdateContentBlockParams) (PageBlock, error)
 	UpdateQuestionBlock(ctx context.Context, arg UpdateQuestionBlockParams) (PageBlock, error)
 	DeleteBlock(ctx context.Context, arg DeleteBlockParams) (int64, error)
-	OffsetBlockOrders(ctx context.Context, pageID uuid.UUID) error
+	DeferOrderConstraints(ctx context.Context) error
 	SetBlockOrders(ctx context.Context, arg SetBlockOrdersParams) ([]PageBlock, error)
 }
 
@@ -201,9 +201,9 @@ func (s *BlockService) Delete(ctx context.Context, pageID, blockID uuid.UUID) er
 	return nil
 }
 
-// Reorder replaces the display order of every block in a page. The offset and
-// write-back steps must share a transaction: alone, the offset leaves every
-// display_order parked in the temporary range with no way back.
+// Reorder replaces the display order of every block in a page. Validation,
+// constraint deferral, and write-back share one transaction so uniqueness is
+// checked against the complete final order at commit.
 func (s *BlockService) Reorder(ctx context.Context, pageID uuid.UUID, blockIDs []uuid.UUID) ([]Block, error) {
 	if err := s.ensurePageExists(ctx, pageID); err != nil {
 		return nil, err
@@ -226,8 +226,8 @@ func (s *BlockService) Reorder(ctx context.Context, pageID uuid.UUID, blockIDs [
 			return err
 		}
 
-		if err := blockQuerier.OffsetBlockOrders(ctx, pageID); err != nil {
-			return databaseutil.WrapDBError(err, s.logger, "offset page block orders")
+		if err := blockQuerier.DeferOrderConstraints(ctx); err != nil {
+			return databaseutil.WrapDBError(err, s.logger, "defer page block order constraint")
 		}
 
 		updated, err := blockQuerier.SetBlockOrders(ctx, SetBlockOrdersParams{
@@ -246,7 +246,7 @@ func (s *BlockService) Reorder(ctx context.Context, pageID uuid.UUID, blockIDs [
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, wrapTransactionError(err, s.logger, "commit page block reorder")
 	}
 
 	return s.toBlocks(ctx, rows)

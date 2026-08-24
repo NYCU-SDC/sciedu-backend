@@ -89,9 +89,13 @@ func TestBlockServiceCreateValidatesResource_TableDriven(t *testing.T) {
 			wantErr: errInvalidBlockPayload,
 		},
 		{
-			// Past the point where the reorder offset still fits in an INT column.
-			name:    "rejects a display order above the allowed range",
-			request: BlockRequest{Type: BlockTypeText, ResourceID: resourceID, DisplayOrder: maxDisplayOrder + 1},
+			name:     "accepts the maximum int32 display order",
+			request:  BlockRequest{Type: BlockTypeText, ResourceID: resourceID, DisplayOrder: 2147483647},
+			wantCall: "CreateContentBlock",
+		},
+		{
+			name:    "rejects a negative display order",
+			request: BlockRequest{Type: BlockTypeText, ResourceID: resourceID, DisplayOrder: -1},
 			wantErr: errInvalidBlockPayload,
 		},
 	}
@@ -129,6 +133,9 @@ func TestBlockServiceCreateValidatesResource_TableDriven(t *testing.T) {
 			}
 			if block.ResourceID != tt.request.ResourceID {
 				t.Fatalf("expected resource id %s, got %s", tt.request.ResourceID, block.ResourceID)
+			}
+			if block.DisplayOrder != tt.request.DisplayOrder {
+				t.Fatalf("expected display order %d, got %d", tt.request.DisplayOrder, block.DisplayOrder)
 			}
 			if len(querier.calls) != 1 || querier.calls[0] != tt.wantCall {
 				t.Fatalf("expected a single %s call, got %v", tt.wantCall, querier.calls)
@@ -257,7 +264,7 @@ func TestBlockServiceReorder_TableDriven(t *testing.T) {
 		{
 			name:      "reorders every block",
 			requested: []uuid.UUID{second, first},
-			wantCalls: []string{"OffsetBlockOrders", "SetBlockOrders"},
+			wantCalls: []string{"DeferOrderConstraints", "SetBlockOrders"},
 		},
 		{
 			name:      "rejects a mismatched set without writing",

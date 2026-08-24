@@ -215,11 +215,16 @@ func TestHandlerRoutes_TableDriven(t *testing.T) {
 			wantCode: http.StatusBadRequest, wantCalls: 0,
 		},
 		{
-			name: "create page rejects an out of range displayOrder", method: http.MethodPost,
-			url:  "/api/courses/" + courseID.String() + "/pages",
-			body: `{"title":"Intro","displayOrder":100000}`,
-			// Must stay below the reorder's +100000 shift.
+			name: "create page rejects a negative displayOrder", method: http.MethodPost,
+			url:      "/api/courses/" + courseID.String() + "/pages",
+			body:     `{"title":"Intro","displayOrder":-1}`,
 			wantCode: http.StatusBadRequest, wantCalls: 0,
+		},
+		{
+			name: "create page accepts the maximum int32 displayOrder", method: http.MethodPost,
+			url:      "/api/courses/" + courseID.String() + "/pages",
+			body:     `{"title":"Last","displayOrder":2147483647}`,
+			wantCode: http.StatusCreated, wantCalls: 1,
 		},
 		{
 			name: "create page rejects a malformed course id", method: http.MethodPost,
@@ -314,6 +319,12 @@ func TestHandlerBlockRoutes_TableDriven(t *testing.T) {
 			name: "create block accepts explicit zero and false", method: http.MethodPost,
 			url:      blocksURL,
 			body:     fmt.Sprintf(`{"type":"TEXT","resourceId":"%s","displayOrder":0,"required":false}`, resourceID),
+			wantCode: http.StatusCreated, wantBlockCalls: 1,
+		},
+		{
+			name: "create block accepts the maximum int32 displayOrder", method: http.MethodPost,
+			url:      blocksURL,
+			body:     fmt.Sprintf(`{"type":"TEXT","resourceId":"%s","displayOrder":2147483647,"required":true}`, resourceID),
 			wantCode: http.StatusCreated, wantBlockCalls: 1,
 		},
 		{

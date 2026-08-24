@@ -5,7 +5,8 @@ CREATE TABLE IF NOT EXISTS pages (
     display_order  INT NOT NULL CHECK (display_order >= 0),
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (course_id, display_order)
+    CONSTRAINT pages_course_display_order_unique
+        UNIQUE (course_id, display_order) DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE IF NOT EXISTS page_blocks (
@@ -17,7 +18,8 @@ CREATE TABLE IF NOT EXISTS page_blocks (
     required       BOOL NOT NULL,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (page_id, display_order),
+    CONSTRAINT page_blocks_page_display_order_unique
+        UNIQUE (page_id, display_order) DEFERRABLE INITIALLY IMMEDIATE,
     CHECK (
         (content_id IS NOT NULL AND question_id IS NULL) OR
         (content_id IS NULL AND question_id IS NOT NULL)

@@ -221,6 +221,17 @@ func newPageViaAPI(t *testing.T, mux *http.ServeMux, courseID uuid.UUID, title s
 	return idFromJSON(t, body)
 }
 
+func newBlockViaAPI(t *testing.T, mux *http.ServeMux, pageID, resourceID uuid.UUID, order int32) uuid.UUID {
+	t.Helper()
+
+	code, body := call(t, mux, http.MethodPost, "/api/pages/"+pageID.String()+"/blocks",
+		fmt.Sprintf(`{"type":"TEXT","resourceId":"%s","displayOrder":%d,"required":false}`, resourceID, order))
+	if code != http.StatusCreated {
+		t.Fatalf("failed to create block at order %d: %d %s", order, code, body)
+	}
+	return idFromJSON(t, body)
+}
+
 // A duplicate displayOrder has to come back as 409. The unit test feeds the
 // mapping a hand-made ErrUniqueViolation; only a real database proves that
 // Postgres 23505 travels through WrapDBError into that mapping.
@@ -268,6 +279,44 @@ func TestAPIReorderPages(t *testing.T) {
 	}
 	if got[0].DisplayOrder != 0 || got[1].DisplayOrder != 1 {
 		t.Fatalf("expected display orders 0 and 1, got %s", body)
+	}
+}
+
+func TestAPIReorderSupportsMaxInt32DisplayOrders(t *testing.T) {
+	pool := newIntegrationPool(t)
+	contentID := seedContent(t, pool, "TEXT")
+	mux := newAPI(t, pool)
+	courseID := seedCourse(t, pool)
+
+	maxPage := newPageViaAPI(t, mux, courseID, "Maximum", 2147483647)
+	zeroPage := newPageViaAPI(t, mux, courseID, "Zero", 0)
+
+	code, body := call(t, mux, http.MethodPut, "/api/courses/"+courseID.String()+"/pages/order",
+		fmt.Sprintf(`{"pageIds":["%s","%s"]}`, maxPage, zeroPage))
+	if code != http.StatusOK {
+		t.Fatalf("expected 200 reordering pages from max int32, got %d %s", code, body)
+	}
+
+	maxBlock := newBlockViaAPI(t, mux, maxPage, contentID, 2147483647)
+	zeroBlock := newBlockViaAPI(t, mux, maxPage, contentID, 0)
+	code, body = call(t, mux, http.MethodPut, "/api/pages/"+maxPage.String()+"/blocks/order",
+		fmt.Sprintf(`{"blockIds":["%s","%s"]}`, maxBlock, zeroBlock))
+	if code != http.StatusOK {
+		t.Fatalf("expected 200 reordering blocks from max int32, got %d %s", code, body)
+	}
+
+	var pageOrder, maxBlockOrder, zeroBlockOrder int32
+	if err := pool.QueryRow(t.Context(), "SELECT display_order FROM pages WHERE id = $1", maxPage).Scan(&pageOrder); err != nil {
+		t.Fatalf("failed to read reordered page: %v", err)
+	}
+	if err := pool.QueryRow(t.Context(), "SELECT display_order FROM page_blocks WHERE id = $1", maxBlock).Scan(&maxBlockOrder); err != nil {
+		t.Fatalf("failed to read max block: %v", err)
+	}
+	if err := pool.QueryRow(t.Context(), "SELECT display_order FROM page_blocks WHERE id = $1", zeroBlock).Scan(&zeroBlockOrder); err != nil {
+		t.Fatalf("failed to read zero block: %v", err)
+	}
+	if pageOrder != 0 || maxBlockOrder != 0 || zeroBlockOrder != 1 {
+		t.Fatalf("unexpected final orders: page=%d maxBlock=%d zeroBlock=%d", pageOrder, maxBlockOrder, zeroBlockOrder)
 	}
 }
 

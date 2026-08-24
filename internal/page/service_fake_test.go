@@ -20,7 +20,7 @@ type fakeQuerier struct {
 	createPageFn         func(ctx context.Context, arg CreatePageParams) (Page, error)
 	updatePageFn         func(ctx context.Context, arg UpdatePageParams) (Page, error)
 	deletePageFn         func(ctx context.Context, id uuid.UUID) (int64, error)
-	offsetPageOrdersFn   func(ctx context.Context, courseID uuid.UUID) error
+	deferOrderFn         func(ctx context.Context) error
 	setPageOrdersFn      func(ctx context.Context, arg SetPageOrdersParams) ([]Page, error)
 	listBlocksByPageFn   func(ctx context.Context, pageID uuid.UUID) ([]PageBlock, error)
 	getBlockByIDFn       func(ctx context.Context, id uuid.UUID) (PageBlock, error)
@@ -29,11 +29,10 @@ type fakeQuerier struct {
 	updateContentBlockFn func(ctx context.Context, arg UpdateContentBlockParams) (PageBlock, error)
 	updateQuestionBlkFn  func(ctx context.Context, arg UpdateQuestionBlockParams) (PageBlock, error)
 	deleteBlockFn        func(ctx context.Context, arg DeleteBlockParams) (int64, error)
-	offsetBlockOrdersFn  func(ctx context.Context, pageID uuid.UUID) error
 	setBlockOrdersFn     func(ctx context.Context, arg SetBlockOrdersParams) ([]PageBlock, error)
 
-	// calls records write operations in order, so tests can assert that offset ran
-	// before write-back and that neither ran when validation rejected the request.
+	// calls records write operations in order, so tests can assert that constraint
+	// deferral ran before write-back and neither ran after validation rejected input.
 	calls []string
 }
 
@@ -75,10 +74,10 @@ func (f *fakeQuerier) DeletePage(ctx context.Context, id uuid.UUID) (int64, erro
 	return 1, nil
 }
 
-func (f *fakeQuerier) OffsetPageOrders(ctx context.Context, courseID uuid.UUID) error {
-	f.calls = append(f.calls, "OffsetPageOrders")
-	if f.offsetPageOrdersFn != nil {
-		return f.offsetPageOrdersFn(ctx, courseID)
+func (f *fakeQuerier) DeferOrderConstraints(ctx context.Context) error {
+	f.calls = append(f.calls, "DeferOrderConstraints")
+	if f.deferOrderFn != nil {
+		return f.deferOrderFn(ctx)
 	}
 	return nil
 }
@@ -143,14 +142,6 @@ func (f *fakeQuerier) DeleteBlock(ctx context.Context, arg DeleteBlockParams) (i
 		return f.deleteBlockFn(ctx, arg)
 	}
 	return 1, nil
-}
-
-func (f *fakeQuerier) OffsetBlockOrders(ctx context.Context, pageID uuid.UUID) error {
-	f.calls = append(f.calls, "OffsetBlockOrders")
-	if f.offsetBlockOrdersFn != nil {
-		return f.offsetBlockOrdersFn(ctx, pageID)
-	}
-	return nil
 }
 
 func (f *fakeQuerier) SetBlockOrders(ctx context.Context, arg SetBlockOrdersParams) ([]PageBlock, error) {

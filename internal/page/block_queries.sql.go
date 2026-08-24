@@ -157,19 +157,6 @@ func (q *Queries) ListBlocksByPage(ctx context.Context, pageID uuid.UUID) ([]Pag
 	return items, nil
 }
 
-const offsetBlockOrders = `-- name: OffsetBlockOrders :exec
-UPDATE page_blocks
-SET display_order = display_order + 100000
-WHERE page_id = $1
-`
-
-// Step 1 of the temp-offset reorder: move every block out of the way so step 2
-// cannot collide with UNIQUE(page_id, display_order).
-func (q *Queries) OffsetBlockOrders(ctx context.Context, pageID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, offsetBlockOrders, pageID)
-	return err
-}
-
 const setBlockOrders = `-- name: SetBlockOrders :many
 UPDATE page_blocks
 SET display_order = data.ord - 1,
@@ -186,8 +173,8 @@ type SetBlockOrdersParams struct {
 	BlockIds []uuid.UUID
 }
 
-// Step 2 of the temp-offset reorder: array position becomes the new display_order.
-// Must run in the same transaction as OffsetBlockOrders.
+// Array position becomes the new display_order. The unique constraint is
+// deferred by the caller and rechecked when the transaction commits.
 func (q *Queries) SetBlockOrders(ctx context.Context, arg SetBlockOrdersParams) ([]PageBlock, error) {
 	rows, err := q.db.Query(ctx, setBlockOrders, arg.PageID, arg.BlockIds)
 	if err != nil {

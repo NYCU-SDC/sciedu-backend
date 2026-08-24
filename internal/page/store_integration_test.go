@@ -125,9 +125,9 @@ func readDisplayOrders(t *testing.T, pool *pgxpool.Pool, courseID uuid.UUID) map
 	return orders
 }
 
-// TestStoreReorderRollsBackOffset is why the offset and write-back steps share a
-// transaction: without it, a failure here strands every display_order.
-func TestStoreReorderRollsBackOffset(t *testing.T) {
+// The deferred constraint and write-back must share one transaction: a failed
+// write must restore both the data and the constraint mode at rollback.
+func TestStoreReorderRollsBackDeferredWrite(t *testing.T) {
 	pool := newIntegrationPool(t)
 	courseID, pageIDs := seedCourseWithPages(t, pool, "First", "Second", "Third")
 
@@ -159,8 +159,7 @@ func TestStoreReorderRollsBackOffset(t *testing.T) {
 	}
 }
 
-// TestStoreReorderCommitsNewOrder covers the success path end to end, including
-// the mid-transaction offset that keeps UNIQUE(course_id, display_order) happy.
+// TestStoreReorderCommitsNewOrder covers the deferred-constraint success path.
 func TestStoreReorderCommitsNewOrder(t *testing.T) {
 	pool := newIntegrationPool(t)
 	courseID, pageIDs := seedCourseWithPages(t, pool, "First", "Second", "Third")

@@ -7,8 +7,10 @@ import (
 
 	"sciedu-backend/internal/course"
 
+	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 )
 
@@ -172,10 +174,15 @@ func TestPageServiceCreate_TableDriven(t *testing.T) {
 			wantCalls:    nil,
 		},
 		{
-			// Past the point where the reorder offset still fits in an INT column.
-			name:         "rejects a display order above the allowed range",
+			name:         "accepts the maximum int32 display order",
 			courses:      &fakeCourseLookup{},
-			displayOrder: maxDisplayOrder + 1,
+			displayOrder: 2147483647,
+			wantCalls:    []string{"CreatePage"},
+		},
+		{
+			name:         "rejects a negative display order",
+			courses:      &fakeCourseLookup{},
+			displayOrder: -1,
 			wantErr:      true,
 			wantCalls:    nil,
 		},
@@ -201,6 +208,9 @@ func TestPageServiceCreate_TableDriven(t *testing.T) {
 				}
 				if detail.Title != "Intro" {
 					t.Fatalf("expected title to be preserved, got %q", detail.Title)
+				}
+				if detail.DisplayOrder != tt.displayOrder {
+					t.Fatalf("expected displayOrder %d, got %d", tt.displayOrder, detail.DisplayOrder)
 				}
 				if detail.Blocks == nil || len(detail.Blocks) != 0 {
 					t.Fatalf("expected a new page to carry an empty block slice, got %#v", detail.Blocks)
@@ -248,7 +258,7 @@ func TestPageServiceReorder_TableDriven(t *testing.T) {
 					{ID: arg.PageIds[0], DisplayOrder: 0},
 				}, nil
 			},
-			wantCalls: []string{"OffsetPageOrders", "SetPageOrders"},
+			wantCalls: []string{"DeferOrderConstraints", "SetPageOrders"},
 			wantOrder: []uuid.UUID{third, first, second},
 		},
 		{
@@ -331,16 +341,31 @@ func TestPageServiceReorderPropagatesWriteFailure(t *testing.T) {
 	}
 	svc := newPageService(querier, &fakeCourseLookup{})
 
-	// The offset has already run, so the caller must see a failure rather than a
-	// partial success. The rollback itself is covered by store_integration_test.go.
+	// The constraint has already been deferred, so the caller must see a failure
+	// rather than a partial success. Rollback is covered by the integration test.
 	if _, err := svc.Reorder(context.Background(), courseID, []uuid.UUID{pageID}); err == nil {
 		t.Fatal("expected the write-back failure to propagate, got nil")
 	}
 
-	wantCalls := []string{"OffsetPageOrders", "SetPageOrders"}
+	wantCalls := []string{"DeferOrderConstraints", "SetPageOrders"}
 	if len(querier.calls) != len(wantCalls) {
 		t.Fatalf("expected calls %v, got %v", wantCalls, querier.calls)
 	}
+}
+
+func TestWrapTransactionError(t *testing.T) {
+	t.Run("maps a deferred unique violation", func(t *testing.T) {
+		err := wrapTransactionError(&pgconn.PgError{Code: databaseutil.PGErrUniqueViolation}, zap.NewNop(), "commit reorder")
+		if !errors.Is(err, databaseutil.ErrUniqueViolation) {
+			t.Fatalf("expected unique violation mapping, got %v", err)
+		}
+	})
+
+	t.Run("preserves validation errors", func(t *testing.T) {
+		if err := wrapTransactionError(errInvalidPagePayload, zap.NewNop(), "commit reorder"); !errors.Is(err, errInvalidPagePayload) {
+			t.Fatalf("expected validation error to pass through, got %v", err)
+		}
+	})
 }
 
 // Delete reads the row count back from the DELETE itself rather than pre-checking.

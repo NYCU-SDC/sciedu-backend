@@ -37,6 +37,18 @@ func (q *Queries) CreatePage(ctx context.Context, arg CreatePageParams) (Page, e
 	return i, err
 }
 
+const deferOrderConstraints = `-- name: DeferOrderConstraints :exec
+SET CONSTRAINTS ALL DEFERRED
+`
+
+// Both deferrable constraints in this schema are display-order uniqueness
+// constraints. Defer them until commit so reorder cycles can move directly to
+// their final positions.
+func (q *Queries) DeferOrderConstraints(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deferOrderConstraints)
+	return err
+}
+
 const deletePage = `-- name: DeletePage :execrows
 DELETE FROM pages
 WHERE id = $1
@@ -104,19 +116,6 @@ func (q *Queries) ListPagesByCourse(ctx context.Context, courseID uuid.UUID) ([]
 	return items, nil
 }
 
-const offsetPageOrders = `-- name: OffsetPageOrders :exec
-UPDATE pages
-SET display_order = display_order + 100000
-WHERE course_id = $1
-`
-
-// Step 1 of the temp-offset reorder: move every page out of the way so step 2
-// cannot collide with UNIQUE(course_id, display_order).
-func (q *Queries) OffsetPageOrders(ctx context.Context, courseID uuid.UUID) error {
-	_, err := q.db.Exec(ctx, offsetPageOrders, courseID)
-	return err
-}
-
 const setPageOrders = `-- name: SetPageOrders :many
 UPDATE pages
 SET display_order = data.ord - 1,
@@ -132,8 +131,8 @@ type SetPageOrdersParams struct {
 	PageIds  []uuid.UUID
 }
 
-// Step 2 of the temp-offset reorder: array position becomes the new display_order.
-// Must run in the same transaction as OffsetPageOrders.
+// Array position becomes the new display_order. The unique constraint is
+// deferred by the caller and rechecked when the transaction commits.
 func (q *Queries) SetPageOrders(ctx context.Context, arg SetPageOrdersParams) ([]Page, error) {
 	rows, err := q.db.Query(ctx, setPageOrders, arg.CourseID, arg.PageIds)
 	if err != nil {

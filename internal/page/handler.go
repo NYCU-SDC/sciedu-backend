@@ -47,7 +47,7 @@ type Handler struct {
 
 type createUpdatePageRequest struct {
 	Title        string `json:"title" validate:"required,min=1,max=200"`
-	DisplayOrder *int32 `json:"displayOrder" validate:"required,gte=0,lte=99999"`
+	DisplayOrder *int32 `json:"displayOrder" validate:"required,gte=0"`
 }
 
 type reorderPagesRequest struct {
@@ -57,7 +57,7 @@ type reorderPagesRequest struct {
 type createUpdateBlockRequest struct {
 	Type         string    `json:"type" validate:"required,oneof=TEXT MEDIA QUESTION"`
 	ResourceID   uuid.UUID `json:"resourceId" validate:"required"`
-	DisplayOrder *int32    `json:"displayOrder" validate:"required,gte=0,lte=99999"`
+	DisplayOrder *int32    `json:"displayOrder" validate:"required,gte=0"`
 	Required     *bool     `json:"required" validate:"required"`
 }
 

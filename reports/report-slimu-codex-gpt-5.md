@@ -252,7 +252,7 @@
 - Commit 3: `fix: support full Page display order range` with `Refs: #62`.
   - Backend will support the full TypeSpec range of non-negative `int32` values rather than adding the implementation-derived `99999` maximum to TypeSpec.
   - Migration 13 and the Page sqlc schema may be amended because all databases remain disposable local/snapshot environments.
-  - Page and PageBlock order uniqueness becomes `DEFERRABLE INITIALLY IMMEDIATE`: ordinary create/update conflicts are still checked immediately, while reorder transactions defer only the relevant constraint and update directly to `0..N-1`.
+  - Page and PageBlock order uniqueness becomes `DEFERRABLE INITIALLY IMMEDIATE`: ordinary create/update conflicts are still checked immediately. Reorder transactions run `SET CONSTRAINTS ALL DEFERRED`; these are currently the schema's only two deferrable constraints, and both are order uniqueness. Reorder then updates directly to `0..N-1`.
   - Remove the `+100000` temporary offset and the handler/service `99999` guards, preserving atomic reorder and rollback without integer overflow.
 
 ### Verification Agreement
@@ -266,3 +266,48 @@
 - Added handler cases proving the pre-fix behavior was wrong: `?search=` returned 200 and a whitespace-only value was discarded instead of being preserved.
 - Changed Course query parsing to distinguish an omitted parameter from a present empty value and to validate the untrimmed Unicode length exactly as declared by TypeSpec.
 - Focused Course tests, Course vet, and full repository build passed after the fix.
+
+## [2026-08-25] Task Record — SCIEDU-119 Phase 4 complete
+
+### Task Description
+- Close the agreed Course and Page contract gaps in three independently reviewable behavior commits and verify the final schema and runtime behavior.
+
+### Actions Taken
+- Committed `3fa7a30 fix: reject empty Course search queries` with `Refs: #60`.
+  - A present empty search now returns 400; omission remains valid; whitespace is preserved according to the pinned TypeSpec.
+- Committed `6212613 fix: validate Page request payloads` with `Refs: #62`.
+  - Required zero-capable Page/Block fields use pointers at the HTTP boundary, distinguishing omission from explicit `0` and `false`.
+  - Page JSON syntax/type/empty-body errors now return 400 Problem Details across all six body routes without reaching services.
+- Implemented `fix: support full Page display order range` with `Refs: #62`.
+  - Removed the handler/service `99999` upper bound and accepted the full non-negative PostgreSQL/TypeSpec `int32` range.
+  - Amended migration 13 and the Page schema with named `DEFERRABLE INITIALLY IMMEDIATE` order uniqueness constraints.
+  - Replaced the overflow-prone `+100000` offset with transaction-scoped constraint deferral and direct final ordering.
+  - Mapped raw PostgreSQL/context errors that can first surface at deferred-constraint commit, preserving reorder's declared 409 behavior for a concurrent `23505` while leaving validation errors unchanged.
+  - Added real-DB API coverage that creates and reorders both Pages and PageBlocks from `2147483647`, plus retained rollback and immediate duplicate-conflict coverage.
+
+### Failing-Before Evidence
+- Course tests showed `?search=` incorrectly returned 200 and whitespace-only search was discarded.
+- Page handler tests showed omitted required zero-value fields reached services, while malformed/empty/wrong-type JSON returned 500.
+- Page handler/service tests rejected `2147483647`; the old database reorder strategy would overflow when adding 100000.
+
+### Verification
+- Focused Course and Page tests passed after their respective fixes; full unit suites passed before every behavior commit.
+- Full migration race integration passed `empty → 14 → empty → 14` on PostgreSQL 18.1 with migration 13's deferrable constraints.
+- Experiment, Course, and Page real-PostgreSQL integration suites passed sequentially with `-race`.
+- Page integration verified max-int32 Page/PageBlock creation and reorder, transaction rollback after an injected write failure, and ordinary duplicate display-order 409 behavior.
+- Unit coverage verifies a deferred commit-time `23505` maps to the shared unique-violation sentinel and validation errors pass through unchanged.
+- Full repository build, normal and integration-tag vet, normal and integration-tag lint, full unit tests, and full race tests passed.
+- Post-commit sqlc v1.30.0 generation was deterministic and left no tracked diff.
+- The no-volume `sciedu-119-phase4-postgres` container was stopped and auto-removed after verification.
+
+### Attempted Methods
+- sqlc's catalog parser rejected named `SET CONSTRAINTS <constraint>` statements even though PostgreSQL accepts them. Used one generated `DeferOrderConstraints` query with `SET CONSTRAINTS ALL DEFERRED`; the full schema confirms the two Page order constraints are the only deferrable constraints.
+- Sandboxed full tests and PostgreSQL suites could not use loopback sockets; repeated the same commands with approved local access.
+
+### Issues & Blockers
+- No Phase 4 blocker remains.
+- Strict unknown-field rejection remains intentionally out of scope because the pinned TypeSpec does not require it.
+- Phase 5 should reassess remaining automated coverage rather than duplicate the migration, access, reorder, and contract tests already added in Phases 2–4.
+
+### Next Steps
+- Stop before Phase 5 and discuss whether any meaningful automated coverage gaps remain.

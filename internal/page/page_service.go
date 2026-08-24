@@ -13,17 +13,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// maxDisplayOrder must stay below the +100000 offset the reorder queries apply.
-// Enforced here rather than as a CHECK: a CHECK would reject the offset step itself.
-const maxDisplayOrder = 99999
-
 type PageQuerier interface {
 	ListPagesByCourse(ctx context.Context, courseID uuid.UUID) ([]Page, error)
 	GetPageByID(ctx context.Context, id uuid.UUID) (Page, error)
 	CreatePage(ctx context.Context, arg CreatePageParams) (Page, error)
 	UpdatePage(ctx context.Context, arg UpdatePageParams) (Page, error)
 	DeletePage(ctx context.Context, id uuid.UUID) (int64, error)
-	OffsetPageOrders(ctx context.Context, courseID uuid.UUID) error
+	DeferOrderConstraints(ctx context.Context) error
 	SetPageOrders(ctx context.Context, arg SetPageOrdersParams) ([]Page, error)
 }
 
@@ -171,9 +167,9 @@ func (s *PageService) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// Reorder replaces the display order of every page in a course. The offset and
-// write-back steps must share a transaction: alone, the offset leaves every
-// display_order parked in the temporary range with no way back.
+// Reorder replaces the display order of every page in a course. Validation,
+// constraint deferral, and write-back share one transaction so uniqueness is
+// checked against the complete final order at commit.
 func (s *PageService) Reorder(ctx context.Context, courseID uuid.UUID, pageIDs []uuid.UUID) ([]Page, error) {
 	if err := s.ensureCourseExists(ctx, courseID); err != nil {
 		return nil, err
@@ -196,8 +192,8 @@ func (s *PageService) Reorder(ctx context.Context, courseID uuid.UUID, pageIDs [
 			return err
 		}
 
-		if err := pageQuerier.OffsetPageOrders(ctx, courseID); err != nil {
-			return databaseutil.WrapDBError(err, s.logger, "offset page orders")
+		if err := pageQuerier.DeferOrderConstraints(ctx); err != nil {
+			return databaseutil.WrapDBError(err, s.logger, "defer page order constraint")
 		}
 
 		updated, err := pageQuerier.SetPageOrders(ctx, SetPageOrdersParams{
@@ -216,7 +212,7 @@ func (s *PageService) Reorder(ctx context.Context, courseID uuid.UUID, pageIDs [
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, wrapTransactionError(err, s.logger, "commit page reorder")
 	}
 
 	return reordered, nil
@@ -250,11 +246,9 @@ func validateReorderIDs(requested, existing []uuid.UUID, base error) error {
 	return nil
 }
 
-// validateDisplayOrder is the only guard on maxDisplayOrder: a value above it makes
-// the reorder offset overflow the INT column, which summer reports as a 500.
 func validateDisplayOrder(order int32, base error) error {
-	if order < 0 || order > maxDisplayOrder {
-		return fmt.Errorf("%w: displayOrder must be between 0 and %d, got %d", base, maxDisplayOrder, order)
+	if order < 0 {
+		return fmt.Errorf("%w: displayOrder must be non-negative, got %d", base, order)
 	}
 	return nil
 }

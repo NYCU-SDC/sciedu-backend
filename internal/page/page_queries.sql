@@ -26,16 +26,15 @@ RETURNING id, course_id, title, display_order, created_at, updated_at;
 DELETE FROM pages
 WHERE id = $1;
 
--- name: OffsetPageOrders :exec
--- Step 1 of the temp-offset reorder: move every page out of the way so step 2
--- cannot collide with UNIQUE(course_id, display_order).
-UPDATE pages
-SET display_order = display_order + 100000
-WHERE course_id = $1;
+-- name: DeferOrderConstraints :exec
+-- Both deferrable constraints in this schema are display-order uniqueness
+-- constraints. Defer them until commit so reorder cycles can move directly to
+-- their final positions.
+SET CONSTRAINTS ALL DEFERRED;
 
 -- name: SetPageOrders :many
--- Step 2 of the temp-offset reorder: array position becomes the new display_order.
--- Must run in the same transaction as OffsetPageOrders.
+-- Array position becomes the new display_order. The unique constraint is
+-- deferred by the caller and rechecked when the transaction commits.
 UPDATE pages
 SET display_order = data.ord - 1,
     updated_at = NOW()
