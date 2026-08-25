@@ -3,6 +3,7 @@ package experiment
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -52,6 +53,10 @@ func NewService(repo Repository, logger *zap.Logger) *Service {
 }
 
 func (s *Service) List(ctx context.Context, input ListInput) (ExperimentPage, error) {
+	if err := validateListInput(input); err != nil {
+		return ExperimentPage{}, err
+	}
+
 	filter := ListFilter{
 		Status:        input.Status,
 		ScheduledFrom: input.ScheduledFrom,
@@ -70,6 +75,9 @@ func (s *Service) List(ctx context.Context, input ListInput) (ExperimentPage, er
 	if err != nil {
 		return ExperimentPage{}, databaseutil.WrapDBError(err, s.logger, "count experiments")
 	}
+	if total < 0 || total > math.MaxInt32 {
+		return ExperimentPage{}, fmt.Errorf("%w: experiment count exceeds the supported range", errInvalidExperimentPayload)
+	}
 	var totalPages int32
 	if total > 0 {
 		totalPages = int32((total + int64(input.PageSize) - 1) / int64(input.PageSize))
@@ -82,6 +90,23 @@ func (s *Service) List(ctx context.Context, input ListInput) (ExperimentPage, er
 		PageSize:    input.PageSize,
 		HasNextPage: input.Page < totalPages,
 	}, nil
+}
+
+func validateListInput(input ListInput) error {
+	if input.Page < 1 || input.PageSize < 1 || input.PageSize > maxPageSize {
+		return fmt.Errorf("%w: page must be positive and pageSize must be between 1 and %d", errInvalidExperimentPayload, maxPageSize)
+	}
+	if input.Status != nil && !input.Status.Valid() {
+		return fmt.Errorf("%w: unknown experiment status", errInvalidExperimentPayload)
+	}
+	if input.Search != nil {
+		length := utf8.RuneCountInString(*input.Search)
+		if length < 1 || length > maxSearchLength {
+			return fmt.Errorf("%w: search must contain between 1 and %d characters", errInvalidExperimentPayload, maxSearchLength)
+		}
+	}
+
+	return nil
 }
 
 func (s *Service) Create(ctx context.Context, createdBy uuid.UUID, params EditableParams) (Record, error) {

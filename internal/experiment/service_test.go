@@ -2,6 +2,8 @@ package experiment
 
 import (
 	"context"
+	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,11 +21,14 @@ type fakeRepository struct {
 	updateStatusFn func(ctx context.Context, id uuid.UUID, status Status) (Record, error)
 
 	createCalls       int
+	listCalls         int
+	countCalls        int
 	updateStatusCalls int
 	lastListParams    ListParams
 }
 
 func (f *fakeRepository) List(ctx context.Context, params ListParams) ([]Record, error) {
+	f.listCalls++
 	f.lastListParams = params
 	if f.listFn != nil {
 		return f.listFn(ctx, params)
@@ -32,6 +37,7 @@ func (f *fakeRepository) List(ctx context.Context, params ListParams) ([]Record,
 }
 
 func (f *fakeRepository) Count(ctx context.Context, filter ListFilter) (int64, error) {
+	f.countCalls++
 	if f.countFn != nil {
 		return f.countFn(ctx, filter)
 	}
@@ -111,6 +117,49 @@ func TestServiceListPagination(t *testing.T) {
 			assert.Equal(t, tt.pageSize, repo.lastListParams.Limit)
 		})
 	}
+}
+
+func TestServiceListValidation(t *testing.T) {
+	invalidStatus := Status("PAUSED")
+	emptySearch := ""
+	longSearch := strings.Repeat("x", maxSearchLength+1)
+	tests := []struct {
+		name  string
+		input ListInput
+	}{
+		{name: "zero page", input: ListInput{Page: 0, PageSize: 20}},
+		{name: "zero page size", input: ListInput{Page: 1, PageSize: 0}},
+		{name: "oversized page size", input: ListInput{Page: 1, PageSize: maxPageSize + 1}},
+		{name: "invalid status", input: ListInput{Page: 1, PageSize: 20, Status: &invalidStatus}},
+		{name: "empty search", input: ListInput{Page: 1, PageSize: 20, Search: &emptySearch}},
+		{name: "long search", input: ListInput{Page: 1, PageSize: 20, Search: &longSearch}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeRepository{}
+			service := NewService(repo, nil)
+
+			_, err := service.List(context.Background(), tt.input)
+
+			assert.ErrorIs(t, err, errInvalidExperimentPayload)
+			assert.Zero(t, repo.listCalls)
+			assert.Zero(t, repo.countCalls)
+		})
+	}
+}
+
+func TestServiceListRejectsCountOverflow(t *testing.T) {
+	repo := &fakeRepository{countFn: func(context.Context, ListFilter) (int64, error) {
+		return int64(math.MaxInt32) + 1, nil
+	}}
+	service := NewService(repo, nil)
+
+	_, err := service.List(context.Background(), ListInput{Page: 1, PageSize: 20})
+
+	assert.ErrorIs(t, err, errInvalidExperimentPayload)
+	assert.Equal(t, 1, repo.listCalls)
+	assert.Equal(t, 1, repo.countCalls)
 }
 
 func TestServiceCreateValidation(t *testing.T) {
