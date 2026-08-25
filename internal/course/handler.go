@@ -233,18 +233,18 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 
 func parseListInput(r *http.Request) (ListInput, error) {
 	query := r.URL.Query()
-	page, err := parseIntQuery(query.Get("page"), defaultPage)
+	page, err := parseIntQuery(query.Get("page"), query.Has("page"), defaultPage)
 	if err != nil || page < 1 {
 		return ListInput{}, fmt.Errorf("%w: page must be a positive integer", errInvalidCoursePayload)
 	}
-	pageSize, err := parseIntQuery(query.Get("pageSize"), defaultPageSize)
+	pageSize, err := parseIntQuery(query.Get("pageSize"), query.Has("pageSize"), defaultPageSize)
 	if err != nil || pageSize < 1 || pageSize > maxPageSize {
 		return ListInput{}, fmt.Errorf("%w: pageSize must be between 1 and %d", errInvalidCoursePayload, maxPageSize)
 	}
 
 	var status *CourseStatus
-	if raw := query.Get("status"); raw != "" {
-		value := CourseStatus(raw)
+	if query.Has("status") {
+		value := CourseStatus(query.Get("status"))
 		if !validCourseStatus(value) {
 			return ListInput{}, fmt.Errorf("%w: unknown course status", errInvalidCoursePayload)
 		}
@@ -263,8 +263,8 @@ func parseListInput(r *http.Request) (ListInput, error) {
 	return ListInput{Page: page, PageSize: pageSize, Status: status, Search: search}, nil
 }
 
-func parseIntQuery(raw string, fallback int32) (int32, error) {
-	if raw == "" {
+func parseIntQuery(raw string, present bool, fallback int32) (int32, error) {
+	if !present {
 		return fallback, nil
 	}
 	value, err := strconv.ParseInt(raw, 10, 32)
