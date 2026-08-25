@@ -385,3 +385,59 @@
 
 ### Next Steps
 - Stop before Phase 6 and discuss its contract-test, backend-runtime, fixture, and manual Yaak workflow boundaries before starting services or changing API artifacts.
+
+## [2026-08-26] Task Record — SCIEDU-119 Phase 6 entry decisions
+
+### Task Description
+- Verify the 21 in-scope endpoints against the pinned TypeSpec through a real backend, Prism proxy, disposable PostgreSQL database, and a representative Yaak cross-domain workflow.
+
+### Decisions
+- Compile API main `4a79c11`; the clean local API checkout `8427b85` has an identical relevant tree to that merge commit.
+- Run all 21 implemented endpoints through strict Prism request/response validation. Explicitly exclude and record the seven deferred Experiment operations rather than treating their absence as a failure.
+- Use a no-volume PostgreSQL 18.1 container, the current backend branch, and the development login route. Temporarily change the deterministic fixture user's database role between EXPERIMENTER and STUDENT while retaining a real signed session cookie.
+- Use SQL only for fixture state unavailable through the in-scope APIs: Experiment participant/Course join rows, PageBlock Content resources, and fixture role transitions. Do not add a migration or permanent seed.
+- Use a temporary non-repository runner for exhaustive Prism checks. The generated Yaak collection performs a representative management-to-Student workflow through the same Prism proxy.
+- Include present-empty Course scalar query parameters in contract cases because an existing uncommitted review record identified them as a potential gap. A confirmed mismatch stops Phase 6 for a focused behavior fix.
+- On success, create one evidence-only `docs: record ECP contract verification` commit with `Refs: #60, #61, #62`. Any discovered product defect receives a separate domain-specific fix before evidence is finalized.
+
+### Status
+- Decisions approved; Phase 6A pinned TypeSpec compilation started.
+
+### Empty Course list parameter defect
+- Strict runtime probing confirmed `GET /api/courses?page=` returned 200 with default pagination instead of rejecting the present-empty typed parameter. Direct handler regression cases proved `page=`, `pageSize=`, and `status=` all had the same behavior.
+- Updated Course query parsing to distinguish omitted values from present-empty values for all three scalar parameters, matching the already-correct Experiment parser and the pinned TypeSpec. Omitted values still use defaults.
+- The three regression cases failed with 200 before the fix and passed with 400 afterward. Focused/full Course tests, Course integration race tests, vet, and lint passed.
+
+## [2026-08-26] Task Record — SCIEDU-119 Phase 6 complete
+
+### Task Description
+- Verify all 21 in-scope Experiment, Course, and Page/PageBlock endpoints against the pinned TypeSpec using a real signed session, strict Prism proxy, disposable PostgreSQL, and a representative Yaak cross-domain workflow.
+
+### Actions Taken
+- Compiled API main `4a79c11` twice with TypeSpec 1.6.0. Both generated OpenAPI files had SHA-256 `43dfafeeb7f9e257ce793a710740a73229e490ee26c78873dcb66dbd9c5bc0b9`; the API repository remained clean.
+- Confirmed the ECP spec declares 28 operations: 21 in scope and seven explicitly deferred Experiment operations (`current`, participant list/add/delete, and Course assignment list/add/delete).
+- Ran the current branch behind strict Prism `--errors` against a no-volume PostgreSQL 18.1 container. The temporary runner used real `dev-login` cookies and API-created Experiment/Course/Page resources; direct SQL was limited to fixture roles, participant/Course joins, and Content resources required by PageBlocks.
+- Executed 41 contract scenarios with 41 passes. They covered every in-scope endpoint, lifecycle persistence, list/order/status behavior, assigned and unassigned Student reads, management write denial, anonymous `401`, forbidden `403`, missing Page `404`, and JSON/problem response shapes.
+- Confirmed and fixed the present-empty Course list parameter mismatch in the separate `6eb0720 fix: reject empty Course list parameters` commit with `Refs: #60`; strict Prism then observed `400` for empty `page`, `pageSize`, `status`, and `search`.
+- Completed the Yaak smoke workflow through the same Prism proxy. Student login and four assigned Course/Page/PageBlock reads returned `200`; unassigned Course/Page and a schema-valid Course create returned `403`. After changing only the fixture database role, Experimenter login plus Experiment/Course/Page reads returned `200`; the fixture role was restored to `STUDENT` afterward.
+- Stopped Prism and the backend, used the same disposable PostgreSQL for final migration/domain gates, then removed both no-volume containers, the dedicated Docker network, cookie-free temporary artifacts, runner results, Yaak workspace copy, and dedicated Go/lint caches.
+
+### Verification
+- Passed `go build ./...`, `go vet ./...`, `go test ./... -race -count=1`, `gofmt -l .`, and `git diff --check`.
+- Passed integration-tag vet plus normal and integration-tag golangci-lint; both lint runs reported `0 issues`.
+- Passed migration integration with race for `empty → 14 → empty → 14` and then sequential Experiment, Course, and Page PostgreSQL integration suites with race.
+- Ran sqlc v1.30.0 generation and `go generate ./...`; no generated tracked diff remained.
+- Confirmed the API repository remained clean and the backend worktree contained no generated or product changes beyond the already committed Course fix and this report update. Pre-existing untracked `.codebase-tutor/` and `CLAUDE.md` remained untouched.
+
+### Attempted Methods
+- A deliberate out-of-scope `/api/healthz` request through strict Prism returned `500` because the backend's plain-text health response does not match the spec's JSON schema. Direct backend health was `200 OK`; no ECP result relied on this route.
+- The first Yaak Student Course-create attempt omitted its required body, so Prism correctly returned `422` before forwarding. Repeating it with a schema-valid body reached the backend and returned the expected `403`.
+- Initial sandboxed Go gates could not read the user Go cache, and sandboxed `httptest` could not bind loopback ports. Repointing caches to `/private/tmp` and rerunning the complete race suite with loopback permission produced a clean pass.
+
+### Issues & Blockers
+- No Phase 6 contract or manual-E2E blocker remains.
+- The seven deferred Experiment operations remain outside SCIEDU-119 by the approved 21-endpoint scope; they were not reported as implementation failures.
+- The separate uncommitted core-review record and its remaining findings are preserved for explicit disposition during the Phase 7 final audit; they are not silently included in the Phase 6 evidence commit.
+
+### Next Steps
+- Enter Phase 7 to audit the final branch diff and commit provenance, disposition remaining review findings, complete the verification matrix and PR body, and prepare the independent SCIEDU-119 PR without pushing it.
