@@ -116,6 +116,22 @@ func (q *Queries) ListPagesByCourse(ctx context.Context, courseID uuid.UUID) ([]
 	return items, nil
 }
 
+const lockCourseForPageReorder = `-- name: LockCourseForPageReorder :one
+SELECT id
+FROM courses
+WHERE id = $1
+FOR UPDATE
+`
+
+// The foreign key check for a concurrent Page insert takes a key-share lock on
+// this Course row. FOR UPDATE conflicts with that lock and freezes membership
+// until the reorder transaction commits.
+func (q *Queries) LockCourseForPageReorder(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockCourseForPageReorder, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
 const setPageOrders = `-- name: SetPageOrders :many
 UPDATE pages
 SET display_order = data.ord - 1,

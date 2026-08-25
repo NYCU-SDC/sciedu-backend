@@ -12,6 +12,7 @@ import (
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -184,5 +185,93 @@ func TestStoreReorderCommitsNewOrder(t *testing.T) {
 		if after[id] != int32(i) {
 			t.Fatalf("expected page %s at display_order %d, got %d", id, i, after[id])
 		}
+	}
+}
+
+func TestPageReorderParentLockBlocksConcurrentInsert(t *testing.T) {
+	pool := newIntegrationPool(t)
+	courseID, _ := seedCourseWithPages(t, pool, "Existing")
+
+	lockTx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatalf("failed to begin parent-lock transaction: %v", err)
+	}
+	t.Cleanup(func() { _ = lockTx.Rollback(context.Background()) })
+	if _, err := New(lockTx).LockCourseForPageReorder(t.Context(), courseID); err != nil {
+		t.Fatalf("failed to lock Course parent: %v", err)
+	}
+
+	expectLockTimeout(t, pool,
+		"INSERT INTO pages (course_id, title, display_order) VALUES ($1, $2, $3)",
+		courseID, "Concurrent", int32(99),
+	)
+
+	if err := lockTx.Rollback(t.Context()); err != nil {
+		t.Fatalf("failed to release Course parent lock: %v", err)
+	}
+	if _, err := pool.Exec(t.Context(),
+		"INSERT INTO pages (course_id, title, display_order) VALUES ($1, $2, $3)",
+		courseID, "After reorder", int32(99)); err != nil {
+		t.Fatalf("Page insert should succeed after releasing parent lock: %v", err)
+	}
+}
+
+func TestBlockReorderParentLockBlocksConcurrentInsert(t *testing.T) {
+	pool := newIntegrationPool(t)
+	_, pageIDs := seedCourseWithPages(t, pool, "Existing")
+	pageID := pageIDs[0]
+
+	var contentID uuid.UUID
+	if err := pool.QueryRow(t.Context(),
+		"INSERT INTO contents (type, content) VALUES ('TEXT', 'parent lock fixture') RETURNING id").Scan(&contentID); err != nil {
+		t.Fatalf("failed to seed Content: %v", err)
+	}
+	t.Cleanup(func() {
+		//nolint:errcheck // best-effort cleanup
+		pool.Exec(context.Background(), "DELETE FROM page_blocks WHERE content_id = $1", contentID)
+		//nolint:errcheck // best-effort cleanup
+		pool.Exec(context.Background(), "DELETE FROM contents WHERE id = $1", contentID)
+	})
+
+	lockTx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatalf("failed to begin parent-lock transaction: %v", err)
+	}
+	t.Cleanup(func() { _ = lockTx.Rollback(context.Background()) })
+	if _, err := New(lockTx).LockPageForBlockReorder(t.Context(), pageID); err != nil {
+		t.Fatalf("failed to lock Page parent: %v", err)
+	}
+
+	expectLockTimeout(t, pool,
+		"INSERT INTO page_blocks (page_id, content_id, display_order, required) VALUES ($1, $2, $3, false)",
+		pageID, contentID, int32(99),
+	)
+
+	if err := lockTx.Rollback(t.Context()); err != nil {
+		t.Fatalf("failed to release Page parent lock: %v", err)
+	}
+	if _, err := pool.Exec(t.Context(),
+		"INSERT INTO page_blocks (page_id, content_id, display_order, required) VALUES ($1, $2, $3, false)",
+		pageID, contentID, int32(99)); err != nil {
+		t.Fatalf("PageBlock insert should succeed after releasing parent lock: %v", err)
+	}
+}
+
+func expectLockTimeout(t *testing.T, pool *pgxpool.Pool, statement string, args ...any) {
+	t.Helper()
+
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatalf("failed to begin concurrent insert transaction: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+	if _, err := tx.Exec(t.Context(), "SET LOCAL lock_timeout = '250ms'"); err != nil {
+		t.Fatalf("failed to set lock timeout: %v", err)
+	}
+
+	_, err = tx.Exec(t.Context(), statement, args...)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+		t.Fatalf("expected concurrent insert to time out on parent lock (55P03), got %v", err)
 	}
 }

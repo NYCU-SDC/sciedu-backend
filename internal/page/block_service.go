@@ -30,6 +30,7 @@ type BlockQuerier interface {
 	UpdateContentBlock(ctx context.Context, arg UpdateContentBlockParams) (PageBlock, error)
 	UpdateQuestionBlock(ctx context.Context, arg UpdateQuestionBlockParams) (PageBlock, error)
 	DeleteBlock(ctx context.Context, arg DeleteBlockParams) (int64, error)
+	LockPageForBlockReorder(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	DeferOrderConstraints(ctx context.Context) error
 	SetBlockOrders(ctx context.Context, arg SetBlockOrdersParams) ([]PageBlock, error)
 }
@@ -205,14 +206,14 @@ func (s *BlockService) Delete(ctx context.Context, pageID, blockID uuid.UUID) er
 // constraint deferral, and write-back share one transaction so uniqueness is
 // checked against the complete final order at commit.
 func (s *BlockService) Reorder(ctx context.Context, pageID uuid.UUID, blockIDs []uuid.UUID) ([]Block, error) {
-	if err := s.ensurePageExists(ctx, pageID); err != nil {
-		return nil, err
-	}
-
 	var rows []PageBlock
-	// Validated against a read inside the transaction, so a concurrent create or
-	// delete cannot slip between the check and the write.
+	// The parent lock serializes membership changes before the transaction reads
+	// and validates the complete PageBlock set.
 	err := s.querier.WithinTx(ctx, func(_ PageQuerier, blockQuerier BlockQuerier) error {
+		if _, err := blockQuerier.LockPageForBlockReorder(ctx, pageID); err != nil {
+			return databaseutil.WrapDBErrorWithKeyValue(err, "pages", "id", pageID.String(), s.logger, "lock page for block reorder")
+		}
+
 		existing, err := blockQuerier.ListBlocksByPage(ctx, pageID)
 		if err != nil {
 			return databaseutil.WrapDBError(err, s.logger, "list page blocks for reorder")

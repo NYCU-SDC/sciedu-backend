@@ -19,6 +19,7 @@ type PageQuerier interface {
 	CreatePage(ctx context.Context, arg CreatePageParams) (Page, error)
 	UpdatePage(ctx context.Context, arg UpdatePageParams) (Page, error)
 	DeletePage(ctx context.Context, id uuid.UUID) (int64, error)
+	LockCourseForPageReorder(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	DeferOrderConstraints(ctx context.Context) error
 	SetPageOrders(ctx context.Context, arg SetPageOrdersParams) ([]Page, error)
 }
@@ -171,14 +172,14 @@ func (s *PageService) Delete(ctx context.Context, id uuid.UUID) error {
 // constraint deferral, and write-back share one transaction so uniqueness is
 // checked against the complete final order at commit.
 func (s *PageService) Reorder(ctx context.Context, courseID uuid.UUID, pageIDs []uuid.UUID) ([]Page, error) {
-	if err := s.ensureCourseExists(ctx, courseID); err != nil {
-		return nil, err
-	}
-
 	var reordered []Page
-	// Validated against a read inside the transaction, so a concurrent create or
-	// delete cannot slip between the check and the write.
+	// The parent lock serializes membership changes before the transaction reads
+	// and validates the complete Page set.
 	err := s.querier.WithinTx(ctx, func(pageQuerier PageQuerier, _ BlockQuerier) error {
+		if _, err := pageQuerier.LockCourseForPageReorder(ctx, courseID); err != nil {
+			return databaseutil.WrapDBErrorWithKeyValue(err, "courses", "id", courseID.String(), s.logger, "lock course for page reorder")
+		}
+
 		existing, err := pageQuerier.ListPagesByCourse(ctx, courseID)
 		if err != nil {
 			return databaseutil.WrapDBError(err, s.logger, "list pages for reorder")

@@ -157,6 +157,21 @@ func (q *Queries) ListBlocksByPage(ctx context.Context, pageID uuid.UUID) ([]Pag
 	return items, nil
 }
 
+const lockPageForBlockReorder = `-- name: LockPageForBlockReorder :one
+SELECT id
+FROM pages
+WHERE id = $1
+FOR UPDATE
+`
+
+// The foreign key check for a concurrent PageBlock insert takes a key-share
+// lock on this Page row. FOR UPDATE freezes membership for the transaction.
+func (q *Queries) LockPageForBlockReorder(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockPageForBlockReorder, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
 const setBlockOrders = `-- name: SetBlockOrders :many
 UPDATE page_blocks
 SET display_order = data.ord - 1,

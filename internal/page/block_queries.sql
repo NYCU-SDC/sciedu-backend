@@ -44,6 +44,14 @@ DELETE FROM page_blocks
 WHERE id = sqlc.arg(id)
   AND page_id = sqlc.arg(page_id);
 
+-- name: LockPageForBlockReorder :one
+-- The foreign key check for a concurrent PageBlock insert takes a key-share
+-- lock on this Page row. FOR UPDATE freezes membership for the transaction.
+SELECT id
+FROM pages
+WHERE id = $1
+FOR UPDATE;
+
 -- name: SetBlockOrders :many
 -- Array position becomes the new display_order. The unique constraint is
 -- deferred by the caller and rechecked when the transaction commits.

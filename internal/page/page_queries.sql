@@ -26,6 +26,15 @@ RETURNING id, course_id, title, display_order, created_at, updated_at;
 DELETE FROM pages
 WHERE id = $1;
 
+-- name: LockCourseForPageReorder :one
+-- The foreign key check for a concurrent Page insert takes a key-share lock on
+-- this Course row. FOR UPDATE conflicts with that lock and freezes membership
+-- until the reorder transaction commits.
+SELECT id
+FROM courses
+WHERE id = $1
+FOR UPDATE;
+
 -- name: DeferOrderConstraints :exec
 -- Both deferrable constraints in this schema are display-order uniqueness
 -- constraints. Defer them until commit so reorder cycles can move directly to

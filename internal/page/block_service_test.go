@@ -264,13 +264,13 @@ func TestBlockServiceReorder_TableDriven(t *testing.T) {
 		{
 			name:      "reorders every block",
 			requested: []uuid.UUID{second, first},
-			wantCalls: []string{"DeferOrderConstraints", "SetBlockOrders"},
+			wantCalls: []string{"LockPageForBlockReorder", "DeferOrderConstraints", "SetBlockOrders"},
 		},
 		{
 			name:      "rejects a mismatched set without writing",
 			requested: []uuid.UUID{first, uuid.New()},
 			wantErr:   errInvalidBlockPayload,
-			wantCalls: nil,
+			wantCalls: []string{"LockPageForBlockReorder"},
 		},
 	}
 

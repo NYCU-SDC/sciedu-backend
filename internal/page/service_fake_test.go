@@ -20,6 +20,7 @@ type fakeQuerier struct {
 	createPageFn         func(ctx context.Context, arg CreatePageParams) (Page, error)
 	updatePageFn         func(ctx context.Context, arg UpdatePageParams) (Page, error)
 	deletePageFn         func(ctx context.Context, id uuid.UUID) (int64, error)
+	lockCourseFn         func(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	deferOrderFn         func(ctx context.Context) error
 	setPageOrdersFn      func(ctx context.Context, arg SetPageOrdersParams) ([]Page, error)
 	listBlocksByPageFn   func(ctx context.Context, pageID uuid.UUID) ([]PageBlock, error)
@@ -29,6 +30,7 @@ type fakeQuerier struct {
 	updateContentBlockFn func(ctx context.Context, arg UpdateContentBlockParams) (PageBlock, error)
 	updateQuestionBlkFn  func(ctx context.Context, arg UpdateQuestionBlockParams) (PageBlock, error)
 	deleteBlockFn        func(ctx context.Context, arg DeleteBlockParams) (int64, error)
+	lockPageFn           func(ctx context.Context, id uuid.UUID) (uuid.UUID, error)
 	setBlockOrdersFn     func(ctx context.Context, arg SetBlockOrdersParams) ([]PageBlock, error)
 
 	// calls records write operations in order, so tests can assert that constraint
@@ -72,6 +74,14 @@ func (f *fakeQuerier) DeletePage(ctx context.Context, id uuid.UUID) (int64, erro
 		return f.deletePageFn(ctx, id)
 	}
 	return 1, nil
+}
+
+func (f *fakeQuerier) LockCourseForPageReorder(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	f.calls = append(f.calls, "LockCourseForPageReorder")
+	if f.lockCourseFn != nil {
+		return f.lockCourseFn(ctx, id)
+	}
+	return id, nil
 }
 
 func (f *fakeQuerier) DeferOrderConstraints(ctx context.Context) error {
@@ -142,6 +152,14 @@ func (f *fakeQuerier) DeleteBlock(ctx context.Context, arg DeleteBlockParams) (i
 		return f.deleteBlockFn(ctx, arg)
 	}
 	return 1, nil
+}
+
+func (f *fakeQuerier) LockPageForBlockReorder(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	f.calls = append(f.calls, "LockPageForBlockReorder")
+	if f.lockPageFn != nil {
+		return f.lockPageFn(ctx, id)
+	}
+	return id, nil
 }
 
 func (f *fakeQuerier) SetBlockOrders(ctx context.Context, arg SetBlockOrdersParams) ([]PageBlock, error) {

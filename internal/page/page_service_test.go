@@ -258,26 +258,26 @@ func TestPageServiceReorder_TableDriven(t *testing.T) {
 					{ID: arg.PageIds[0], DisplayOrder: 0},
 				}, nil
 			},
-			wantCalls: []string{"DeferOrderConstraints", "SetPageOrders"},
+			wantCalls: []string{"LockCourseForPageReorder", "DeferOrderConstraints", "SetPageOrders"},
 			wantOrder: []uuid.UUID{third, first, second},
 		},
 		{
 			name:      "rejects a short list without writing",
 			requested: []uuid.UUID{first, second},
 			wantErr:   errInvalidPagePayload,
-			wantCalls: nil,
+			wantCalls: []string{"LockCourseForPageReorder"},
 		},
 		{
 			name:      "rejects an unknown id without writing",
 			requested: []uuid.UUID{first, second, uuid.New()},
 			wantErr:   errInvalidPagePayload,
-			wantCalls: nil,
+			wantCalls: []string{"LockCourseForPageReorder"},
 		},
 		{
 			name:      "rejects duplicates without writing",
 			requested: []uuid.UUID{first, second, second},
 			wantErr:   errInvalidPagePayload,
-			wantCalls: nil,
+			wantCalls: []string{"LockCourseForPageReorder"},
 		},
 	}
 
@@ -347,7 +347,7 @@ func TestPageServiceReorderPropagatesWriteFailure(t *testing.T) {
 		t.Fatal("expected the write-back failure to propagate, got nil")
 	}
 
-	wantCalls := []string{"DeferOrderConstraints", "SetPageOrders"}
+	wantCalls := []string{"LockCourseForPageReorder", "DeferOrderConstraints", "SetPageOrders"}
 	if len(querier.calls) != len(wantCalls) {
 		t.Fatalf("expected calls %v, got %v", wantCalls, querier.calls)
 	}
