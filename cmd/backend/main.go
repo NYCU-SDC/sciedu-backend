@@ -103,7 +103,7 @@ func main() {
 	experimentHandler := experiment.NewHandler(experimentService, logger)
 
 	courseStore := course.NewStore(pool)
-	courseService := course.NewService(courseStore, authStore, experimentStore, logger)
+	courseService := course.NewService(courseStore, authStore, courseStore, logger)
 	courseHandler := course.NewHandler(courseService, logger)
 
 	pageStore := page.NewStore(pool)

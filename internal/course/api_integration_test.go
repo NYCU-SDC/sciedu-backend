@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"sciedu-backend/internal/auth"
-	"sciedu-backend/internal/experiment"
 
 	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
 	"github.com/google/uuid"
@@ -36,7 +35,8 @@ func newCourseAPI(t *testing.T, pool *pgxpool.Pool, actorID uuid.UUID, roles ...
 	t.Helper()
 
 	roleQuerier := courseIntegrationRoleQuerier{roles: roles}
-	service := NewService(NewStore(pool), roleQuerier, experiment.NewStore(pool), zap.NewNop())
+	store := NewStore(pool)
+	service := NewService(store, roleQuerier, store, zap.NewNop())
 	handler := NewHandler(service, zap.NewNop())
 	set := middlewareutil.NewSet(func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {

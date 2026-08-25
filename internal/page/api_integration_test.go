@@ -15,7 +15,6 @@ import (
 	"sciedu-backend/internal/auth"
 	"sciedu-backend/internal/content"
 	"sciedu-backend/internal/course"
-	"sciedu-backend/internal/experiment"
 	"sciedu-backend/internal/question"
 
 	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
@@ -58,8 +57,8 @@ func newAPIForActor(t *testing.T, pool *pgxpool.Pool, actorID uuid.UUID, roles .
 	contentService := content.NewService(content.New(pool), logger)
 	questionStore := question.NewStore(pool)
 	questionService := question.NewQuestionService(questionStore, question.NewOptionService(questionStore, logger), logger)
-	experimentStore := experiment.NewStore(pool)
-	courseService := course.NewService(course.NewStore(pool), roleQuerier, experimentStore, logger)
+	courseStore := course.NewStore(pool)
+	courseService := course.NewService(courseStore, roleQuerier, courseStore, logger)
 
 	blockService := NewBlockService(store, store, contentService, questionService, logger)
 	pageService := NewPageService(store, blockService, courseService, logger)

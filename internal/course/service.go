@@ -32,9 +32,15 @@ type Repository interface {
 	UpdateStatus(ctx context.Context, id uuid.UUID, status CourseStatus) (Record, error)
 }
 
-// StudentCourseAccessChecker determines whether a student may read a course.
+type StudentCourseDecision struct {
+	Course  Record
+	Allowed bool
+}
+
+// StudentCourseAccessChecker returns the course and the student's access
+// decision from one database statement so both use the same snapshot.
 type StudentCourseAccessChecker interface {
-	CanAccessCourse(ctx context.Context, studentID, courseID uuid.UUID) (bool, error)
+	CourseForStudent(ctx context.Context, studentID, courseID uuid.UUID) (StudentCourseDecision, error)
 }
 
 type ListInput struct {
@@ -158,14 +164,17 @@ func (s *Service) ByIDForActor(ctx context.Context, actorID, courseID uuid.UUID)
 		return Record{}, errors.New("student course access checker is unavailable")
 	}
 
-	allowed, err := s.studentAccess.CanAccessCourse(ctx, actorID, courseID)
+	decision, err := s.studentAccess.CourseForStudent(ctx, actorID, courseID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Record{}, databaseutil.WrapDBErrorWithKeyValue(err, "courses", "id", courseID.String(), s.logger, "get course for student")
+		}
 		return Record{}, fmt.Errorf("check student course access: %w", err)
 	}
-	if !allowed {
+	if !decision.Allowed {
 		return Record{}, handlerutil.ErrForbidden
 	}
-	return s.ByID(ctx, courseID)
+	return decision.Course, nil
 }
 
 func (s *Service) Update(ctx context.Context, params UpdateParams) (Record, error) {

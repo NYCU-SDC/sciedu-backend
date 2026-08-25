@@ -84,11 +84,11 @@ type fakeStudentCourseAccessChecker struct {
 	lastCourseID  uuid.UUID
 }
 
-func (f *fakeStudentCourseAccessChecker) CanAccessCourse(_ context.Context, studentID, courseID uuid.UUID) (bool, error) {
+func (f *fakeStudentCourseAccessChecker) CourseForStudent(_ context.Context, studentID, courseID uuid.UUID) (StudentCourseDecision, error) {
 	f.calls++
 	f.lastStudentID = studentID
 	f.lastCourseID = courseID
-	return f.allowed, f.err
+	return StudentCourseDecision{Course: sampleCourse(courseID), Allowed: f.allowed}, f.err
 }
 
 func (f *fakeRepository) Update(ctx context.Context, params UpdateParams) (Record, error) {
@@ -251,7 +251,7 @@ func TestServiceByIDForActor(t *testing.T) {
 		wantAccessCalls int
 		wantByIDCalls   int
 	}{
-		{name: "student allowed", roles: []auth.Role{auth.STUDENT}, allowed: true, wantRoleCalls: 1, wantAccessCalls: 1, wantByIDCalls: 1},
+		{name: "student allowed", roles: []auth.Role{auth.STUDENT}, allowed: true, wantRoleCalls: 1, wantAccessCalls: 1},
 		{name: "student denied", roles: []auth.Role{auth.STUDENT}, wantErr: handlerutil.ErrForbidden, wantRoleCalls: 1, wantAccessCalls: 1},
 		{name: "student access dependency error", roles: []auth.Role{auth.STUDENT}, accessErr: dependencyErr, wantErr: dependencyErr, wantRoleCalls: 1, wantAccessCalls: 1},
 		{name: "experimenter bypasses student checker", roles: []auth.Role{auth.EXPERIMENTER}, wantRoleCalls: 1, wantByIDCalls: 1},
@@ -260,7 +260,7 @@ func TestServiceByIDForActor(t *testing.T) {
 		{name: "inactive user is unauthorized", roleErr: pgx.ErrNoRows, wantErr: handlerutil.ErrUnauthorized, wantRoleCalls: 1},
 		{name: "role dependency error", roleErr: dependencyErr, wantAnyErr: true, wantRoleCalls: 1},
 		{name: "unsupported roles are forbidden", roles: []auth.Role{"UNKNOWN"}, wantErr: handlerutil.ErrForbidden, wantRoleCalls: 1},
-		{name: "allowed student course is missing", roles: []auth.Role{auth.STUDENT}, allowed: true, byIDErr: repositoryErr, wantRoleCalls: 1, wantAccessCalls: 1, wantByIDCalls: 1},
+		{name: "student course is missing", roles: []auth.Role{auth.STUDENT}, accessErr: repositoryErr, wantAnyErr: true, wantRoleCalls: 1, wantAccessCalls: 1},
 	}
 
 	for _, tt := range tests {

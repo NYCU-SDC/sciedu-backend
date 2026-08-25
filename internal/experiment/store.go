@@ -132,15 +132,6 @@ func (s *Store) Count(ctx context.Context, filter ListFilter) (int64, error) {
 	})
 }
 
-// CanAccessCourse reports whether any current ACTIVE experiment grants the
-// student access to the requested PUBLISHED course.
-func (s *Store) CanAccessCourse(ctx context.Context, studentID, courseID uuid.UUID) (bool, error) {
-	return s.queries.StudentCanAccessCourse(ctx, StudentCanAccessCourseParams{
-		StudentID: studentID,
-		CourseID:  courseID,
-	})
-}
-
 func (s *Store) Create(ctx context.Context, params CreateParams) (Record, error) {
 	configuration, err := json.Marshal(params.Configuration)
 	if err != nil {

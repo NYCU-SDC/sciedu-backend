@@ -96,6 +96,28 @@ func (s *Store) ByID(ctx context.Context, id uuid.UUID) (Record, error) {
 	return toRecord(row), nil
 }
 
+func (s *Store) CourseForStudent(ctx context.Context, studentID, courseID uuid.UUID) (StudentCourseDecision, error) {
+	row, err := s.queries.CourseForStudent(ctx, CourseForStudentParams{
+		StudentID: studentID,
+		CourseID:  courseID,
+	})
+	if err != nil {
+		return StudentCourseDecision{}, err
+	}
+	return StudentCourseDecision{
+		Course: Record{
+			ID:          row.ID,
+			Code:        row.Code,
+			Title:       row.Title,
+			Description: textPtr(row.Description),
+			Status:      row.Status,
+			CreatedAt:   row.CreatedAt.Time,
+			UpdatedAt:   row.UpdatedAt.Time,
+		},
+		Allowed: row.Allowed,
+	}, nil
+}
+
 func (s *Store) Update(ctx context.Context, params UpdateParams) (Record, error) {
 	row, err := s.queries.UpdateCourse(ctx, UpdateCourseParams{
 		Code:        params.Code,

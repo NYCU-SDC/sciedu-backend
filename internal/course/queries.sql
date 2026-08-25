@@ -36,6 +36,29 @@ SELECT id, code, title, description, status, created_at, updated_at
 FROM courses
 WHERE id = $1;
 
+-- name: CourseForStudent :one
+SELECT c.id,
+       c.code,
+       c.title,
+       c.description,
+       c.status,
+       c.created_at,
+       c.updated_at,
+       EXISTS (
+           SELECT 1
+           FROM experiment_participants ep
+           JOIN experiments e ON e.id = ep.experiment_id
+           JOIN experiment_courses ec ON ec.experiment_id = e.id
+           WHERE ep.user_id = sqlc.arg('student_id')
+             AND ec.course_id = c.id
+             AND e.status = 'ACTIVE'
+             AND e.scheduled_start_at <= CURRENT_TIMESTAMP
+             AND e.scheduled_end_at >= CURRENT_TIMESTAMP
+             AND c.status = 'PUBLISHED'
+       ) AS allowed
+FROM courses c
+WHERE c.id = sqlc.arg('course_id');
+
 -- name: UpdateCourse :one
 UPDATE courses
 SET code = sqlc.arg('code'),

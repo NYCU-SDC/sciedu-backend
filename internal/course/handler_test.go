@@ -146,6 +146,7 @@ func TestHandlerGetCourse(t *testing.T) {
 		{name: "student allowed", path: "/api/courses/" + id.String(), seedActor: true, roles: []auth.Role{auth.STUDENT}, allowed: true, byIDFn: func(context.Context, uuid.UUID) (Record, error) { return sampleCourse(id), nil }, wantCode: http.StatusOK},
 		{name: "student denied", path: "/api/courses/" + id.String(), seedActor: true, roles: []auth.Role{auth.STUDENT}, wantCode: http.StatusForbidden},
 		{name: "student dependency error", path: "/api/courses/" + id.String(), seedActor: true, roles: []auth.Role{auth.STUDENT}, accessErr: dependencyErr, wantCode: http.StatusInternalServerError},
+		{name: "student missing course", path: "/api/courses/" + id.String(), seedActor: true, roles: []auth.Role{auth.STUDENT}, accessErr: pgx.ErrNoRows, wantCode: http.StatusNotFound},
 		{name: "missing actor is unauthorized", path: "/api/courses/" + id.String(), roles: []auth.Role{auth.ADMIN}, wantCode: http.StatusUnauthorized},
 		{name: "rejects malformed id", path: "/api/courses/not-a-uuid", seedActor: true, roles: []auth.Role{auth.ADMIN}, wantCode: http.StatusBadRequest},
 		{name: "returns not found", path: "/api/courses/" + id.String(), seedActor: true, roles: []auth.Role{auth.ADMIN}, byIDFn: func(context.Context, uuid.UUID) (Record, error) { return Record{}, pgx.ErrNoRows }, wantCode: http.StatusNotFound},

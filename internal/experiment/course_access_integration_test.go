@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"sciedu-backend/internal/course"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
@@ -24,7 +26,7 @@ type accessScenario struct {
 	wantAccess       bool
 }
 
-func TestStoreCanAccessCourseTruthTable(t *testing.T) {
+func TestCourseStoreCourseForStudentTruthTable(t *testing.T) {
 	pool := newExperimentIntegrationPool(t)
 	now := time.Now()
 
@@ -102,14 +104,15 @@ func TestStoreCanAccessCourseTruthTable(t *testing.T) {
 			studentID, courseID := seedAccessStudentAndCourse(t, pool, tt.scenario.courseStatus)
 			seedExperimentAccess(t, pool, studentID, courseID, tt.scenario)
 
-			allowed, err := NewStore(pool).CanAccessCourse(t.Context(), studentID, courseID)
+			decision, err := course.NewStore(pool).CourseForStudent(t.Context(), studentID, courseID)
 			require.NoError(t, err)
-			assert.Equal(t, tt.scenario.wantAccess, allowed)
+			assert.Equal(t, courseID, decision.Course.ID)
+			assert.Equal(t, tt.scenario.wantAccess, decision.Allowed)
 		})
 	}
 }
 
-func TestStoreCanAccessCourseAllowsAnyMatchingExperiment(t *testing.T) {
+func TestCourseStoreCourseForStudentAllowsAnyMatchingExperiment(t *testing.T) {
 	pool := newExperimentIntegrationPool(t)
 	studentID, courseID := seedAccessStudentAndCourse(t, pool, "PUBLISHED")
 	now := time.Now()
@@ -123,9 +126,10 @@ func TestStoreCanAccessCourseAllowsAnyMatchingExperiment(t *testing.T) {
 		courseStatus: "PUBLISHED", start: now.Add(-time.Hour), end: now.Add(time.Hour),
 	})
 
-	allowed, err := NewStore(pool).CanAccessCourse(t.Context(), studentID, courseID)
+	decision, err := course.NewStore(pool).CourseForStudent(t.Context(), studentID, courseID)
 	require.NoError(t, err)
-	assert.True(t, allowed)
+	assert.Equal(t, courseID, decision.Course.ID)
+	assert.True(t, decision.Allowed)
 }
 
 func newExperimentIntegrationPool(t *testing.T) *pgxpool.Pool {
