@@ -131,7 +131,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]courseResponse, 0, len(page.Items))
 	for _, item := range page.Items {
-		items = append(items, buildCourseResponse(item))
+		items = append(items, courseResponse(item))
 	}
 	handlerutil.WriteJSONResponse(w, http.StatusOK, paginatedCoursesResponse{
 		Items:       items,
@@ -158,7 +158,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
-	handlerutil.WriteJSONResponse(w, http.StatusCreated, buildCourseResponse(record))
+	handlerutil.WriteJSONResponse(w, http.StatusCreated, courseResponse(record))
 }
 
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +180,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
-	handlerutil.WriteJSONResponse(w, http.StatusOK, buildCourseResponse(record))
+	handlerutil.WriteJSONResponse(w, http.StatusOK, courseResponse(record))
 }
 
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
@@ -205,7 +205,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
-	handlerutil.WriteJSONResponse(w, http.StatusOK, buildCourseResponse(record))
+	handlerutil.WriteJSONResponse(w, http.StatusOK, courseResponse(record))
 }
 
 func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
@@ -228,7 +228,7 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
-	handlerutil.WriteJSONResponse(w, http.StatusOK, buildCourseResponse(record))
+	handlerutil.WriteJSONResponse(w, http.StatusOK, courseResponse(record))
 }
 
 func parseListInput(r *http.Request) (ListInput, error) {
@@ -272,8 +272,4 @@ func parseIntQuery(raw string, present bool, fallback int32) (int32, error) {
 		return 0, err
 	}
 	return int32(value), nil
-}
-
-func buildCourseResponse(record Record) courseResponse {
-	return courseResponse(record)
 }
