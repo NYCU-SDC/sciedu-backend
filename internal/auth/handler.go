@@ -14,12 +14,14 @@ import (
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
 	problemutil "github.com/NYCU-SDC/summer/pkg/problem"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 type HandlerService interface {
 	BeginOAuth(ctx context.Context, params BeginOAuthParams) (BeginOAuthResult, error)
 	CompleteOAuth(ctx context.Context, params CompleteOAuthParams) (CompleteOAuthResult, error)
+	IssueSession(ctx context.Context, params IssueSessionParams) (Session, error)
 	Session(ctx context.Context, accessToken, refreshToken string) (Session, error)
 	Refresh(ctx context.Context, refreshToken string) (Session, error)
 	Logout(ctx context.Context, refreshToken string) error
@@ -86,6 +88,31 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil
 	handle("POST /api/auth/logout", h.Logout)
 	handle("GET /api/login/oauth/google", h.LoginGoogle)
 	handle("GET /api/auth/callback", h.Callback)
+	if h.cookies.Environment == EnvironmentDev {
+		handle("POST /api/auth/dev-login", h.DevLogin)
+	}
+}
+
+// DevLogin issues a session for the deterministic development Student.
+// The route is registered only in the development environment.
+func (h *Handler) DevLogin(w http.ResponseWriter, r *http.Request) {
+	if h.cookies.Environment != EnvironmentDev {
+		http.NotFound(w, r)
+		return
+	}
+
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+	session, err := h.service.IssueSession(ctx, IssueSessionParams{
+		UserID: uuid.MustParse(DevelopmentMockStudentID),
+	})
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	h.setSessionCookies(w, r, session, "")
+	handlerutil.WriteJSONResponse(w, http.StatusOK, session)
 }
 
 func (h *Handler) LoginGoogle(w http.ResponseWriter, r *http.Request) {

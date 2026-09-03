@@ -55,6 +55,94 @@ func (ns NullContentType) Value() (driver.Value, error) {
 	return string(ns.ContentType), nil
 }
 
+type CourseStatus string
+
+const (
+	CourseStatusDRAFT     CourseStatus = "DRAFT"
+	CourseStatusPUBLISHED CourseStatus = "PUBLISHED"
+	CourseStatusARCHIVED  CourseStatus = "ARCHIVED"
+)
+
+func (e *CourseStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = CourseStatus(s)
+	case string:
+		*e = CourseStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for CourseStatus: %T", src)
+	}
+	return nil
+}
+
+type NullCourseStatus struct {
+	CourseStatus CourseStatus
+	Valid        bool // Valid is true if CourseStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullCourseStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.CourseStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.CourseStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullCourseStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.CourseStatus), nil
+}
+
+type ExperimentStatus string
+
+const (
+	ExperimentStatusDRAFT     ExperimentStatus = "DRAFT"
+	ExperimentStatusSCHEDULED ExperimentStatus = "SCHEDULED"
+	ExperimentStatusACTIVE    ExperimentStatus = "ACTIVE"
+	ExperimentStatusCOMPLETED ExperimentStatus = "COMPLETED"
+	ExperimentStatusARCHIVED  ExperimentStatus = "ARCHIVED"
+)
+
+func (e *ExperimentStatus) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ExperimentStatus(s)
+	case string:
+		*e = ExperimentStatus(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ExperimentStatus: %T", src)
+	}
+	return nil
+}
+
+type NullExperimentStatus struct {
+	ExperimentStatus ExperimentStatus
+	Valid            bool // Valid is true if ExperimentStatus is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullExperimentStatus) Scan(value interface{}) error {
+	if value == nil {
+		ns.ExperimentStatus, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ExperimentStatus.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullExperimentStatus) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ExperimentStatus), nil
+}
+
 type Answer struct {
 	ID               uuid.UUID
 	QuestionID       uuid.UUID
@@ -77,6 +165,41 @@ type Content struct {
 	ID      uuid.UUID
 	Type    string
 	Content string
+}
+
+type Course struct {
+	ID          uuid.UUID
+	Code        string
+	Title       string
+	Description pgtype.Text
+	Status      CourseStatus
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type Experiment struct {
+	ID               uuid.UUID
+	CreatedBy        uuid.UUID
+	Name             string
+	Description      pgtype.Text
+	Configuration    []byte
+	Status           ExperimentStatus
+	ScheduledStartAt pgtype.Timestamptz
+	ScheduledEndAt   pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type ExperimentCourse struct {
+	ExperimentID uuid.UUID
+	CourseID     uuid.UUID
+	LinkedAt     pgtype.Timestamptz
+}
+
+type ExperimentParticipant struct {
+	ExperimentID uuid.UUID
+	UserID       uuid.UUID
+	AssignedAt   pgtype.Timestamptz
 }
 
 type Message struct {
@@ -120,6 +243,26 @@ type Option struct {
 	Label      string
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+}
+
+type Page struct {
+	ID           uuid.UUID
+	CourseID     uuid.UUID
+	Title        string
+	DisplayOrder int32
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type PageBlock struct {
+	ID           uuid.UUID
+	PageID       uuid.UUID
+	ContentID    pgtype.UUID
+	QuestionID   pgtype.UUID
+	DisplayOrder int32
+	Required     bool
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type Question struct {

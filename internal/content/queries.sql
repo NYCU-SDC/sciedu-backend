@@ -45,6 +45,11 @@ WHERE type = 'TEXT'
   AND id = ANY($1::uuid[])
 ORDER BY array_position($1::uuid[], id);
 
+-- name: BatchGetContents :many
+SELECT id, type, content
+FROM contents
+WHERE id = ANY(sqlc.arg(ids)::uuid[]);
+
 -- name: DeleteContent :exec
 DELETE FROM contents
 WHERE id = $1;
