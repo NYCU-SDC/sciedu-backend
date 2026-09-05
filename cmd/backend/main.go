@@ -57,7 +57,12 @@ func main() {
 	optionService := question.NewOptionService(questionStore, logger)
 	questionService := question.NewQuestionService(questionStore, optionService, logger)
 	answerService := question.NewAnswerService(questionStore, questionService, logger)
-	questionHandler := question.NewHandler(questionService, answerService, logger)
+	correctAnswerService := question.NewCorrectAnswerService(questionStore, questionService, logger)
+	questionHandler := question.NewHandler(questionService, answerService, correctAnswerService, logger).
+		WithSubmission(question.NewAnswerSubmissionOrchestrator(answerService, questionStore, questionStore))
+	syncContext, cancelSync := context.WithCancel(context.Background())
+	defer cancelSync()
+	go question.RunAnswerSynchronization(syncContext, questionStore, logger)
 
 	contentQueries := content.New(pool)
 	contentService := content.NewService(contentQueries, logger)
@@ -94,6 +99,7 @@ func main() {
 	authMiddleware := auth.NewMiddleware(authService, logger)
 	protectedMiddlewareSet := middlewareSet.Append(authMiddleware.HandlerFunc)
 	authorizer := auth.NewAuthorizer(authStore, logger)
+	questionHandler.WithResults(question.NewAnswerResultService(questionStore, questionStore, logger), authStore)
 
 	userStore := user.NewStore(pool)
 	userService := user.NewService(userStore, logger)
