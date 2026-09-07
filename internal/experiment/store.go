@@ -60,6 +60,22 @@ type Record struct {
 	CourseCount      int32
 }
 
+type Participant struct {
+	ID         uuid.UUID
+	Email      string
+	Name       string
+	AvatarURL  *string
+	Roles      []string
+	DisabledAt *time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+type ParticipantAssignment struct {
+	Participant Participant
+	AssignedAt  time.Time
+}
+
 type ListFilter struct {
 	Status        *Status
 	ScheduledFrom *time.Time
@@ -155,6 +171,36 @@ func (s *Store) Count(ctx context.Context, filter ListFilter) (int64, error) {
 	})
 }
 
+func (s *Store) ListParticipants(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]ParticipantAssignment, error) {
+	rows, err := s.queries.ListExperimentParticipants(ctx, ListExperimentParticipantsParams{
+		ExperimentID: experimentID,
+		Limit:        limit,
+		Offset:       offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	assignments := make([]ParticipantAssignment, 0, len(rows))
+	for _, row := range rows {
+		assignments = append(assignments, participantAssignment(
+			row.ID,
+			row.Email,
+			row.Name,
+			row.AvatarUrl,
+			row.Roles,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.AssignedAt,
+		))
+	}
+	return assignments, nil
+}
+
+func (s *Store) CountParticipants(ctx context.Context, experimentID uuid.UUID) (int64, error) {
+	return s.queries.CountExperimentParticipants(ctx, experimentID)
+}
+
 func (s *Store) Create(ctx context.Context, params CreateParams) (Record, error) {
 	configuration, err := json.Marshal(params.Configuration)
 	if err != nil {
@@ -194,6 +240,28 @@ func (s *Store) LockParticipantUsers(ctx context.Context, experimentID uuid.UUID
 	return s.queries.LockExperimentParticipantUsers(ctx, experimentID)
 }
 
+func (s *Store) LockParticipantCandidates(ctx context.Context, userIDs []uuid.UUID) ([]Participant, error) {
+	rows, err := s.queries.LockParticipantCandidates(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	participants := make([]Participant, 0, len(rows))
+	for _, row := range rows {
+		participants = append(participants, participantFromFields(
+			row.ID,
+			row.Email,
+			row.Name,
+			row.AvatarUrl,
+			row.Roles,
+			timePtr(row.DisabledAt),
+			row.CreatedAt,
+			row.UpdatedAt,
+		))
+	}
+	return participants, nil
+}
+
 func (s *Store) HasParticipantScheduleConflict(
 	ctx context.Context,
 	experimentID uuid.UUID,
@@ -207,6 +275,39 @@ func (s *Store) HasParticipantScheduleConflict(
 		ScheduledEndAt:   pgTimestamptz(end),
 		ScheduledStartAt: pgTimestamptz(start),
 	})
+}
+
+func (s *Store) AddParticipants(ctx context.Context, experimentID uuid.UUID, userIDs []uuid.UUID) ([]ParticipantAssignment, error) {
+	rows, err := s.queries.AddExperimentParticipants(ctx, AddExperimentParticipantsParams{
+		ExperimentID: experimentID,
+		UserIds:      userIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	assignments := make([]ParticipantAssignment, 0, len(rows))
+	for _, row := range rows {
+		assignments = append(assignments, participantAssignment(
+			row.ID,
+			row.Email,
+			row.Name,
+			row.AvatarUrl,
+			row.Roles,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.AssignedAt,
+		))
+	}
+	return assignments, nil
+}
+
+func (s *Store) RemoveParticipant(ctx context.Context, experimentID, userID uuid.UUID) error {
+	_, err := s.queries.RemoveExperimentParticipant(ctx, RemoveExperimentParticipantParams{
+		ExperimentID: experimentID,
+		UserID:       userID,
+	})
+	return err
 }
 
 func (s *Store) Update(ctx context.Context, params UpdateParams) (Record, error) {
@@ -306,4 +407,49 @@ func textPtr(value pgtype.Text) *string {
 		return nil
 	}
 	return &value.String
+}
+
+func timePtr(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	return &value.Time
+}
+
+func participantFromFields(
+	id uuid.UUID,
+	email string,
+	name string,
+	avatarURL pgtype.Text,
+	roles []string,
+	disabledAt *time.Time,
+	createdAt pgtype.Timestamptz,
+	updatedAt pgtype.Timestamptz,
+) Participant {
+	return Participant{
+		ID:         id,
+		Email:      email,
+		Name:       name,
+		AvatarURL:  textPtr(avatarURL),
+		Roles:      roles,
+		DisabledAt: disabledAt,
+		CreatedAt:  createdAt.Time,
+		UpdatedAt:  updatedAt.Time,
+	}
+}
+
+func participantAssignment(
+	id uuid.UUID,
+	email string,
+	name string,
+	avatarURL pgtype.Text,
+	roles []string,
+	createdAt pgtype.Timestamptz,
+	updatedAt pgtype.Timestamptz,
+	assignedAt pgtype.Timestamptz,
+) ParticipantAssignment {
+	return ParticipantAssignment{
+		Participant: participantFromFields(id, email, name, avatarURL, roles, nil, createdAt, updatedAt),
+		AssignedAt:  assignedAt.Time,
+	}
 }

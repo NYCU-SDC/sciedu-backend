@@ -97,6 +97,59 @@ SELECT count(*)
 FROM experiment_participants
 WHERE experiment_id = $1;
 
+-- name: ListExperimentParticipants :many
+SELECT u.id,
+       u.email,
+       u.name,
+       u.avatar_url,
+       u.roles::text[] AS roles,
+       u.created_at,
+       u.updated_at,
+       ep.assigned_at
+FROM experiment_participants ep
+JOIN users u ON u.id = ep.user_id
+WHERE ep.experiment_id = sqlc.arg('experiment_id')
+ORDER BY ep.assigned_at DESC, u.id
+LIMIT sqlc.arg('limit')::int OFFSET sqlc.arg('offset')::bigint;
+
+-- name: LockParticipantCandidates :many
+SELECT id,
+       email,
+       name,
+       avatar_url,
+       roles::text[] AS roles,
+       disabled_at,
+       created_at,
+       updated_at
+FROM users
+WHERE id = ANY(sqlc.arg('user_ids')::uuid[])
+ORDER BY id
+FOR UPDATE;
+
+-- name: AddExperimentParticipants :many
+WITH inserted AS (
+    INSERT INTO experiment_participants (experiment_id, user_id)
+    SELECT sqlc.arg('experiment_id'), requested.user_id
+    FROM unnest(sqlc.arg('user_ids')::uuid[]) AS requested(user_id)
+    RETURNING user_id, assigned_at
+)
+SELECT u.id,
+       u.email,
+       u.name,
+       u.avatar_url,
+       u.roles::text[] AS roles,
+       u.created_at,
+       u.updated_at,
+       inserted.assigned_at
+FROM inserted
+JOIN users u ON u.id = inserted.user_id
+ORDER BY u.id;
+
+-- name: RemoveExperimentParticipant :execrows
+DELETE FROM experiment_participants
+WHERE experiment_id = sqlc.arg('experiment_id')
+  AND user_id = sqlc.arg('user_id');
+
 -- name: CountExperimentCourses :one
 SELECT count(*)
 FROM experiment_courses

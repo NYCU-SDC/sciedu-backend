@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -18,7 +19,10 @@ import (
 type MutationRepository interface {
 	LockByID(ctx context.Context, id uuid.UUID) (Record, error)
 	LockParticipantUsers(ctx context.Context, experimentID uuid.UUID) ([]uuid.UUID, error)
+	LockParticipantCandidates(ctx context.Context, userIDs []uuid.UUID) ([]Participant, error)
 	HasParticipantScheduleConflict(ctx context.Context, experimentID uuid.UUID, userIDs []uuid.UUID, start, end time.Time) (bool, error)
+	AddParticipants(ctx context.Context, experimentID uuid.UUID, userIDs []uuid.UUID) ([]ParticipantAssignment, error)
+	RemoveParticipant(ctx context.Context, experimentID, userID uuid.UUID) error
 	Update(ctx context.Context, params UpdateParams) (Record, error)
 }
 
@@ -27,6 +31,8 @@ type Repository interface {
 	Count(ctx context.Context, filter ListFilter) (int64, error)
 	Create(ctx context.Context, params CreateParams) (Record, error)
 	FindByID(ctx context.Context, id uuid.UUID) (Record, error)
+	ListParticipants(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]ParticipantAssignment, error)
+	CountParticipants(ctx context.Context, experimentID uuid.UUID) (int64, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status Status) (Record, error)
 	WithinTx(ctx context.Context, fn func(MutationRepository) error) error
 }
@@ -42,6 +48,15 @@ type ListInput struct {
 
 type ExperimentPage struct {
 	Items       []Record
+	TotalPages  int32
+	TotalItems  int32
+	CurrentPage int32
+	PageSize    int32
+	HasNextPage bool
+}
+
+type ParticipantPage struct {
+	Items       []ParticipantAssignment
 	TotalPages  int32
 	TotalItems  int32
 	CurrentPage int32
@@ -136,6 +151,167 @@ func (s *Service) FindByID(ctx context.Context, id uuid.UUID) (Record, error) {
 		return Record{}, databaseutil.WrapDBErrorWithKeyValue(err, "experiments", "id", id.String(), s.logger, "get experiment")
 	}
 	return record, nil
+}
+
+func (s *Service) ListParticipants(ctx context.Context, experimentID uuid.UUID, page, pageSize int32) (ParticipantPage, error) {
+	if err := validateAssignmentPagination(page, pageSize); err != nil {
+		return ParticipantPage{}, err
+	}
+	if _, err := s.FindByID(ctx, experimentID); err != nil {
+		return ParticipantPage{}, err
+	}
+
+	items, err := s.repo.ListParticipants(ctx, experimentID, pageSize, int64(page-1)*int64(pageSize))
+	if err != nil {
+		return ParticipantPage{}, databaseutil.WrapDBError(err, s.logger, "list experiment participants")
+	}
+	total, err := s.repo.CountParticipants(ctx, experimentID)
+	if err != nil {
+		return ParticipantPage{}, databaseutil.WrapDBError(err, s.logger, "count experiment participants")
+	}
+	if total < 0 || total > math.MaxInt32 {
+		return ParticipantPage{}, fmt.Errorf("%w: participant count exceeds the supported range", errInvalidExperimentPayload)
+	}
+
+	var totalPages int32
+	if total > 0 {
+		totalPages = int32((total + int64(pageSize) - 1) / int64(pageSize))
+	}
+	return ParticipantPage{
+		Items:       items,
+		TotalPages:  totalPages,
+		TotalItems:  int32(total),
+		CurrentPage: page,
+		PageSize:    pageSize,
+		HasNextPage: page < totalPages,
+	}, nil
+}
+
+func (s *Service) AddParticipants(ctx context.Context, experimentID uuid.UUID, requestedIDs []uuid.UUID) ([]ParticipantAssignment, error) {
+	if len(requestedIDs) < 1 || len(requestedIDs) > 100 {
+		return nil, fmt.Errorf("%w: userIds must contain between 1 and 100 items", errInvalidExperimentPayload)
+	}
+
+	userIDs := append([]uuid.UUID(nil), requestedIDs...)
+	sort.Slice(userIDs, func(i, j int) bool { return userIDs[i].String() < userIDs[j].String() })
+	for i := 1; i < len(userIDs); i++ {
+		if userIDs[i] == userIDs[i-1] {
+			return nil, fmt.Errorf("%w: duplicate participant id %s", errExperimentConflict, userIDs[i])
+		}
+	}
+
+	var assignments []ParticipantAssignment
+	err := s.repo.WithinTx(ctx, func(repo MutationRepository) error {
+		experiment, err := repo.LockByID(ctx, experimentID)
+		if err != nil {
+			return databaseutil.WrapDBErrorWithKeyValue(err, "experiments", "id", experimentID.String(), s.logger, "lock experiment for participant assignment")
+		}
+		if err := validateAssignmentAdd(experiment.Status); err != nil {
+			return err
+		}
+
+		participants, err := repo.LockParticipantCandidates(ctx, userIDs)
+		if err != nil {
+			return databaseutil.WrapDBError(err, s.logger, "lock participant candidates")
+		}
+		if len(participants) != len(userIDs) {
+			return fmt.Errorf("%w: one or more participants do not exist", errExperimentConflict)
+		}
+		for _, participant := range participants {
+			if participant.DisabledAt != nil || !hasString(participant.Roles, "STUDENT") {
+				return fmt.Errorf("%w: participant %s must be an active STUDENT", errExperimentConflict, participant.ID)
+			}
+		}
+
+		conflict, err := repo.HasParticipantScheduleConflict(
+			ctx,
+			experiment.ID,
+			userIDs,
+			experiment.ScheduledStartAt,
+			experiment.ScheduledEndAt,
+		)
+		if err != nil {
+			return databaseutil.WrapDBError(err, s.logger, "check participant schedule conflicts")
+		}
+		if conflict {
+			return fmt.Errorf("%w: participant schedule overlaps another experiment", errExperimentConflict)
+		}
+
+		assignments, err = repo.AddParticipants(ctx, experiment.ID, userIDs)
+		if err != nil {
+			wrapped := databaseutil.WrapDBError(err, s.logger, "add experiment participants")
+			if errors.Is(wrapped, databaseutil.ErrUniqueViolation) || errors.Is(wrapped, databaseutil.ErrForeignKeyViolation) {
+				return fmt.Errorf("%w: one or more participant assignments conflict", errExperimentConflict)
+			}
+			return wrapped
+		}
+		return nil
+	})
+	if err != nil {
+		if isMappedMutationError(err) {
+			return nil, err
+		}
+		return nil, databaseutil.WrapDBError(err, s.logger, "add experiment participants transaction")
+	}
+	return assignments, nil
+}
+
+func (s *Service) RemoveParticipant(ctx context.Context, experimentID, userID uuid.UUID) error {
+	err := s.repo.WithinTx(ctx, func(repo MutationRepository) error {
+		experiment, err := repo.LockByID(ctx, experimentID)
+		if err != nil {
+			return databaseutil.WrapDBErrorWithKeyValue(err, "experiments", "id", experimentID.String(), s.logger, "lock experiment for participant removal")
+		}
+		if err := validateAssignmentRemove(experiment.Status); err != nil {
+			return err
+		}
+		if err := repo.RemoveParticipant(ctx, experiment.ID, userID); err != nil {
+			return databaseutil.WrapDBError(err, s.logger, "remove experiment participant")
+		}
+		return nil
+	})
+	if err == nil || isMappedMutationError(err) {
+		return err
+	}
+	return databaseutil.WrapDBError(err, s.logger, "remove experiment participant transaction")
+}
+
+func validateAssignmentPagination(page, pageSize int32) error {
+	if page < 1 || pageSize < 1 || pageSize > maxPageSize {
+		return fmt.Errorf("%w: page must be positive and pageSize must be between 1 and %d", errInvalidExperimentPayload, maxPageSize)
+	}
+	return nil
+}
+
+func validateAssignmentAdd(status Status) error {
+	switch status {
+	case StatusDraft, StatusScheduled, StatusActive:
+		return nil
+	case StatusCompleted, StatusArchived:
+		return fmt.Errorf("%w: %s experiments do not allow new assignments", errExperimentConflict, status)
+	default:
+		return fmt.Errorf("%w: unknown persisted experiment status %q", errExperimentConflict, status)
+	}
+}
+
+func validateAssignmentRemove(status Status) error {
+	switch status {
+	case StatusDraft, StatusScheduled:
+		return nil
+	case StatusActive, StatusCompleted, StatusArchived:
+		return fmt.Errorf("%w: %s experiments do not allow assignment removal", errExperimentConflict, status)
+	default:
+		return fmt.Errorf("%w: unknown persisted experiment status %q", errExperimentConflict, status)
+	}
+}
+
+func hasString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, params EditableParams) (Record, error) {

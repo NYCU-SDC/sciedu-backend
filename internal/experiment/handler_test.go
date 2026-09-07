@@ -19,11 +19,14 @@ import (
 )
 
 type fakeHandlerService struct {
-	listFn         func(ctx context.Context, input ListInput) (ExperimentPage, error)
-	createFn       func(ctx context.Context, createdBy uuid.UUID, params EditableParams) (Record, error)
-	findByIDFn     func(ctx context.Context, id uuid.UUID) (Record, error)
-	updateFn       func(ctx context.Context, id uuid.UUID, params EditableParams) (Record, error)
-	updateStatusFn func(ctx context.Context, id uuid.UUID, status Status) (Record, error)
+	listFn              func(ctx context.Context, input ListInput) (ExperimentPage, error)
+	createFn            func(ctx context.Context, createdBy uuid.UUID, params EditableParams) (Record, error)
+	findByIDFn          func(ctx context.Context, id uuid.UUID) (Record, error)
+	listParticipantsFn  func(ctx context.Context, experimentID uuid.UUID, page, pageSize int32) (ParticipantPage, error)
+	addParticipantsFn   func(ctx context.Context, experimentID uuid.UUID, userIDs []uuid.UUID) ([]ParticipantAssignment, error)
+	removeParticipantFn func(ctx context.Context, experimentID, userID uuid.UUID) error
+	updateFn            func(ctx context.Context, id uuid.UUID, params EditableParams) (Record, error)
+	updateStatusFn      func(ctx context.Context, id uuid.UUID, status Status) (Record, error)
 
 	lastListInput ListInput
 	lastCreatedBy uuid.UUID
@@ -50,6 +53,27 @@ func (f *fakeHandlerService) FindByID(ctx context.Context, id uuid.UUID) (Record
 		return f.findByIDFn(ctx, id)
 	}
 	return sampleRecord(id), nil
+}
+
+func (f *fakeHandlerService) ListParticipants(ctx context.Context, experimentID uuid.UUID, page, pageSize int32) (ParticipantPage, error) {
+	if f.listParticipantsFn != nil {
+		return f.listParticipantsFn(ctx, experimentID, page, pageSize)
+	}
+	return ParticipantPage{CurrentPage: page, PageSize: pageSize}, nil
+}
+
+func (f *fakeHandlerService) AddParticipants(ctx context.Context, experimentID uuid.UUID, userIDs []uuid.UUID) ([]ParticipantAssignment, error) {
+	if f.addParticipantsFn != nil {
+		return f.addParticipantsFn(ctx, experimentID, userIDs)
+	}
+	return []ParticipantAssignment{}, nil
+}
+
+func (f *fakeHandlerService) RemoveParticipant(ctx context.Context, experimentID, userID uuid.UUID) error {
+	if f.removeParticipantFn != nil {
+		return f.removeParticipantFn(ctx, experimentID, userID)
+	}
+	return nil
 }
 
 func (f *fakeHandlerService) Update(ctx context.Context, id uuid.UUID, params EditableParams) (Record, error) {
@@ -121,6 +145,9 @@ func directMux(handler *Handler, actorID uuid.UUID) *http.ServeMux {
 	mux.HandleFunc("GET /api/experiments/{id}", inject(handler.Get))
 	mux.HandleFunc("PUT /api/experiments/{id}", inject(handler.Update))
 	mux.HandleFunc("PUT /api/experiments/{id}/status", inject(handler.UpdateStatus))
+	mux.HandleFunc("GET /api/experiments/{id}/participants", inject(handler.ListParticipants))
+	mux.HandleFunc("POST /api/experiments/{id}/participants", inject(handler.AddParticipants))
+	mux.HandleFunc("DELETE /api/experiments/{id}/participants/{userId}", inject(handler.RemoveParticipant))
 	return mux
 }
 
@@ -240,6 +267,88 @@ func TestHandlerUpdateConflict(t *testing.T) {
 
 	assert.Equal(t, http.StatusConflict, recorder.Code)
 	assert.Equal(t, "application/problem+json", recorder.Header().Get("Content-Type"))
+}
+
+func TestHandlerParticipantOperations(t *testing.T) {
+	experimentID := uuid.New()
+	userID := uuid.New()
+	now := time.Now().UTC()
+	assignment := ParticipantAssignment{
+		Participant: Participant{
+			ID: userID, Email: "student@example.test", Name: "Student", Roles: []string{"STUDENT"},
+			CreatedAt: now, UpdatedAt: now,
+		},
+		AssignedAt: now,
+	}
+	service := &fakeHandlerService{
+		listParticipantsFn: func(_ context.Context, gotID uuid.UUID, page, pageSize int32) (ParticipantPage, error) {
+			assert.Equal(t, experimentID, gotID)
+			assert.Equal(t, int32(1), page)
+			assert.Equal(t, int32(20), pageSize)
+			return ParticipantPage{Items: []ParticipantAssignment{assignment}, TotalItems: 1, TotalPages: 1, CurrentPage: page, PageSize: pageSize}, nil
+		},
+		addParticipantsFn: func(_ context.Context, gotID uuid.UUID, userIDs []uuid.UUID) ([]ParticipantAssignment, error) {
+			assert.Equal(t, experimentID, gotID)
+			assert.Equal(t, []uuid.UUID{userID}, userIDs)
+			return []ParticipantAssignment{assignment}, nil
+		},
+	}
+	mux := directMux(NewHandler(service, nil), uuid.New())
+
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/experiments/"+experimentID.String()+"/participants", nil))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var page paginatedExperimentParticipantsResponse
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &page))
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, userID, page.Items[0].Participant.ID)
+	assert.Equal(t, int32(1), page.TotalItems)
+
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/experiments/"+experimentID.String()+"/participants", strings.NewReader(`{"userIds":["`+userID.String()+`"]}`)))
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var added []experimentParticipantAssignmentResponse
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &added))
+	require.Len(t, added, 1)
+	assert.Equal(t, userID, added[0].Participant.ID)
+
+	recorder = httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodDelete, "/api/experiments/"+experimentID.String()+"/participants/"+userID.String(), nil))
+	assert.Equal(t, http.StatusNoContent, recorder.Code)
+	assert.Empty(t, recorder.Body.String())
+}
+
+func TestHandlerParticipantValidationAndConflict(t *testing.T) {
+	experimentID := uuid.New()
+	userID := uuid.New()
+	conflictService := &fakeHandlerService{removeParticipantFn: func(context.Context, uuid.UUID, uuid.UUID) error {
+		return fmt.Errorf("%w: ACTIVE experiments do not allow assignment removal", errExperimentConflict)
+	}}
+
+	tests := []struct {
+		name     string
+		service  *fakeHandlerService
+		method   string
+		path     string
+		body     string
+		wantCode int
+	}{
+		{name: "invalid list pagination", service: &fakeHandlerService{}, method: http.MethodGet, path: "/api/experiments/" + experimentID.String() + "/participants?page=0", wantCode: http.StatusBadRequest},
+		{name: "invalid experiment id", service: &fakeHandlerService{}, method: http.MethodGet, path: "/api/experiments/not-a-uuid/participants", wantCode: http.StatusBadRequest},
+		{name: "empty add batch", service: &fakeHandlerService{}, method: http.MethodPost, path: "/api/experiments/" + experimentID.String() + "/participants", body: `{"userIds":[]}`, wantCode: http.StatusBadRequest},
+		{name: "malformed add body", service: &fakeHandlerService{}, method: http.MethodPost, path: "/api/experiments/" + experimentID.String() + "/participants", body: `{`, wantCode: http.StatusBadRequest},
+		{name: "invalid delete user id", service: &fakeHandlerService{}, method: http.MethodDelete, path: "/api/experiments/" + experimentID.String() + "/participants/not-a-uuid", wantCode: http.StatusBadRequest},
+		{name: "delete lifecycle conflict", service: conflictService, method: http.MethodDelete, path: "/api/experiments/" + experimentID.String() + "/participants/" + userID.String(), wantCode: http.StatusConflict},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mux := directMux(NewHandler(tt.service, nil), uuid.New())
+			recorder := httptest.NewRecorder()
+			mux.ServeHTTP(recorder, httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body)))
+			assert.Equal(t, tt.wantCode, recorder.Code)
+		})
+	}
 }
 
 func TestRegisterRoutesAuthorization(t *testing.T) {

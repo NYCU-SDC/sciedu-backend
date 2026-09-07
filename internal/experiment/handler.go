@@ -34,6 +34,9 @@ type HandlerService interface {
 	List(ctx context.Context, input ListInput) (ExperimentPage, error)
 	Create(ctx context.Context, createdBy uuid.UUID, params EditableParams) (Record, error)
 	FindByID(ctx context.Context, id uuid.UUID) (Record, error)
+	ListParticipants(ctx context.Context, experimentID uuid.UUID, page, pageSize int32) (ParticipantPage, error)
+	AddParticipants(ctx context.Context, experimentID uuid.UUID, userIDs []uuid.UUID) ([]ParticipantAssignment, error)
+	RemoveParticipant(ctx context.Context, experimentID, userID uuid.UUID) error
 	Update(ctx context.Context, id uuid.UUID, params EditableParams) (Record, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status Status) (Record, error)
 }
@@ -66,6 +69,10 @@ type updateExperimentStatusRequest struct {
 	Status *Status `json:"status" validate:"required,oneof=DRAFT SCHEDULED ACTIVE COMPLETED ARCHIVED"`
 }
 
+type addExperimentParticipantsRequest struct {
+	UserIDs []uuid.UUID `json:"userIds" validate:"required,min=1,max=100"`
+}
+
 type experimentResponse struct {
 	ID               uuid.UUID     `json:"id"`
 	Name             string        `json:"name"`
@@ -92,6 +99,30 @@ type paginatedExperimentsResponse struct {
 	CurrentPage int32                `json:"currentPage"`
 	PageSize    int32                `json:"pageSize"`
 	HasNextPage bool                 `json:"hasNextPage"`
+}
+
+type participantResponse struct {
+	ID        uuid.UUID `json:"id"`
+	Email     string    `json:"email"`
+	Name      string    `json:"name"`
+	AvatarURL *string   `json:"avatarUrl,omitempty"`
+	Roles     []string  `json:"roles"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+type experimentParticipantAssignmentResponse struct {
+	Participant participantResponse `json:"participant"`
+	AssignedAt  time.Time           `json:"assignedAt"`
+}
+
+type paginatedExperimentParticipantsResponse struct {
+	Items       []experimentParticipantAssignmentResponse `json:"items"`
+	TotalPages  int32                                     `json:"totalPages"`
+	TotalItems  int32                                     `json:"totalItems"`
+	CurrentPage int32                                     `json:"currentPage"`
+	PageSize    int32                                     `json:"pageSize"`
+	HasNextPage bool                                      `json:"hasNextPage"`
 }
 
 func NewHandler(service HandlerService, logger *zap.Logger) *Handler {
@@ -135,6 +166,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil
 	handle("GET /api/experiments/{id}", h.Get)
 	handle("PUT /api/experiments/{id}", h.Update)
 	handle("PUT /api/experiments/{id}/status", h.UpdateStatus)
+	handle("GET /api/experiments/{id}/participants", h.ListParticipants)
+	handle("POST /api/experiments/{id}/participants", h.AddParticipants)
+	handle("DELETE /api/experiments/{id}/participants/{userId}", h.RemoveParticipant)
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -199,6 +233,85 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	handlerutil.WriteJSONResponse(w, http.StatusOK, detailResponseFromRecord(record))
+}
+
+func (h *Handler) ListParticipants(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+	experimentID, err := handlerutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	page, pageSize, err := parseAssignmentPagination(r)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	result, err := h.service.ListParticipants(ctx, experimentID, page, pageSize)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	items := make([]experimentParticipantAssignmentResponse, 0, len(result.Items))
+	for _, assignment := range result.Items {
+		items = append(items, participantAssignmentResponse(assignment))
+	}
+	handlerutil.WriteJSONResponse(w, http.StatusOK, paginatedExperimentParticipantsResponse{
+		Items:       items,
+		TotalPages:  result.TotalPages,
+		TotalItems:  result.TotalItems,
+		CurrentPage: result.CurrentPage,
+		PageSize:    result.PageSize,
+		HasNextPage: result.HasNextPage,
+	})
+}
+
+func (h *Handler) AddParticipants(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+	experimentID, err := handlerutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	var request addExperimentParticipantsRequest
+	if err := handlerutil.ParseAndValidateRequestBody(ctx, h.validator, r, &request); err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	assignments, err := h.service.AddParticipants(ctx, experimentID, request.UserIDs)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	response := make([]experimentParticipantAssignmentResponse, 0, len(assignments))
+	for _, assignment := range assignments {
+		response = append(response, participantAssignmentResponse(assignment))
+	}
+	handlerutil.WriteJSONResponse(w, http.StatusOK, response)
+}
+
+func (h *Handler) RemoveParticipant(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+	experimentID, err := handlerutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	userID, err := handlerutil.ParseUUID(r.PathValue("userId"))
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	if err := h.service.RemoveParticipant(ctx, experimentID, userID); err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
@@ -309,6 +422,19 @@ func parseListInput(r *http.Request) (ListInput, error) {
 	}, nil
 }
 
+func parseAssignmentPagination(r *http.Request) (int32, int32, error) {
+	query := r.URL.Query()
+	page, err := parseInt32Query(query.Get("page"), query.Has("page"), defaultPage)
+	if err != nil || page < 1 {
+		return 0, 0, fmt.Errorf("%w: page must be a positive integer", errInvalidExperimentPayload)
+	}
+	pageSize, err := parseInt32Query(query.Get("pageSize"), query.Has("pageSize"), defaultPageSize)
+	if err != nil || pageSize < 1 || pageSize > maxPageSize {
+		return 0, 0, fmt.Errorf("%w: pageSize must be between 1 and %d", errInvalidExperimentPayload, maxPageSize)
+	}
+	return page, pageSize, nil
+}
+
 func parseInt32Query(raw string, present bool, fallback int32) (int32, error) {
 	if !present {
 		return fallback, nil
@@ -348,5 +474,21 @@ func detailResponseFromRecord(record Record) experimentDetailResponse {
 		experimentResponse: responseFromRecord(record),
 		ParticipantCount:   record.ParticipantCount,
 		CourseCount:        record.CourseCount,
+	}
+}
+
+func participantAssignmentResponse(assignment ParticipantAssignment) experimentParticipantAssignmentResponse {
+	participant := assignment.Participant
+	return experimentParticipantAssignmentResponse{
+		Participant: participantResponse{
+			ID:        participant.ID,
+			Email:     participant.Email,
+			Name:      participant.Name,
+			AvatarURL: participant.AvatarURL,
+			Roles:     participant.Roles,
+			CreatedAt: participant.CreatedAt,
+			UpdatedAt: participant.UpdatedAt,
+		},
+		AssignedAt: assignment.AssignedAt,
 	}
 }

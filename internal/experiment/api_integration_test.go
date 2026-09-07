@@ -32,9 +32,13 @@ func (q experimentIntegrationRoleQuerier) ActiveUserRoles(context.Context, uuid.
 }
 
 func newExperimentAPI(t *testing.T, pool *pgxpool.Pool, actorID uuid.UUID) *http.ServeMux {
+	return newExperimentAPIWithRoles(t, pool, actorID, []auth.Role{auth.EXPERIMENTER})
+}
+
+func newExperimentAPIWithRoles(t *testing.T, pool *pgxpool.Pool, actorID uuid.UUID, actorRoles []auth.Role) *http.ServeMux {
 	t.Helper()
 
-	roles := experimentIntegrationRoleQuerier{roles: []auth.Role{auth.EXPERIMENTER}}
+	roles := experimentIntegrationRoleQuerier{roles: actorRoles}
 	set := middlewareutil.NewSet(func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			next(w, r.WithContext(auth.ContextWithUserID(r.Context(), actorID)))
