@@ -48,6 +48,32 @@ SELECT *
 FROM experiments
 WHERE id = $1;
 
+-- name: LockExperimentByID :one
+SELECT *
+FROM experiments
+WHERE id = $1
+FOR UPDATE;
+
+-- name: LockExperimentParticipantUsers :many
+SELECT u.id
+FROM users u
+JOIN experiment_participants ep ON ep.user_id = u.id
+WHERE ep.experiment_id = $1
+ORDER BY u.id
+FOR UPDATE OF u;
+
+-- name: HasParticipantScheduleConflict :one
+SELECT EXISTS (
+    SELECT 1
+    FROM experiment_participants ep
+    JOIN experiments e ON e.id = ep.experiment_id
+    WHERE ep.user_id = ANY(sqlc.arg('user_ids')::uuid[])
+      AND e.id <> sqlc.arg('experiment_id')
+      AND e.status <> 'ARCHIVED'
+      AND e.scheduled_start_at < sqlc.arg('scheduled_end_at')::timestamptz
+      AND sqlc.arg('scheduled_start_at')::timestamptz < e.scheduled_end_at
+);
+
 -- name: UpdateExperiment :one
 UPDATE experiments
 SET name = sqlc.arg('name'),

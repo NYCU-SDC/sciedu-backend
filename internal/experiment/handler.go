@@ -107,6 +107,13 @@ func NewHandler(service HandlerService, logger *zap.Logger) *Handler {
 			switch {
 			case errors.Is(err, errInvalidExperimentPayload):
 				return problemutil.NewValidateProblem(err.Error())
+			case errors.Is(err, errExperimentConflict):
+				return problemutil.Problem{
+					Title:  "Conflict",
+					Status: http.StatusConflict,
+					Type:   "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/409",
+					Detail: err.Error(),
+				}
 			case errors.As(err, &syntaxError), errors.As(err, &typeError), errors.Is(err, io.EOF):
 				return problemutil.NewValidateProblem("invalid JSON request body")
 			default:

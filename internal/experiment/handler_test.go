@@ -3,6 +3,7 @@ package experiment
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -227,6 +228,18 @@ func TestHandlerResourceOperations(t *testing.T) {
 			assert.Equal(t, tt.wantCode, recorder.Code)
 		})
 	}
+}
+
+func TestHandlerUpdateConflict(t *testing.T) {
+	service := &fakeHandlerService{updateFn: func(context.Context, uuid.UUID, EditableParams) (Record, error) {
+		return Record{}, fmt.Errorf("%w: ACTIVE experiments are locked", errExperimentConflict)
+	}}
+	mux := directMux(NewHandler(service, nil), uuid.New())
+	recorder := httptest.NewRecorder()
+	mux.ServeHTTP(recorder, httptest.NewRequest(http.MethodPut, "/api/experiments/"+uuid.NewString(), strings.NewReader(validRequestBody())))
+
+	assert.Equal(t, http.StatusConflict, recorder.Code)
+	assert.Equal(t, "application/problem+json", recorder.Header().Get("Content-Type"))
 }
 
 func TestRegisterRoutesAuthorization(t *testing.T) {

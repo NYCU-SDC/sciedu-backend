@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Status string
@@ -91,12 +91,35 @@ type UpdateParams struct {
 	ID uuid.UUID
 }
 
-type Store struct {
-	queries *Queries
+type transactionDB interface {
+	DBTX
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
-func NewStore(pool *pgxpool.Pool) *Store {
-	return &Store{queries: New(pool)}
+type Store struct {
+	queries *Queries
+	db      transactionDB
+}
+
+func NewStore(db transactionDB) *Store {
+	return &Store{queries: New(db), db: db}
+}
+
+func (s *Store) WithinTx(ctx context.Context, fn func(MutationRepository) error) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	txStore := &Store{queries: s.queries.WithTx(tx)}
+	if err := fn(txStore); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (s *Store) List(ctx context.Context, params ListParams) ([]Record, error) {
@@ -157,6 +180,33 @@ func (s *Store) FindByID(ctx context.Context, id uuid.UUID) (Record, error) {
 		return Record{}, err
 	}
 	return s.withCounts(ctx, row)
+}
+
+func (s *Store) LockByID(ctx context.Context, id uuid.UUID) (Record, error) {
+	row, err := s.queries.LockExperimentByID(ctx, id)
+	if err != nil {
+		return Record{}, err
+	}
+	return recordFromRow(row)
+}
+
+func (s *Store) LockParticipantUsers(ctx context.Context, experimentID uuid.UUID) ([]uuid.UUID, error) {
+	return s.queries.LockExperimentParticipantUsers(ctx, experimentID)
+}
+
+func (s *Store) HasParticipantScheduleConflict(
+	ctx context.Context,
+	experimentID uuid.UUID,
+	userIDs []uuid.UUID,
+	start time.Time,
+	end time.Time,
+) (bool, error) {
+	return s.queries.HasParticipantScheduleConflict(ctx, HasParticipantScheduleConflictParams{
+		UserIds:          userIDs,
+		ExperimentID:     experimentID,
+		ScheduledEndAt:   pgTimestamptz(end),
+		ScheduledStartAt: pgTimestamptz(start),
+	})
 }
 
 func (s *Store) Update(ctx context.Context, params UpdateParams) (Record, error) {

@@ -13,18 +13,25 @@ import (
 )
 
 type fakeRepository struct {
-	listFn         func(ctx context.Context, params ListParams) ([]Record, error)
-	countFn        func(ctx context.Context, filter ListFilter) (int64, error)
-	createFn       func(ctx context.Context, params CreateParams) (Record, error)
-	findByIDFn     func(ctx context.Context, id uuid.UUID) (Record, error)
-	updateFn       func(ctx context.Context, params UpdateParams) (Record, error)
-	updateStatusFn func(ctx context.Context, id uuid.UUID, status Status) (Record, error)
+	listFn           func(ctx context.Context, params ListParams) ([]Record, error)
+	countFn          func(ctx context.Context, filter ListFilter) (int64, error)
+	createFn         func(ctx context.Context, params CreateParams) (Record, error)
+	findByIDFn       func(ctx context.Context, id uuid.UUID) (Record, error)
+	updateFn         func(ctx context.Context, params UpdateParams) (Record, error)
+	updateStatusFn   func(ctx context.Context, id uuid.UUID, status Status) (Record, error)
+	participantIDs   []uuid.UUID
+	scheduleConflict bool
 
-	createCalls       int
-	listCalls         int
-	countCalls        int
-	updateStatusCalls int
-	lastListParams    ListParams
+	createCalls           int
+	listCalls             int
+	countCalls            int
+	withinTxCalls         int
+	lockByIDCalls         int
+	lockParticipantCalls  int
+	scheduleConflictCalls int
+	updateCalls           int
+	updateStatusCalls     int
+	lastListParams        ListParams
 }
 
 func (f *fakeRepository) List(ctx context.Context, params ListParams) ([]Record, error) {
@@ -60,10 +67,37 @@ func (f *fakeRepository) FindByID(ctx context.Context, id uuid.UUID) (Record, er
 }
 
 func (f *fakeRepository) Update(ctx context.Context, params UpdateParams) (Record, error) {
+	f.updateCalls++
 	if f.updateFn != nil {
 		return f.updateFn(ctx, params)
 	}
 	return Record{}, nil
+}
+
+func (f *fakeRepository) LockByID(ctx context.Context, id uuid.UUID) (Record, error) {
+	f.lockByIDCalls++
+	return f.FindByID(ctx, id)
+}
+
+func (f *fakeRepository) LockParticipantUsers(context.Context, uuid.UUID) ([]uuid.UUID, error) {
+	f.lockParticipantCalls++
+	return f.participantIDs, nil
+}
+
+func (f *fakeRepository) HasParticipantScheduleConflict(
+	context.Context,
+	uuid.UUID,
+	[]uuid.UUID,
+	time.Time,
+	time.Time,
+) (bool, error) {
+	f.scheduleConflictCalls++
+	return f.scheduleConflict, nil
+}
+
+func (f *fakeRepository) WithinTx(ctx context.Context, fn func(MutationRepository) error) error {
+	f.withinTxCalls++
+	return fn(f)
 }
 
 func (f *fakeRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status Status) (Record, error) {
@@ -85,6 +119,18 @@ func validEditableParams() EditableParams {
 			GradingMode:              GradingModeAutomatic,
 			CorrectAnswerReleaseMode: CorrectAnswerReleaseNever,
 		},
+	}
+}
+
+func recordWithEditableParams(id uuid.UUID, status Status, params EditableParams) Record {
+	return Record{
+		ID:               id,
+		Name:             params.Name,
+		Description:      params.Description,
+		Configuration:    params.Configuration,
+		Status:           status,
+		ScheduledStartAt: params.ScheduledStartAt,
+		ScheduledEndAt:   params.ScheduledEndAt,
 	}
 }
 
@@ -200,6 +246,93 @@ func TestServiceCreateValidation(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantName, record.Name)
 			assert.Equal(t, 1, repo.createCalls)
+		})
+	}
+}
+
+func TestServiceUpdateLifecyclePolicy(t *testing.T) {
+	description := "updated description"
+	tests := []struct {
+		name              string
+		status            Status
+		mutate            func(*EditableParams)
+		overlap           bool
+		wantConflict      bool
+		wantScheduleCheck bool
+	}{
+		{name: "draft metadata update", status: StatusDraft, mutate: func(p *EditableParams) { p.Name = "Updated" }},
+		{name: "draft schedule update", status: StatusDraft, mutate: func(p *EditableParams) {
+			p.ScheduledStartAt = p.ScheduledStartAt.Add(time.Hour)
+			p.ScheduledEndAt = p.ScheduledEndAt.Add(time.Hour)
+		}, wantScheduleCheck: true},
+		{name: "scheduled schedule update", status: StatusScheduled, mutate: func(p *EditableParams) {
+			p.ScheduledStartAt = p.ScheduledStartAt.Add(time.Hour)
+			p.ScheduledEndAt = p.ScheduledEndAt.Add(time.Hour)
+		}, wantScheduleCheck: true},
+		{name: "active identical retry", status: StatusActive},
+		{name: "active equal instant in another offset", status: StatusActive, mutate: func(p *EditableParams) {
+			p.ScheduledEndAt = p.ScheduledEndAt.In(time.FixedZone("UTC+8", 8*60*60))
+		}},
+		{name: "active end extension", status: StatusActive, mutate: func(p *EditableParams) {
+			p.ScheduledEndAt = p.ScheduledEndAt.Add(time.Hour)
+		}, wantScheduleCheck: true},
+		{name: "active shorter end", status: StatusActive, mutate: func(p *EditableParams) {
+			p.ScheduledEndAt = p.ScheduledEndAt.Add(-time.Minute)
+		}, wantConflict: true},
+		{name: "active name change", status: StatusActive, mutate: func(p *EditableParams) { p.Name = "Updated" }, wantConflict: true},
+		{name: "active description change", status: StatusActive, mutate: func(p *EditableParams) { p.Description = &description }, wantConflict: true},
+		{name: "active start change", status: StatusActive, mutate: func(p *EditableParams) { p.ScheduledStartAt = p.ScheduledStartAt.Add(time.Minute) }, wantConflict: true},
+		{name: "active configuration change", status: StatusActive, mutate: func(p *EditableParams) { p.Configuration.ShowScore = true }, wantConflict: true},
+		{name: "completed is read only", status: StatusCompleted, wantConflict: true},
+		{name: "archived is read only", status: StatusArchived, wantConflict: true},
+		{name: "scheduled overlap rejects update", status: StatusScheduled, mutate: func(p *EditableParams) {
+			p.ScheduledEndAt = p.ScheduledEndAt.Add(time.Hour)
+		}, overlap: true, wantConflict: true, wantScheduleCheck: true},
+		{name: "active extension overlap rejects update", status: StatusActive, mutate: func(p *EditableParams) {
+			p.ScheduledEndAt = p.ScheduledEndAt.Add(time.Hour)
+		}, overlap: true, wantConflict: true, wantScheduleCheck: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id := uuid.New()
+			currentParams := validEditableParams()
+			requested := currentParams
+			if tt.mutate != nil {
+				tt.mutate(&requested)
+			}
+			repo := &fakeRepository{
+				findByIDFn: func(context.Context, uuid.UUID) (Record, error) {
+					return recordWithEditableParams(id, tt.status, currentParams), nil
+				},
+				updateFn: func(_ context.Context, params UpdateParams) (Record, error) {
+					return recordWithEditableParams(id, tt.status, params.EditableParams), nil
+				},
+				scheduleConflict: tt.overlap,
+			}
+			if tt.wantScheduleCheck {
+				repo.participantIDs = []uuid.UUID{uuid.New()}
+			}
+
+			record, err := NewService(repo, nil).Update(context.Background(), id, requested)
+
+			assert.Equal(t, 1, repo.withinTxCalls)
+			assert.Equal(t, 1, repo.lockByIDCalls)
+			if tt.wantConflict {
+				assert.ErrorIs(t, err, errExperimentConflict)
+				assert.Zero(t, repo.updateCalls)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, requested.ScheduledEndAt, record.ScheduledEndAt)
+				assert.Equal(t, 1, repo.updateCalls)
+			}
+			if tt.wantScheduleCheck {
+				assert.Equal(t, 1, repo.lockParticipantCalls)
+				assert.Equal(t, 1, repo.scheduleConflictCalls)
+			} else {
+				assert.Zero(t, repo.lockParticipantCalls)
+				assert.Zero(t, repo.scheduleConflictCalls)
+			}
 		})
 	}
 }

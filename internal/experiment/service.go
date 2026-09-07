@@ -2,6 +2,7 @@ package experiment
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -9,17 +10,25 @@ import (
 	"unicode/utf8"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
+	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
+
+type MutationRepository interface {
+	LockByID(ctx context.Context, id uuid.UUID) (Record, error)
+	LockParticipantUsers(ctx context.Context, experimentID uuid.UUID) ([]uuid.UUID, error)
+	HasParticipantScheduleConflict(ctx context.Context, experimentID uuid.UUID, userIDs []uuid.UUID, start, end time.Time) (bool, error)
+	Update(ctx context.Context, params UpdateParams) (Record, error)
+}
 
 type Repository interface {
 	List(ctx context.Context, params ListParams) ([]Record, error)
 	Count(ctx context.Context, filter ListFilter) (int64, error)
 	Create(ctx context.Context, params CreateParams) (Record, error)
 	FindByID(ctx context.Context, id uuid.UUID) (Record, error)
-	Update(ctx context.Context, params UpdateParams) (Record, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status Status) (Record, error)
+	WithinTx(ctx context.Context, fn func(MutationRepository) error) error
 }
 
 type ListInput struct {
@@ -134,11 +143,104 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, params EditableParam
 	if err != nil {
 		return Record{}, err
 	}
-	record, err := s.repo.Update(ctx, UpdateParams{ID: id, EditableParams: params})
+
+	var record Record
+	err = s.repo.WithinTx(ctx, func(repo MutationRepository) error {
+		current, err := repo.LockByID(ctx, id)
+		if err != nil {
+			return databaseutil.WrapDBErrorWithKeyValue(err, "experiments", "id", id.String(), s.logger, "lock experiment for update")
+		}
+		if err := validateLifecycleUpdate(current, params); err != nil {
+			return err
+		}
+		if scheduleChanged(current, params) {
+			if err := s.ensureParticipantScheduleAvailable(ctx, repo, current.ID, params.ScheduledStartAt, params.ScheduledEndAt); err != nil {
+				return err
+			}
+		}
+
+		record, err = repo.Update(ctx, UpdateParams{ID: id, EditableParams: params})
+		if err != nil {
+			return databaseutil.WrapDBErrorWithKeyValue(err, "experiments", "id", id.String(), s.logger, "update experiment")
+		}
+		return nil
+	})
 	if err != nil {
-		return Record{}, databaseutil.WrapDBErrorWithKeyValue(err, "experiments", "id", id.String(), s.logger, "update experiment")
+		if isMappedMutationError(err) {
+			return Record{}, err
+		}
+		return Record{}, databaseutil.WrapDBError(err, s.logger, "update experiment transaction")
 	}
 	return record, nil
+}
+
+func isMappedMutationError(err error) bool {
+	var internalError databaseutil.InternalServerError
+	return errors.Is(err, errExperimentConflict) ||
+		errors.Is(err, errInvalidExperimentPayload) ||
+		errors.Is(err, handlerutil.ErrNotFound) ||
+		errors.Is(err, databaseutil.ErrUniqueViolation) ||
+		errors.Is(err, databaseutil.ErrForeignKeyViolation) ||
+		errors.Is(err, databaseutil.ErrDeadlockDetected) ||
+		errors.Is(err, databaseutil.ErrQueryTimeout) ||
+		errors.As(err, &internalError)
+}
+
+func validateLifecycleUpdate(current Record, params EditableParams) error {
+	switch current.Status {
+	case StatusDraft, StatusScheduled:
+		return nil
+	case StatusActive:
+		if current.Name != params.Name ||
+			!stringPointersEqual(current.Description, params.Description) ||
+			current.Configuration != params.Configuration ||
+			!current.ScheduledStartAt.Equal(params.ScheduledStartAt) ||
+			params.ScheduledEndAt.Before(current.ScheduledEndAt) {
+			return fmt.Errorf("%w: ACTIVE experiments only allow scheduledEndAt to remain unchanged or move later", errExperimentConflict)
+		}
+		return nil
+	case StatusCompleted, StatusArchived:
+		return fmt.Errorf("%w: %s experiments are read only", errExperimentConflict, current.Status)
+	default:
+		return fmt.Errorf("%w: unknown persisted experiment status %q", errExperimentConflict, current.Status)
+	}
+}
+
+func scheduleChanged(current Record, params EditableParams) bool {
+	return !current.ScheduledStartAt.Equal(params.ScheduledStartAt) ||
+		!current.ScheduledEndAt.Equal(params.ScheduledEndAt)
+}
+
+func stringPointersEqual(left, right *string) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return *left == *right
+}
+
+func (s *Service) ensureParticipantScheduleAvailable(
+	ctx context.Context,
+	repo MutationRepository,
+	experimentID uuid.UUID,
+	start time.Time,
+	end time.Time,
+) error {
+	userIDs, err := repo.LockParticipantUsers(ctx, experimentID)
+	if err != nil {
+		return databaseutil.WrapDBError(err, s.logger, "lock experiment participants")
+	}
+	if len(userIDs) == 0 {
+		return nil
+	}
+
+	conflict, err := repo.HasParticipantScheduleConflict(ctx, experimentID, userIDs, start, end)
+	if err != nil {
+		return databaseutil.WrapDBError(err, s.logger, "check participant schedule conflicts")
+	}
+	if conflict {
+		return fmt.Errorf("%w: updated schedule overlaps another experiment assigned to a participant", errExperimentConflict)
+	}
+	return nil
 }
 
 func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, status Status) (Record, error) {
