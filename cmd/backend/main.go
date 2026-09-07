@@ -99,7 +99,7 @@ func main() {
 	userService := user.NewService(userStore, logger)
 	userHandler := user.NewHandler(userService, logger)
 	experimentStore := experiment.NewStore(pool)
-	experimentService := experiment.NewService(experimentStore, logger)
+	experimentService := experiment.NewServiceWithRoles(experimentStore, authStore, logger)
 	experimentHandler := experiment.NewHandler(experimentService, logger)
 
 	courseStore := course.NewStore(pool)

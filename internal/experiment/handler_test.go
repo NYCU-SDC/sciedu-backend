@@ -25,6 +25,9 @@ type fakeHandlerService struct {
 	listParticipantsFn  func(ctx context.Context, experimentID uuid.UUID, page, pageSize int32) (ParticipantPage, error)
 	addParticipantsFn   func(ctx context.Context, experimentID uuid.UUID, userIDs []uuid.UUID) ([]ParticipantAssignment, error)
 	removeParticipantFn func(ctx context.Context, experimentID, userID uuid.UUID) error
+	listCoursesFn       func(ctx context.Context, actorID, experimentID uuid.UUID, page, pageSize int32) (CourseAssignmentPage, error)
+	addCoursesFn        func(ctx context.Context, experimentID uuid.UUID, courseIDs []uuid.UUID) ([]CourseAssignment, error)
+	removeCourseFn      func(ctx context.Context, experimentID, courseID uuid.UUID) error
 	updateFn            func(ctx context.Context, id uuid.UUID, params EditableParams) (Record, error)
 	updateStatusFn      func(ctx context.Context, id uuid.UUID, status Status) (Record, error)
 
@@ -72,6 +75,27 @@ func (f *fakeHandlerService) AddParticipants(ctx context.Context, experimentID u
 func (f *fakeHandlerService) RemoveParticipant(ctx context.Context, experimentID, userID uuid.UUID) error {
 	if f.removeParticipantFn != nil {
 		return f.removeParticipantFn(ctx, experimentID, userID)
+	}
+	return nil
+}
+
+func (f *fakeHandlerService) ListCoursesForActor(ctx context.Context, actorID, experimentID uuid.UUID, page, pageSize int32) (CourseAssignmentPage, error) {
+	if f.listCoursesFn != nil {
+		return f.listCoursesFn(ctx, actorID, experimentID, page, pageSize)
+	}
+	return CourseAssignmentPage{CurrentPage: page, PageSize: pageSize}, nil
+}
+
+func (f *fakeHandlerService) AddCourses(ctx context.Context, experimentID uuid.UUID, courseIDs []uuid.UUID) ([]CourseAssignment, error) {
+	if f.addCoursesFn != nil {
+		return f.addCoursesFn(ctx, experimentID, courseIDs)
+	}
+	return []CourseAssignment{}, nil
+}
+
+func (f *fakeHandlerService) RemoveCourse(ctx context.Context, experimentID, courseID uuid.UUID) error {
+	if f.removeCourseFn != nil {
+		return f.removeCourseFn(ctx, experimentID, courseID)
 	}
 	return nil
 }
@@ -148,6 +172,9 @@ func directMux(handler *Handler, actorID uuid.UUID) *http.ServeMux {
 	mux.HandleFunc("GET /api/experiments/{id}/participants", inject(handler.ListParticipants))
 	mux.HandleFunc("POST /api/experiments/{id}/participants", inject(handler.AddParticipants))
 	mux.HandleFunc("DELETE /api/experiments/{id}/participants/{userId}", inject(handler.RemoveParticipant))
+	mux.HandleFunc("GET /api/experiments/{id}/courses", inject(handler.ListCourses))
+	mux.HandleFunc("POST /api/experiments/{id}/courses", inject(handler.AddCourses))
+	mux.HandleFunc("DELETE /api/experiments/{id}/courses/{courseId}", inject(handler.RemoveCourse))
 	return mux
 }
 

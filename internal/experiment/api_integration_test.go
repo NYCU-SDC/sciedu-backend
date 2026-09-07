@@ -44,7 +44,7 @@ func newExperimentAPIWithRoles(t *testing.T, pool *pgxpool.Pool, actorID uuid.UU
 			next(w, r.WithContext(auth.ContextWithUserID(r.Context(), actorID)))
 		}
 	})
-	handler := NewHandler(NewService(NewStore(pool), zap.NewNop()), zap.NewNop())
+	handler := NewHandler(NewServiceWithRoles(NewStore(pool), roles, zap.NewNop()), zap.NewNop())
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux, set, auth.NewAuthorizer(roles, nil))
 	return mux

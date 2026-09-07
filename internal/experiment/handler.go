@@ -37,6 +37,9 @@ type HandlerService interface {
 	ListParticipants(ctx context.Context, experimentID uuid.UUID, page, pageSize int32) (ParticipantPage, error)
 	AddParticipants(ctx context.Context, experimentID uuid.UUID, userIDs []uuid.UUID) ([]ParticipantAssignment, error)
 	RemoveParticipant(ctx context.Context, experimentID, userID uuid.UUID) error
+	ListCoursesForActor(ctx context.Context, actorID, experimentID uuid.UUID, page, pageSize int32) (CourseAssignmentPage, error)
+	AddCourses(ctx context.Context, experimentID uuid.UUID, courseIDs []uuid.UUID) ([]CourseAssignment, error)
+	RemoveCourse(ctx context.Context, experimentID, courseID uuid.UUID) error
 	Update(ctx context.Context, id uuid.UUID, params EditableParams) (Record, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status Status) (Record, error)
 }
@@ -71,6 +74,10 @@ type updateExperimentStatusRequest struct {
 
 type addExperimentParticipantsRequest struct {
 	UserIDs []uuid.UUID `json:"userIds" validate:"required,min=1,max=100"`
+}
+
+type addExperimentCoursesRequest struct {
+	CourseIDs []uuid.UUID `json:"courseIds" validate:"required,min=1,max=100"`
 }
 
 type experimentResponse struct {
@@ -125,6 +132,30 @@ type paginatedExperimentParticipantsResponse struct {
 	HasNextPage bool                                      `json:"hasNextPage"`
 }
 
+type assignedCourseResponse struct {
+	ID          uuid.UUID    `json:"id"`
+	Code        string       `json:"code"`
+	Title       string       `json:"title"`
+	Description *string      `json:"description,omitempty"`
+	Status      CourseStatus `json:"status"`
+	CreatedAt   time.Time    `json:"createdAt"`
+	UpdatedAt   time.Time    `json:"updatedAt"`
+}
+
+type experimentCourseAssignmentResponse struct {
+	Course   assignedCourseResponse `json:"course"`
+	LinkedAt time.Time              `json:"linkedAt"`
+}
+
+type paginatedExperimentCoursesResponse struct {
+	Items       []experimentCourseAssignmentResponse `json:"items"`
+	TotalPages  int32                                `json:"totalPages"`
+	TotalItems  int32                                `json:"totalItems"`
+	CurrentPage int32                                `json:"currentPage"`
+	PageSize    int32                                `json:"pageSize"`
+	HasNextPage bool                                 `json:"hasNextPage"`
+}
+
 func NewHandler(service HandlerService, logger *zap.Logger) *Handler {
 	if logger == nil {
 		logger = zap.NewNop()
@@ -157,18 +188,24 @@ func NewHandler(service HandlerService, logger *zap.Logger) *Handler {
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil.Set, authorizer *auth.Authorizer) {
 	managementAccess := middlewares.Append(authorizer.RequireAnyRole(auth.EXPERIMENTER, auth.ADMIN))
-	handle := func(pattern string, fn http.HandlerFunc) {
-		mux.HandleFunc(pattern, managementAccess.HandlerFunc(fn))
+	handle := func(pattern string, set *middlewareutil.Set, fn http.HandlerFunc) {
+		if set != nil {
+			fn = set.HandlerFunc(fn)
+		}
+		mux.HandleFunc(pattern, fn)
 	}
 
-	handle("GET /api/experiments", h.List)
-	handle("POST /api/experiments", h.Create)
-	handle("GET /api/experiments/{id}", h.Get)
-	handle("PUT /api/experiments/{id}", h.Update)
-	handle("PUT /api/experiments/{id}/status", h.UpdateStatus)
-	handle("GET /api/experiments/{id}/participants", h.ListParticipants)
-	handle("POST /api/experiments/{id}/participants", h.AddParticipants)
-	handle("DELETE /api/experiments/{id}/participants/{userId}", h.RemoveParticipant)
+	handle("GET /api/experiments", managementAccess, h.List)
+	handle("POST /api/experiments", managementAccess, h.Create)
+	handle("GET /api/experiments/{id}", managementAccess, h.Get)
+	handle("PUT /api/experiments/{id}", managementAccess, h.Update)
+	handle("PUT /api/experiments/{id}/status", managementAccess, h.UpdateStatus)
+	handle("GET /api/experiments/{id}/participants", managementAccess, h.ListParticipants)
+	handle("POST /api/experiments/{id}/participants", managementAccess, h.AddParticipants)
+	handle("DELETE /api/experiments/{id}/participants/{userId}", managementAccess, h.RemoveParticipant)
+	handle("GET /api/experiments/{id}/courses", middlewares, h.ListCourses)
+	handle("POST /api/experiments/{id}/courses", managementAccess, h.AddCourses)
+	handle("DELETE /api/experiments/{id}/courses/{courseId}", managementAccess, h.RemoveCourse)
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -308,6 +345,90 @@ func (h *Handler) RemoveParticipant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.service.RemoveParticipant(ctx, experimentID, userID); err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) ListCourses(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+	actorID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+	experimentID, err := handlerutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	page, pageSize, err := parseAssignmentPagination(r)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	result, err := h.service.ListCoursesForActor(ctx, actorID, experimentID, page, pageSize)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	items := make([]experimentCourseAssignmentResponse, 0, len(result.Items))
+	for _, assignment := range result.Items {
+		items = append(items, courseAssignmentResponse(assignment))
+	}
+	handlerutil.WriteJSONResponse(w, http.StatusOK, paginatedExperimentCoursesResponse{
+		Items:       items,
+		TotalPages:  result.TotalPages,
+		TotalItems:  result.TotalItems,
+		CurrentPage: result.CurrentPage,
+		PageSize:    result.PageSize,
+		HasNextPage: result.HasNextPage,
+	})
+}
+
+func (h *Handler) AddCourses(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+	experimentID, err := handlerutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	var request addExperimentCoursesRequest
+	if err := handlerutil.ParseAndValidateRequestBody(ctx, h.validator, r, &request); err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+
+	assignments, err := h.service.AddCourses(ctx, experimentID, request.CourseIDs)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	response := make([]experimentCourseAssignmentResponse, 0, len(assignments))
+	for _, assignment := range assignments {
+		response = append(response, courseAssignmentResponse(assignment))
+	}
+	handlerutil.WriteJSONResponse(w, http.StatusOK, response)
+}
+
+func (h *Handler) RemoveCourse(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+	experimentID, err := handlerutil.ParseUUID(r.PathValue("id"))
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	courseID, err := handlerutil.ParseUUID(r.PathValue("courseId"))
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	if err := h.service.RemoveCourse(ctx, experimentID, courseID); err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
 	}
@@ -490,5 +611,13 @@ func participantAssignmentResponse(assignment ParticipantAssignment) experimentP
 			UpdatedAt: participant.UpdatedAt,
 		},
 		AssignedAt: assignment.AssignedAt,
+	}
+}
+
+func courseAssignmentResponse(assignment CourseAssignment) experimentCourseAssignmentResponse {
+	course := assignment.Course
+	return experimentCourseAssignmentResponse{
+		Course:   assignedCourseResponse(course),
+		LinkedAt: assignment.LinkedAt,
 	}
 }

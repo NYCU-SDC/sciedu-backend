@@ -76,6 +76,21 @@ type ParticipantAssignment struct {
 	AssignedAt  time.Time
 }
 
+type AssignedCourse struct {
+	ID          uuid.UUID
+	Code        string
+	Title       string
+	Description *string
+	Status      CourseStatus
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type CourseAssignment struct {
+	Course   AssignedCourse
+	LinkedAt time.Time
+}
+
 type ListFilter struct {
 	Status        *Status
 	ScheduledFrom *time.Time
@@ -201,6 +216,61 @@ func (s *Store) CountParticipants(ctx context.Context, experimentID uuid.UUID) (
 	return s.queries.CountExperimentParticipants(ctx, experimentID)
 }
 
+func (s *Store) ListCourses(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]CourseAssignment, error) {
+	rows, err := s.queries.ListExperimentCourses(ctx, ListExperimentCoursesParams{
+		ExperimentID: experimentID,
+		Limit:        limit,
+		Offset:       offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	assignments := make([]CourseAssignment, 0, len(rows))
+	for _, row := range rows {
+		assignments = append(assignments, courseAssignment(
+			row.ID, row.Code, row.Title, row.Description, row.Status,
+			row.CreatedAt, row.UpdatedAt, row.LinkedAt,
+		))
+	}
+	return assignments, nil
+}
+
+func (s *Store) CountCourses(ctx context.Context, experimentID uuid.UUID) (int64, error) {
+	return s.queries.CountExperimentCourses(ctx, experimentID)
+}
+
+func (s *Store) StudentExperimentAccessible(ctx context.Context, experimentID, studentID uuid.UUID) (bool, error) {
+	return s.queries.StudentExperimentAccessible(ctx, StudentExperimentAccessibleParams{
+		ExperimentID: experimentID,
+		StudentID:    studentID,
+	})
+}
+
+func (s *Store) ListStudentCourses(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]CourseAssignment, error) {
+	rows, err := s.queries.ListStudentExperimentCourses(ctx, ListStudentExperimentCoursesParams{
+		ExperimentID: experimentID,
+		Limit:        limit,
+		Offset:       offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	assignments := make([]CourseAssignment, 0, len(rows))
+	for _, row := range rows {
+		assignments = append(assignments, courseAssignment(
+			row.ID, row.Code, row.Title, row.Description, row.Status,
+			row.CreatedAt, row.UpdatedAt, row.LinkedAt,
+		))
+	}
+	return assignments, nil
+}
+
+func (s *Store) CountStudentCourses(ctx context.Context, experimentID uuid.UUID) (int64, error) {
+	return s.queries.CountStudentExperimentCourses(ctx, experimentID)
+}
+
 func (s *Store) Create(ctx context.Context, params CreateParams) (Record, error) {
 	configuration, err := json.Marshal(params.Configuration)
 	if err != nil {
@@ -262,6 +332,21 @@ func (s *Store) LockParticipantCandidates(ctx context.Context, userIDs []uuid.UU
 	return participants, nil
 }
 
+func (s *Store) LockCourseCandidates(ctx context.Context, courseIDs []uuid.UUID) ([]AssignedCourse, error) {
+	rows, err := s.queries.LockCourseCandidates(ctx, courseIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	courses := make([]AssignedCourse, 0, len(rows))
+	for _, row := range rows {
+		courses = append(courses, assignedCourse(
+			row.ID, row.Code, row.Title, row.Description, row.Status, row.CreatedAt, row.UpdatedAt,
+		))
+	}
+	return courses, nil
+}
+
 func (s *Store) HasParticipantScheduleConflict(
 	ctx context.Context,
 	experimentID uuid.UUID,
@@ -306,6 +391,33 @@ func (s *Store) RemoveParticipant(ctx context.Context, experimentID, userID uuid
 	_, err := s.queries.RemoveExperimentParticipant(ctx, RemoveExperimentParticipantParams{
 		ExperimentID: experimentID,
 		UserID:       userID,
+	})
+	return err
+}
+
+func (s *Store) AddCourses(ctx context.Context, experimentID uuid.UUID, courseIDs []uuid.UUID) ([]CourseAssignment, error) {
+	rows, err := s.queries.AddExperimentCourses(ctx, AddExperimentCoursesParams{
+		ExperimentID: experimentID,
+		CourseIds:    courseIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	assignments := make([]CourseAssignment, 0, len(rows))
+	for _, row := range rows {
+		assignments = append(assignments, courseAssignment(
+			row.ID, row.Code, row.Title, row.Description, row.Status,
+			row.CreatedAt, row.UpdatedAt, row.LinkedAt,
+		))
+	}
+	return assignments, nil
+}
+
+func (s *Store) RemoveCourse(ctx context.Context, experimentID, courseID uuid.UUID) error {
+	_, err := s.queries.RemoveExperimentCourse(ctx, RemoveExperimentCourseParams{
+		ExperimentID: experimentID,
+		CourseID:     courseID,
 	})
 	return err
 }
@@ -451,5 +563,41 @@ func participantAssignment(
 	return ParticipantAssignment{
 		Participant: participantFromFields(id, email, name, avatarURL, roles, nil, createdAt, updatedAt),
 		AssignedAt:  assignedAt.Time,
+	}
+}
+
+func assignedCourse(
+	id uuid.UUID,
+	code string,
+	title string,
+	description pgtype.Text,
+	status CourseStatus,
+	createdAt pgtype.Timestamptz,
+	updatedAt pgtype.Timestamptz,
+) AssignedCourse {
+	return AssignedCourse{
+		ID:          id,
+		Code:        code,
+		Title:       title,
+		Description: textPtr(description),
+		Status:      status,
+		CreatedAt:   createdAt.Time,
+		UpdatedAt:   updatedAt.Time,
+	}
+}
+
+func courseAssignment(
+	id uuid.UUID,
+	code string,
+	title string,
+	description pgtype.Text,
+	status CourseStatus,
+	createdAt pgtype.Timestamptz,
+	updatedAt pgtype.Timestamptz,
+	linkedAt pgtype.Timestamptz,
+) CourseAssignment {
+	return CourseAssignment{
+		Course:   assignedCourse(id, code, title, description, status, createdAt, updatedAt),
+		LinkedAt: linkedAt.Time,
 	}
 }

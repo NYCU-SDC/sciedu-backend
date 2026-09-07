@@ -30,6 +30,14 @@ type fakeRepository struct {
 	scheduleConflict      bool
 	addParticipantsFn     func(ctx context.Context, experimentID uuid.UUID, userIDs []uuid.UUID) ([]ParticipantAssignment, error)
 	removeParticipantFn   func(ctx context.Context, experimentID, userID uuid.UUID) error
+	listCoursesFn         func(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]CourseAssignment, error)
+	countCoursesFn        func(ctx context.Context, experimentID uuid.UUID) (int64, error)
+	studentAccessibleFn   func(ctx context.Context, experimentID, studentID uuid.UUID) (bool, error)
+	listStudentCoursesFn  func(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]CourseAssignment, error)
+	countStudentCoursesFn func(ctx context.Context, experimentID uuid.UUID) (int64, error)
+	courseCandidates      []AssignedCourse
+	addCoursesFn          func(ctx context.Context, experimentID uuid.UUID, courseIDs []uuid.UUID) ([]CourseAssignment, error)
+	removeCourseFn        func(ctx context.Context, experimentID, courseID uuid.UUID) error
 
 	createCalls            int
 	listCalls              int
@@ -100,6 +108,41 @@ func (f *fakeRepository) CountParticipants(ctx context.Context, experimentID uui
 	return 0, nil
 }
 
+func (f *fakeRepository) ListCourses(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]CourseAssignment, error) {
+	if f.listCoursesFn != nil {
+		return f.listCoursesFn(ctx, experimentID, limit, offset)
+	}
+	return nil, nil
+}
+
+func (f *fakeRepository) CountCourses(ctx context.Context, experimentID uuid.UUID) (int64, error) {
+	if f.countCoursesFn != nil {
+		return f.countCoursesFn(ctx, experimentID)
+	}
+	return 0, nil
+}
+
+func (f *fakeRepository) StudentExperimentAccessible(ctx context.Context, experimentID, studentID uuid.UUID) (bool, error) {
+	if f.studentAccessibleFn != nil {
+		return f.studentAccessibleFn(ctx, experimentID, studentID)
+	}
+	return false, nil
+}
+
+func (f *fakeRepository) ListStudentCourses(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]CourseAssignment, error) {
+	if f.listStudentCoursesFn != nil {
+		return f.listStudentCoursesFn(ctx, experimentID, limit, offset)
+	}
+	return nil, nil
+}
+
+func (f *fakeRepository) CountStudentCourses(ctx context.Context, experimentID uuid.UUID) (int64, error) {
+	if f.countStudentCoursesFn != nil {
+		return f.countStudentCoursesFn(ctx, experimentID)
+	}
+	return 0, nil
+}
+
 func (f *fakeRepository) Update(ctx context.Context, params UpdateParams) (Record, error) {
 	f.updateCalls++
 	if f.updateFn != nil {
@@ -120,6 +163,10 @@ func (f *fakeRepository) LockParticipantUsers(context.Context, uuid.UUID) ([]uui
 
 func (f *fakeRepository) LockParticipantCandidates(context.Context, []uuid.UUID) ([]Participant, error) {
 	return f.participantCandidates, nil
+}
+
+func (f *fakeRepository) LockCourseCandidates(context.Context, []uuid.UUID) ([]AssignedCourse, error) {
+	return f.courseCandidates, nil
 }
 
 func (f *fakeRepository) HasParticipantScheduleConflict(
@@ -146,6 +193,20 @@ func (f *fakeRepository) RemoveParticipant(ctx context.Context, experimentID, us
 	f.removeParticipantCalls++
 	if f.removeParticipantFn != nil {
 		return f.removeParticipantFn(ctx, experimentID, userID)
+	}
+	return nil
+}
+
+func (f *fakeRepository) AddCourses(ctx context.Context, experimentID uuid.UUID, courseIDs []uuid.UUID) ([]CourseAssignment, error) {
+	if f.addCoursesFn != nil {
+		return f.addCoursesFn(ctx, experimentID, courseIDs)
+	}
+	return nil, nil
+}
+
+func (f *fakeRepository) RemoveCourse(ctx context.Context, experimentID, courseID uuid.UUID) error {
+	if f.removeCourseFn != nil {
+		return f.removeCourseFn(ctx, experimentID, courseID)
 	}
 	return nil
 }

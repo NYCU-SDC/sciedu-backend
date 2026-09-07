@@ -154,3 +154,90 @@ WHERE experiment_id = sqlc.arg('experiment_id')
 SELECT count(*)
 FROM experiment_courses
 WHERE experiment_id = $1;
+
+-- name: ListExperimentCourses :many
+SELECT c.id,
+       c.code,
+       c.title,
+       c.description,
+       c.status,
+       c.created_at,
+       c.updated_at,
+       ec.linked_at
+FROM experiment_courses ec
+JOIN courses c ON c.id = ec.course_id
+WHERE ec.experiment_id = sqlc.arg('experiment_id')
+ORDER BY ec.linked_at DESC, c.id
+LIMIT sqlc.arg('limit')::int OFFSET sqlc.arg('offset')::bigint;
+
+-- name: StudentExperimentAccessible :one
+SELECT EXISTS (
+    SELECT 1
+    FROM experiments e
+    JOIN experiment_participants ep ON ep.experiment_id = e.id
+    WHERE e.id = sqlc.arg('experiment_id')
+      AND ep.user_id = sqlc.arg('student_id')
+      AND e.status = 'ACTIVE'
+      AND e.scheduled_start_at <= CURRENT_TIMESTAMP
+      AND CURRENT_TIMESTAMP < e.scheduled_end_at
+);
+
+-- name: ListStudentExperimentCourses :many
+SELECT c.id,
+       c.code,
+       c.title,
+       c.description,
+       c.status,
+       c.created_at,
+       c.updated_at,
+       ec.linked_at
+FROM experiment_courses ec
+JOIN courses c ON c.id = ec.course_id
+WHERE ec.experiment_id = sqlc.arg('experiment_id')
+  AND c.status = 'PUBLISHED'
+ORDER BY ec.linked_at DESC, c.id
+LIMIT sqlc.arg('limit')::int OFFSET sqlc.arg('offset')::bigint;
+
+-- name: CountStudentExperimentCourses :one
+SELECT count(*)
+FROM experiment_courses ec
+JOIN courses c ON c.id = ec.course_id
+WHERE ec.experiment_id = $1
+  AND c.status = 'PUBLISHED';
+
+-- name: LockCourseCandidates :many
+SELECT id,
+       code,
+       title,
+       description,
+       status,
+       created_at,
+       updated_at
+FROM courses
+WHERE id = ANY(sqlc.arg('course_ids')::uuid[])
+ORDER BY id
+FOR UPDATE;
+
+-- name: AddExperimentCourses :many
+WITH inserted AS (
+    INSERT INTO experiment_courses (experiment_id, course_id)
+    SELECT sqlc.arg('experiment_id'), requested.course_id
+    FROM unnest(sqlc.arg('course_ids')::uuid[]) AS requested(course_id)
+    RETURNING course_id, linked_at
+)
+SELECT c.id,
+       c.code,
+       c.title,
+       c.description,
+       c.status,
+       c.created_at,
+       c.updated_at,
+       inserted.linked_at
+FROM inserted
+JOIN courses c ON c.id = inserted.course_id
+ORDER BY c.id;
+
+-- name: RemoveExperimentCourse :execrows
+DELETE FROM experiment_courses
+WHERE experiment_id = sqlc.arg('experiment_id')
+  AND course_id = sqlc.arg('course_id');
