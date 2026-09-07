@@ -32,15 +32,19 @@ func (q experimentIntegrationRoleQuerier) ActiveUserRoles(context.Context, uuid.
 }
 
 func newExperimentAPI(t *testing.T, pool *pgxpool.Pool, actorID uuid.UUID) *http.ServeMux {
+	return newExperimentAPIWithRoles(t, pool, actorID, []auth.Role{auth.EXPERIMENTER})
+}
+
+func newExperimentAPIWithRoles(t *testing.T, pool *pgxpool.Pool, actorID uuid.UUID, actorRoles []auth.Role) *http.ServeMux {
 	t.Helper()
 
-	roles := experimentIntegrationRoleQuerier{roles: []auth.Role{auth.EXPERIMENTER}}
+	roles := experimentIntegrationRoleQuerier{roles: actorRoles}
 	set := middlewareutil.NewSet(func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			next(w, r.WithContext(auth.ContextWithUserID(r.Context(), actorID)))
 		}
 	})
-	handler := NewHandler(NewService(NewStore(pool), zap.NewNop()), zap.NewNop())
+	handler := NewHandler(NewServiceWithRoles(NewStore(pool), roles, zap.NewNop()), zap.NewNop())
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux, set, auth.NewAuthorizer(roles, nil))
 	return mux
@@ -131,6 +135,30 @@ func addExperimentCounts(t *testing.T, pool *pgxpool.Pool, experimentID uuid.UUI
 		//nolint:errcheck // experiment cleanup cascades assignment rows
 		pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", participantID)
 	})
+}
+
+func seedExperimentForUpdate(
+	t *testing.T,
+	pool *pgxpool.Pool,
+	actorID uuid.UUID,
+	status Status,
+	name string,
+	start time.Time,
+	end time.Time,
+	configuration Configuration,
+) uuid.UUID {
+	t.Helper()
+
+	configurationJSON, err := json.Marshal(configuration)
+	require.NoError(t, err)
+	var experimentID uuid.UUID
+	require.NoError(t, pool.QueryRow(t.Context(), `
+		INSERT INTO experiments (
+			created_by, name, description, configuration, status, scheduled_start_at, scheduled_end_at
+		) VALUES ($1, $2, '', $3::jsonb, $4::experiment_status, $5, $6)
+		RETURNING id
+	`, actorID, name, configurationJSON, status, start, end).Scan(&experimentID))
+	return experimentID
 }
 
 func TestAPIExperimentLifecycleAndList(t *testing.T) {
@@ -274,4 +302,104 @@ func TestAPIExperimentMissingResourcesReturnNotFound(t *testing.T) {
 			assert.Equal(t, http.StatusNotFound, code, fmt.Sprintf("response body: %s", body))
 		})
 	}
+}
+
+func TestAPIExperimentUpdateLifecyclePolicy(t *testing.T) {
+	pool := newExperimentIntegrationPool(t)
+	actorID := seedExperimentAPIActor(t, pool)
+	mux := newExperimentAPI(t, pool, actorID)
+	start := time.Date(2026, time.September, 10, 9, 0, 0, 0, time.UTC)
+	configuration := Configuration{
+		MaxAttempts:              1,
+		AllowRetry:               false,
+		ShowScore:                true,
+		ShowExplanations:         false,
+		GradingMode:              GradingModeAutomatic,
+		CorrectAnswerReleaseMode: CorrectAnswerReleaseNever,
+	}
+
+	tests := []struct {
+		name           string
+		status         Status
+		requestName    string
+		requestEnd     time.Time
+		wantCode       int
+		wantStoredName string
+		wantStoredEnd  time.Time
+	}{
+		{name: "draft fully editable", status: StatusDraft, requestName: "Draft updated", requestEnd: start.Add(2 * time.Hour), wantCode: http.StatusOK, wantStoredName: "Draft updated", wantStoredEnd: start.Add(2 * time.Hour)},
+		{name: "scheduled fully editable", status: StatusScheduled, requestName: "Scheduled updated", requestEnd: start.Add(2 * time.Hour), wantCode: http.StatusOK, wantStoredName: "Scheduled updated", wantStoredEnd: start.Add(2 * time.Hour)},
+		{name: "active identical retry", status: StatusActive, requestName: "Original", requestEnd: start.Add(time.Hour), wantCode: http.StatusOK, wantStoredName: "Original", wantStoredEnd: start.Add(time.Hour)},
+		{name: "active end extension", status: StatusActive, requestName: "Original", requestEnd: start.Add(2 * time.Hour), wantCode: http.StatusOK, wantStoredName: "Original", wantStoredEnd: start.Add(2 * time.Hour)},
+		{name: "active name change rejected", status: StatusActive, requestName: "Changed", requestEnd: start.Add(time.Hour), wantCode: http.StatusConflict, wantStoredName: "Original", wantStoredEnd: start.Add(time.Hour)},
+		{name: "active shorter end rejected", status: StatusActive, requestName: "Original", requestEnd: start.Add(30 * time.Minute), wantCode: http.StatusConflict, wantStoredName: "Original", wantStoredEnd: start.Add(time.Hour)},
+		{name: "completed rejected", status: StatusCompleted, requestName: "Original", requestEnd: start.Add(time.Hour), wantCode: http.StatusConflict, wantStoredName: "Original", wantStoredEnd: start.Add(time.Hour)},
+		{name: "archived rejected", status: StatusArchived, requestName: "Original", requestEnd: start.Add(time.Hour), wantCode: http.StatusConflict, wantStoredName: "Original", wantStoredEnd: start.Add(time.Hour)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			experimentID := seedExperimentForUpdate(t, pool, actorID, tt.status, "Original", start, start.Add(time.Hour), configuration)
+			code, body := callExperimentAPI(t, mux, http.MethodPut, "/api/experiments/"+experimentID.String(), experimentRequestBody(
+				t, tt.requestName, "", start, tt.requestEnd, configuration,
+			))
+			require.Equal(t, tt.wantCode, code, "response body: %s", body)
+
+			var storedName string
+			var storedEnd time.Time
+			require.NoError(t, pool.QueryRow(t.Context(), `
+				SELECT name, scheduled_end_at FROM experiments WHERE id = $1
+			`, experimentID).Scan(&storedName, &storedEnd))
+			assert.Equal(t, tt.wantStoredName, storedName)
+			assert.True(t, tt.wantStoredEnd.Equal(storedEnd))
+		})
+	}
+}
+
+func TestAPIExperimentScheduleUpdateEnforcesParticipantOverlap(t *testing.T) {
+	pool := newExperimentIntegrationPool(t)
+	actorID := seedExperimentAPIActor(t, pool)
+	mux := newExperimentAPI(t, pool, actorID)
+	configuration := Configuration{
+		MaxAttempts:              1,
+		GradingMode:              GradingModeAutomatic,
+		CorrectAnswerReleaseMode: CorrectAnswerReleaseNever,
+	}
+	participantID := uuid.New()
+	_, err := pool.Exec(t.Context(), `
+		INSERT INTO users (id, email, name, roles)
+		VALUES ($1, $2, $3, ARRAY['STUDENT']::user_role[])
+	`, participantID, "schedule-overlap-"+participantID.String()+"@example.test", "Schedule overlap participant")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		//nolint:errcheck // best-effort cleanup for an isolated integration fixture
+		pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", participantID)
+	})
+
+	targetStart := time.Date(2026, time.September, 10, 8, 0, 0, 0, time.UTC)
+	otherStart := time.Date(2026, time.September, 10, 10, 0, 0, 0, time.UTC)
+	targetID := seedExperimentForUpdate(t, pool, actorID, StatusDraft, "Target", targetStart, targetStart.Add(time.Hour), configuration)
+	otherID := seedExperimentForUpdate(t, pool, actorID, StatusCompleted, "Reserved", otherStart, otherStart.Add(time.Hour), configuration)
+	_, err = pool.Exec(t.Context(), `
+		INSERT INTO experiment_participants (experiment_id, user_id)
+		VALUES ($1, $3), ($2, $3)
+	`, targetID, otherID, participantID)
+	require.NoError(t, err)
+
+	code, body := callExperimentAPI(t, mux, http.MethodPut, "/api/experiments/"+targetID.String(), experimentRequestBody(
+		t, "Target", "", otherStart.Add(-30*time.Minute), otherStart.Add(30*time.Minute), configuration,
+	))
+	require.Equal(t, http.StatusConflict, code, "response body: %s", body)
+
+	var storedStart, storedEnd time.Time
+	require.NoError(t, pool.QueryRow(t.Context(), `
+		SELECT scheduled_start_at, scheduled_end_at FROM experiments WHERE id = $1
+	`, targetID).Scan(&storedStart, &storedEnd))
+	assert.True(t, targetStart.Equal(storedStart))
+	assert.True(t, targetStart.Add(time.Hour).Equal(storedEnd))
+
+	code, body = callExperimentAPI(t, mux, http.MethodPut, "/api/experiments/"+targetID.String(), experimentRequestBody(
+		t, "Target", "", otherStart.Add(-time.Hour), otherStart, configuration,
+	))
+	require.Equal(t, http.StatusOK, code, "response body: %s", body)
 }
