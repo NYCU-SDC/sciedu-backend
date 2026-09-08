@@ -24,6 +24,7 @@ services:
       - AUTH_REDIRECT_ALLOWLIST=https://dev.sciedu.sdc.nycu.club,http://localhost:8080,http://localhost:5173,http://localhost:3000
       - AUTH_REDIRECT_PREVIEW_DOMAIN=sciedu.sdc.nycu.club
       - ALLOW_ORIGINS=*.sciedu.sdc.nycu.club,http://localhost:5173,http://localhost:3000
+      - AUTH_BOOTSTRAP_ADMIN_EMAIL=hsien.eason@gmail.com
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.sciedu-backend-dev.rule=Host(`dev.sciedu.sdc.nycu.club`) && PathPrefix(`/api`)"
