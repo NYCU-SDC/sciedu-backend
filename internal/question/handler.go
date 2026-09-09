@@ -467,16 +467,17 @@ func (h *Handler) ListAnswers(w http.ResponseWriter, r *http.Request) {
 }
 
 func parseAnswerListInput(r *http.Request) (AnswerListInput, error) {
-	experimentID, err := handlerutil.ParseUUID(r.URL.Query().Get("experimentId"))
+	query := r.URL.Query()
+	experimentID, err := handlerutil.ParseUUID(query.Get("experimentId"))
 	if err != nil {
 		return AnswerListInput{}, fmt.Errorf("%w: experimentId is required and must be a UUID", errInvalidAnswerPayload)
 	}
 
 	parse := func(name string, defaultValue int32) (int32, error) {
-		raw := r.URL.Query().Get(name)
-		if raw == "" {
+		if !query.Has(name) {
 			return defaultValue, nil
 		}
+		raw := query.Get(name)
 		value, err := strconv.ParseInt(raw, 10, 32)
 		if err != nil {
 			return 0, fmt.Errorf("%w: %s must be an integer", errInvalidAnswerPayload, name)

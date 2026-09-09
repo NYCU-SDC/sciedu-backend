@@ -623,3 +623,10 @@
 ### Readiness
 - No confirmed implementation blocker remains. Production PostgreSQL deployment must apply migrations 16 through 19 in order; migration 18 intentionally clears legacy Answers under the maintainer-approved provenance strategy.
 - Existing explicitly documented provisional TEXT/MANUAL method and resultVisible projection semantics remain known contract limitations, not newly introduced blockers.
+
+## [2026-09-05] Answer pagination review fix
+
+### Changes and verification
+- Updated internal/question/handler.go so Answer management-list pagination uses URL query presence, matching Course and Experiment: absent page/pageSize use 1/20; present empty values are parsed and rejected.
+- Updated the production handler table test to verify omitted defaults, empty page/pageSize returning 400, and non-integer page/pageSize returning 400.
+- No service, SQL, schema, migration, grading, visibility, submission, or result behavior changed.

@@ -978,8 +978,15 @@ func TestHandlerListAnswers_TableDriven(t *testing.T) {
 			},
 		},
 		{
-			name:       "no answers returns empty paginated items",
-			querier:    &fakeQuerier{},
+			name: "omitted pagination uses defaults",
+			querier: &fakeQuerier{
+				listAnswersFn: func(_ context.Context, arg ListAnswersByQuestionAndExperimentPageParams) ([]ListAnswersByQuestionAndExperimentPageRow, error) {
+					if arg.PageOffset != 0 || arg.PageSize != 20 {
+						t.Errorf("unexpected default pagination params: %+v", arg)
+					}
+					return nil, nil
+				},
+			},
 			wantStatus: http.StatusOK,
 			assertBody: func(t *testing.T, body map[string]any) {
 				t.Helper()
@@ -1003,7 +1010,10 @@ func TestHandlerListAnswers_TableDriven(t *testing.T) {
 		},
 		{name: "rejects invalid page", query: "?page=0", querier: &fakeQuerier{}, wantStatus: http.StatusBadRequest},
 		{name: "rejects excessive page size", query: "?pageSize=101", querier: &fakeQuerier{}, wantStatus: http.StatusBadRequest},
-		{name: "rejects non integer pagination", query: "?page=x", querier: &fakeQuerier{}, wantStatus: http.StatusBadRequest},
+		{name: "rejects empty page", query: "?page=", querier: &fakeQuerier{}, wantStatus: http.StatusBadRequest},
+		{name: "rejects empty page size", query: "?pageSize=", querier: &fakeQuerier{}, wantStatus: http.StatusBadRequest},
+		{name: "rejects non integer page", query: "?page=x", querier: &fakeQuerier{}, wantStatus: http.StatusBadRequest},
+		{name: "rejects non integer page size", query: "?pageSize=x", querier: &fakeQuerier{}, wantStatus: http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
