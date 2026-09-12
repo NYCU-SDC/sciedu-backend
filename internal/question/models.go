@@ -265,6 +265,17 @@ type PageBlock struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type PageVisit struct {
+	ID              uuid.UUID
+	StudentID       uuid.UUID
+	CourseID        uuid.UUID
+	PageID          uuid.UUID
+	ClientSessionID uuid.UUID
+	IdempotencyKey  uuid.UUID
+	EnteredAt       pgtype.Timestamptz
+	LeftAt          pgtype.Timestamptz
+}
+
 type Question struct {
 	ID        uuid.UUID
 	Content   string
