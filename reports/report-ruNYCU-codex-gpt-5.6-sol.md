@@ -203,3 +203,137 @@
 
 ### Issues & Blockers
 - None.
+
+## [2026-09-12 15:45] Task Record
+
+### Task Description
+- Implement the first SCIEDU-121 phase: PageVisit persistence, database invariants, sqlc queries, transaction store scaffolding, and PostgreSQL integration coverage without HTTP/service orchestration.
+
+### Actions Taken
+- Added migration 15 and matching `internal/pagevisit/schema.sql` for PageVisit persistence.
+- Added student-scoped idempotency uniqueness, one-open-visit-per-student/session uniqueness, timestamp ordering validation, cascade foreign keys, and list/filter indexes.
+- Added sqlc queries for student locking, idempotency lookup, ownership lookup, current-open lookup, close/create/leave operations, and filtered list/count operations.
+- Added `pagevisit.Store.WithinTx` for later atomic enter orchestration.
+- Generated sqlc code with sqlc v1.30.0; generated shared model files now include `PageVisit`.
+- Added integration tests for uniqueness/check constraints, reopening after close, Page cascade deletion, transaction rollback, list/count filtering, and newest-first ordering.
+
+### Attempted Methods
+- The first schema-generation invocation used `bash`/`sqlc` directly from PowerShell, but neither command was on PATH.
+- Calling Git Bash normally selected Windows `find.exe`, causing the merge script to report no schemas. Running Git Bash with its `/usr/bin:/bin` PATH fixed this.
+- Used `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate` because no standalone sqlc executable was installed.
+- The first Go verification used the default Windows Go cache and failed with sandbox access-denied errors. Re-running with a workspace-local temporary `GOCACHE` succeeded.
+
+### Verification
+- `go test ./...` passed.
+- `go test -tags integration ./internal/pagevisit -count=1 -v` compiled and passed, but all database tests were skipped because `PAGE_VISIT_INTEGRATION_DATABASE_URL` was not set.
+- `go vet ./...` passed.
+- `go build ./...` passed.
+- `git diff --check` passed.
+
+### Issues & Blockers
+- Real PostgreSQL assertions still require migration 15 to be applied to a disposable database and `PAGE_VISIT_INTEGRATION_DATABASE_URL` to be set.
+- `internal/pagevisit/queries.sql.go` matches the repository's ignored generated-file pattern and must be force-included when the human stages the new package.
+- No ACTIVE Experiment/Page access behavior was selected or implemented in this phase.
+
+### Next Steps
+- Implement service orchestration for server timestamps, replay/conflict handling, automatic close plus create in one transaction, and idempotent leave.
+- Add handlers/RBAC/list pagination only after persistence integration verification and without duplicating Course/Page authorization SQL.
+
+## [2026-09-12 16:14] Task Record
+
+### Task Description
+- Implement SCIEDU-121 Phase 2 core PageVisit enter/leave orchestration without HTTP handlers, RBAC, list parsing, or ACTIVE Experiment access rules.
+
+### Actions Taken
+- Added a consumer-owned transaction repository interface and changed `Store.WithinTx` to expose that interface instead of generated `*Queries`.
+- Added `Service.Enter` with student-row serialization, pre-mutation idempotency lookup, one server timestamp, automatic close, atomic create, replay, and conflict behavior.
+- Added `Service.Leave` with ownership-scoped lookup, server timestamp generation only for OPEN visits, and idempotent preservation of an existing `left_at`.
+- Added `ErrNotFound` and `ErrIdempotencyConflict` domain errors for later HTTP mapping.
+- Added table-driven fake-transaction tests for enter, replay, conflict, rollback, leave, ownership hiding, and timestamp behavior.
+- Added PostgreSQL integration tests for concurrent same-key requests, conflicting replay, same-session enters, enter/leave, and double leave.
+
+### Attempted Methods
+- Initial focused compilation found a duplicated helper introduced while patching `service.go`; removed the duplicate and reran the suite successfully.
+- Used a workspace-local Go build cache because the sandbox cannot reliably write the default Windows Go cache.
+
+### Verification
+- `go test ./internal/pagevisit` passed.
+- `go test ./...` passed.
+- `go vet ./...` passed.
+- `go build ./...` passed.
+- `git diff --check` passed.
+- `go test -tags integration ./internal/pagevisit -count=1 -v`: all non-DB service tests passed; PostgreSQL tests compiled but skipped because `PAGE_VISIT_INTEGRATION_DATABASE_URL` was not set.
+- `staticcheck` and `golangci-lint` were not installed, so they were not run.
+
+### Issues & Blockers
+- Real PostgreSQL concurrency verification remains pending a disposable database with migration 15 and `PAGE_VISIT_INTEGRATION_DATABASE_URL`.
+- No HTTP routes, RBAC, list request parsing, or Page/Experiment access decision was added; those remain Phase 3 scope.
+
+### Next Steps
+- Map domain errors to API responses and implement the merged contract's enter, leave, and management-list handlers in Phase 3.
+
+## [2026-09-12 17:28] Task Record
+
+### Task Description
+- Implement SCIEDU-121 Phase 3 HTTP handlers, authentication/RBAC, strict request/query parsing, pagination, API DTOs, error mapping, and production wiring.
+
+### Actions Taken
+- Added `POST /api/page-visits`, `POST /api/page-visits/{id}/leave`, and `GET /api/page-visits` routes.
+- Added STUDENT role gates for enter/leave and EXPERIMENTER/ADMIN role gates for management listing.
+- Added strict create-body decoding, required UUID Idempotency-Key parsing, authenticated Student identity propagation, and read-only response DTO projection.
+- Added strict optional filter parsing with `query.Has`, RFC3339 timestamps, OPEN/CLOSED validation, and page/pageSize validation.
+- Added PageVisit list service pagination over existing generated list/count queries.
+- Added Summer ProblemDetail mapping for validation, not-found, idempotency conflict, and unexpected errors.
+- Wired PageVisit Store, Service, and Handler in `cmd/backend/main.go`.
+- Added table-driven handler, route authorization, parsing, response-shape, and service-list tests.
+
+### Attempted Methods
+- Initial compilation exposed a naming collision between the PageVisit pagination result and sqlc's generated `Page` model. Renamed the pagination result to `VisitPage` without changing behavior.
+
+### Verification
+- `go test ./internal/pagevisit` passed.
+- `go test ./...` passed.
+- `go vet ./...` passed.
+- `go build ./...` passed.
+- `git diff --check` passed.
+- `staticcheck` and `golangci-lint` were not installed.
+
+### Issues & Blockers
+- No confirmed Phase 3 implementation blocker.
+- ACTIVE Experiment/Page access validation remains intentionally outside scope.
+- Handler-level tests use fakes; a final production-route PostgreSQL smoke/integration pass remains appropriate before PR.
+
+### Next Steps
+- Perform final diff/spec review, run real HTTP/database route tests if required, and ensure ignored generated `internal/pagevisit/queries.sql.go` is force-included when staging.
+
+## [2026-09-12 21:12] Task Record
+
+### Task Description
+- Resolve the final SCIEDU-121 pre-PR issues: map missing or mismatched Course/Page targets to 404 through the production service/repository path, remove an unnecessary large-offset restriction, and record final PostgreSQL verification.
+
+### Actions Taken
+- Added `LockPageVisitTarget`, which validates and locks the persisted Page-to-Course relationship without adding Experiment or access-policy behavior.
+- Added the target check to the enter transaction after idempotency replay lookup and before the server clock, automatic close, or create operations; missing/mismatched targets return `ErrNotFound`, while query failures remain unexpected errors.
+- Removed the `math.MaxInt32` offset restriction while retaining validated `int32` page inputs and overflow-safe `int64` offset arithmetic.
+- Regenerated sqlc with v1.30.0.
+- Added service tests for missing targets, unexpected target-query errors, and the largest valid page value.
+- Added real PostgreSQL service/repository tests for missing Course, missing Page, and a Page belonging to another Course.
+- Previously corrected the integration fixture role array to `ARRAY['STUDENT']::user_role[]`.
+
+### Attempted Methods
+- The first sqlc invocation could not access `proxy.golang.org` from the sandbox; rerunning the same pinned generator with approved network access succeeded.
+- The first focused Go test could not write the default Windows Go build cache; subsequent checks used the workspace-local Go cache.
+
+### Verification
+- Migrations through 15 were already applied successfully to the disposable `sciedu_pagevisit_test` database.
+- `go test -tags integration ./internal/pagevisit -count=1 -v` passed against that database with 0 failures and 0 skipped PostgreSQL tests.
+- PostgreSQL-backed groups: 9 passed, 0 failed, 0 skipped; all 5 concurrency groups executed and passed.
+- No deadlock, serialization failure, or unexpected constraint failure was observed.
+- `go test ./internal/pagevisit`, `go test ./...`, `go vet ./...`, `go build ./...`, and `git diff --check` passed.
+
+### Issues & Blockers
+- `internal/pagevisit/queries.sql.go` remains ignored by the repository-wide generated-file pattern and must be force-added when staging.
+- No ACTIVE Experiment/Page access rule was added because it is not required by the merged PageVisit contract.
+
+### Next Steps
+- Stage the ignored generated PageVisit query file explicitly before commit.
