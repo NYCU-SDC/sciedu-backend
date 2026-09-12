@@ -91,12 +91,34 @@ type UpdateParams struct {
 	ID uuid.UUID
 }
 
+type Participant struct {
+	ID        uuid.UUID
+	Email     string
+	Name      string
+	AvatarURL *string
+	Roles     []string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type ParticipantAssignment struct {
+	Participant Participant
+	AssignedAt  time.Time
+}
+
+type ParticipantListParams struct {
+	ExperimentID uuid.UUID
+	Limit        int32
+	Offset       int64
+}
+
 type Store struct {
+	pool    *pgxpool.Pool
 	queries *Queries
 }
 
 func NewStore(pool *pgxpool.Pool) *Store {
-	return &Store{queries: New(pool)}
+	return &Store{pool: pool, queries: New(pool)}
 }
 
 func (s *Store) List(ctx context.Context, params ListParams) ([]Record, error) {
@@ -189,6 +211,136 @@ func (s *Store) UpdateStatus(ctx context.Context, id uuid.UUID, status Status) (
 	return s.withCounts(ctx, row)
 }
 
+func (s *Store) ListParticipants(
+	ctx context.Context,
+	params ParticipantListParams,
+) ([]ParticipantAssignment, int64, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	q := s.queries.WithTx(tx)
+	if _, err := q.LockExperimentForParticipantRead(ctx, params.ExperimentID); err != nil {
+		return nil, 0, err
+	}
+	rows, err := q.ListExperimentParticipants(ctx, ListExperimentParticipantsParams{
+		ExperimentID: params.ExperimentID,
+		Limit:        params.Limit,
+		Offset:       params.Offset,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	total, err := q.CountExperimentParticipants(ctx, params.ExperimentID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, 0, err
+	}
+
+	assignments := make([]ParticipantAssignment, 0, len(rows))
+	for _, row := range rows {
+		assignments = append(assignments, participantAssignment(
+			row.ID,
+			row.Email,
+			row.Name,
+			row.AvatarUrl,
+			row.Roles,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.AssignedAt,
+		))
+	}
+	return assignments, total, nil
+}
+
+func (s *Store) AddParticipants(
+	ctx context.Context,
+	experimentID uuid.UUID,
+	userIDs []uuid.UUID,
+) ([]ParticipantAssignment, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	q := s.queries.WithTx(tx)
+	schedule, err := q.LockExperimentForParticipantWrite(ctx, experimentID)
+	if err != nil {
+		return nil, err
+	}
+	users, err := q.LockActiveParticipantUsers(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	if len(users) != len(userIDs) {
+		return nil, fmt.Errorf("%w: one or more users do not exist or are disabled", errExperimentParticipantConflict)
+	}
+
+	conflicts, err := q.ConflictingExperimentParticipantIDs(ctx, ConflictingExperimentParticipantIDsParams{
+		UserIds:          userIDs,
+		ExperimentID:     experimentID,
+		ScheduledEndAt:   schedule.ScheduledEndAt,
+		ScheduledStartAt: schedule.ScheduledStartAt,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(conflicts) > 0 {
+		return nil, fmt.Errorf("%w: one or more users already have an overlapping assignment", errExperimentParticipantConflict)
+	}
+
+	rows, err := q.InsertExperimentParticipants(ctx, InsertExperimentParticipantsParams{
+		UserIds:      userIDs,
+		ExperimentID: experimentID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+
+	assignments := make([]ParticipantAssignment, 0, len(rows))
+	for _, row := range rows {
+		assignments = append(assignments, participantAssignment(
+			row.ID,
+			row.Email,
+			row.Name,
+			row.AvatarUrl,
+			row.Roles,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.AssignedAt,
+		))
+	}
+	return assignments, nil
+}
+
+func (s *Store) RemoveParticipant(ctx context.Context, experimentID, userID uuid.UUID) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	q := s.queries.WithTx(tx)
+	if _, err := q.LockExperimentForParticipantWrite(ctx, experimentID); err != nil {
+		return err
+	}
+	if _, err := q.DeleteExperimentParticipant(ctx, DeleteExperimentParticipantParams{
+		ExperimentID: experimentID,
+		UserID:       userID,
+	}); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) withCounts(ctx context.Context, row Experiment) (Record, error) {
 	record, err := recordFromRow(row)
 	if err != nil {
@@ -256,4 +408,28 @@ func textPtr(value pgtype.Text) *string {
 		return nil
 	}
 	return &value.String
+}
+
+func participantAssignment(
+	id uuid.UUID,
+	email string,
+	name string,
+	avatarURL pgtype.Text,
+	roles []string,
+	createdAt pgtype.Timestamptz,
+	updatedAt pgtype.Timestamptz,
+	assignedAt pgtype.Timestamptz,
+) ParticipantAssignment {
+	return ParticipantAssignment{
+		Participant: Participant{
+			ID:        id,
+			Email:     email,
+			Name:      name,
+			AvatarURL: textPtr(avatarURL),
+			Roles:     roles,
+			CreatedAt: createdAt.Time,
+			UpdatedAt: updatedAt.Time,
+		},
+		AssignedAt: assignedAt.Time,
+	}
 }

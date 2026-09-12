@@ -275,3 +275,224 @@ func TestAPIExperimentMissingResourcesReturnNotFound(t *testing.T) {
 		})
 	}
 }
+
+func TestAPIParticipantLifecycle(t *testing.T) {
+	pool := newExperimentIntegrationPool(t)
+	actorID := seedExperimentAPIActor(t, pool)
+	mux := newExperimentAPI(t, pool, actorID)
+	participantIDs := seedParticipantUsers(t, pool, 2)
+	start := time.Date(2026, time.September, 10, 1, 0, 0, 0, time.UTC)
+	experimentID := createExperimentViaAPI(t, mux, "Participant lifecycle", start, start.Add(2*time.Hour))
+
+	requestBody, err := json.Marshal(map[string]any{"userIds": participantIDs})
+	require.NoError(t, err)
+	code, body := callExperimentAPI(
+		t,
+		mux,
+		http.MethodPost,
+		"/api/experiments/"+experimentID.String()+"/participants",
+		string(requestBody),
+	)
+	require.Equal(t, http.StatusOK, code, "response body: %s", body)
+	var added []participantAssignmentResponse
+	require.NoError(t, json.Unmarshal(body, &added))
+	require.Len(t, added, 2)
+	assert.Equal(t, participantIDs[0], added[0].Participant.ID)
+	assert.Equal(t, participantIDs[1], added[1].Participant.ID)
+	assert.Equal(t, []string{"STUDENT"}, added[0].Participant.Roles)
+
+	query := url.Values{"page": {"1"}, "pageSize": {"1"}}
+	code, body = callExperimentAPI(
+		t,
+		mux,
+		http.MethodGet,
+		"/api/experiments/"+experimentID.String()+"/participants?"+query.Encode(),
+		"",
+	)
+	require.Equal(t, http.StatusOK, code, "response body: %s", body)
+	var page paginatedExperimentParticipantsResponse
+	require.NoError(t, json.Unmarshal(body, &page))
+	assert.Len(t, page.Items, 1)
+	assert.Equal(t, int32(2), page.TotalItems)
+	assert.Equal(t, int32(2), page.TotalPages)
+	assert.True(t, page.HasNextPage)
+
+	deletePath := "/api/experiments/" + experimentID.String() + "/participants/" + participantIDs[0].String()
+	code, body = callExperimentAPI(t, mux, http.MethodDelete, deletePath, "")
+	require.Equal(t, http.StatusNoContent, code, "response body: %s", body)
+	code, body = callExperimentAPI(t, mux, http.MethodDelete, deletePath, "")
+	require.Equal(t, http.StatusNoContent, code, "repeated deletion must be idempotent: %s", body)
+
+	code, body = callExperimentAPI(
+		t,
+		mux,
+		http.MethodGet,
+		"/api/experiments/"+experimentID.String()+"/participants",
+		"",
+	)
+	require.Equal(t, http.StatusOK, code, "response body: %s", body)
+	require.NoError(t, json.Unmarshal(body, &page))
+	assert.Equal(t, int32(1), page.TotalItems)
+	assert.Equal(t, participantIDs[1], page.Items[0].Participant.ID)
+}
+
+func TestAPIAddParticipantsRejectsConflictsAtomically(t *testing.T) {
+	pool := newExperimentIntegrationPool(t)
+	actorID := seedExperimentAPIActor(t, pool)
+	mux := newExperimentAPI(t, pool, actorID)
+	participantIDs := seedParticipantUsers(t, pool, 2)
+	missingUserID := uuid.New()
+	start := time.Date(2026, time.September, 11, 1, 0, 0, 0, time.UTC)
+	firstExperimentID := createExperimentViaAPI(t, mux, "First assignment", start, start.Add(2*time.Hour))
+	overlappingExperimentID := createExperimentViaAPI(t, mux, "Overlapping assignment", start.Add(time.Hour), start.Add(3*time.Hour))
+	adjacentExperimentID := createExperimentViaAPI(t, mux, "Adjacent assignment", start.Add(2*time.Hour), start.Add(4*time.Hour))
+
+	addParticipantsViaAPI(t, mux, firstExperimentID, []uuid.UUID{participantIDs[0]}, http.StatusOK)
+
+	tests := []struct {
+		name         string
+		experimentID uuid.UUID
+		userIDs      []uuid.UUID
+		wantCount    int
+	}{
+		{
+			name:         "existing assignment rolls back new user",
+			experimentID: firstExperimentID,
+			userIDs:      participantIDs,
+			wantCount:    1,
+		},
+		{
+			name:         "overlap rolls back every requested assignment",
+			experimentID: overlappingExperimentID,
+			userIDs:      participantIDs,
+		},
+		{
+			name:         "missing user rolls back valid user",
+			experimentID: adjacentExperimentID,
+			userIDs:      []uuid.UUID{participantIDs[1], missingUserID},
+		},
+		{
+			name:         "duplicate request IDs conflict",
+			experimentID: adjacentExperimentID,
+			userIDs:      []uuid.UUID{participantIDs[1], participantIDs[1]},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			addParticipantsViaAPI(t, mux, tt.experimentID, tt.userIDs, http.StatusConflict)
+			assertExperimentParticipantCount(t, pool, tt.experimentID, tt.wantCount)
+		})
+	}
+
+	addParticipantsViaAPI(t, mux, adjacentExperimentID, []uuid.UUID{participantIDs[0]}, http.StatusOK)
+	assertExperimentParticipantCount(t, pool, adjacentExperimentID, 1)
+}
+
+func TestAPIParticipantOperationsReturnExperimentNotFound(t *testing.T) {
+	pool := newExperimentIntegrationPool(t)
+	actorID := seedExperimentAPIActor(t, pool)
+	mux := newExperimentAPI(t, pool, actorID)
+	missingExperimentID := uuid.New()
+	participantID := uuid.New()
+	requestBody, err := json.Marshal(map[string]any{"userIds": []uuid.UUID{participantID}})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		body   string
+	}{
+		{name: "list", method: http.MethodGet, path: "/api/experiments/" + missingExperimentID.String() + "/participants"},
+		{name: "add", method: http.MethodPost, path: "/api/experiments/" + missingExperimentID.String() + "/participants", body: string(requestBody)},
+		{name: "remove", method: http.MethodDelete, path: "/api/experiments/" + missingExperimentID.String() + "/participants/" + participantID.String()},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, body := callExperimentAPI(t, mux, tt.method, tt.path, tt.body)
+			assert.Equal(t, http.StatusNotFound, code, "response body: %s", body)
+		})
+	}
+}
+
+func seedParticipantUsers(t *testing.T, pool *pgxpool.Pool, count int) []uuid.UUID {
+	t.Helper()
+
+	ids := make([]uuid.UUID, 0, count)
+	for range count {
+		id := uuid.New()
+		_, err := pool.Exec(t.Context(), `
+			INSERT INTO users (id, email, name, roles)
+			VALUES ($1, $2, $3, ARRAY['STUDENT']::user_role[])
+		`, id, "participant-"+id.String()+"@example.test", "Participant "+id.String())
+		require.NoError(t, err)
+		ids = append(ids, id)
+	}
+	t.Cleanup(func() {
+		for _, id := range ids {
+			//nolint:errcheck // best-effort cleanup for an isolated integration fixture
+			pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", id)
+		}
+	})
+	return ids
+}
+
+func createExperimentViaAPI(
+	t *testing.T,
+	mux *http.ServeMux,
+	name string,
+	start time.Time,
+	end time.Time,
+) uuid.UUID {
+	t.Helper()
+
+	configuration := Configuration{
+		MaxAttempts:              1,
+		GradingMode:              GradingModeAutomatic,
+		CorrectAnswerReleaseMode: CorrectAnswerReleaseNever,
+	}
+	code, body := callExperimentAPI(
+		t,
+		mux,
+		http.MethodPost,
+		"/api/experiments",
+		experimentRequestBody(t, name, "", start, end, configuration),
+	)
+	require.Equal(t, http.StatusCreated, code, "response body: %s", body)
+	return decodeExperimentDetail(t, body).ID
+}
+
+func addParticipantsViaAPI(
+	t *testing.T,
+	mux *http.ServeMux,
+	experimentID uuid.UUID,
+	userIDs []uuid.UUID,
+	wantCode int,
+) {
+	t.Helper()
+
+	body, err := json.Marshal(map[string]any{"userIds": userIDs})
+	require.NoError(t, err)
+	code, response := callExperimentAPI(
+		t,
+		mux,
+		http.MethodPost,
+		"/api/experiments/"+experimentID.String()+"/participants",
+		string(body),
+	)
+	require.Equal(t, wantCode, code, "response body: %s", response)
+}
+
+func assertExperimentParticipantCount(t *testing.T, pool *pgxpool.Pool, experimentID uuid.UUID, want int) {
+	t.Helper()
+
+	var count int
+	require.NoError(t, pool.QueryRow(t.Context(), `
+		SELECT count(*)
+		FROM experiment_participants
+		WHERE experiment_id = $1
+	`, experimentID).Scan(&count))
+	assert.Equal(t, want, count)
+}

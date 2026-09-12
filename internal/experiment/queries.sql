@@ -75,3 +75,79 @@ WHERE experiment_id = $1;
 SELECT count(*)
 FROM experiment_courses
 WHERE experiment_id = $1;
+
+-- name: LockExperimentForParticipantRead :one
+SELECT id
+FROM experiments
+WHERE id = $1
+FOR SHARE;
+
+-- name: LockExperimentForParticipantWrite :one
+SELECT scheduled_start_at, scheduled_end_at
+FROM experiments
+WHERE id = $1
+FOR UPDATE;
+
+-- name: ListExperimentParticipants :many
+SELECT u.id,
+       u.email,
+       u.name,
+       u.avatar_url,
+       u.roles::text[] AS roles,
+       u.created_at,
+       u.updated_at,
+       ep.assigned_at
+FROM experiment_participants ep
+JOIN users u ON u.id = ep.user_id
+WHERE ep.experiment_id = sqlc.arg('experiment_id')
+ORDER BY ep.assigned_at DESC, u.id
+LIMIT sqlc.arg('limit')::int OFFSET sqlc.arg('offset')::bigint;
+
+-- name: LockActiveParticipantUsers :many
+SELECT id
+FROM users
+WHERE id = ANY(sqlc.arg('user_ids')::uuid[])
+  AND disabled_at IS NULL
+ORDER BY id
+FOR UPDATE;
+
+-- name: ConflictingExperimentParticipantIDs :many
+SELECT DISTINCT ep.user_id
+FROM experiment_participants ep
+JOIN experiments other ON other.id = ep.experiment_id
+WHERE ep.user_id = ANY(sqlc.arg('user_ids')::uuid[])
+  AND (
+    ep.experiment_id = sqlc.arg('experiment_id')
+    OR (
+      other.scheduled_start_at < sqlc.arg('scheduled_end_at')::timestamptz
+      AND sqlc.arg('scheduled_start_at')::timestamptz < other.scheduled_end_at
+    )
+  );
+
+-- name: InsertExperimentParticipants :many
+WITH requested AS (
+    SELECT user_id, position
+    FROM unnest(sqlc.arg('user_ids')::uuid[]) WITH ORDINALITY AS input(user_id, position)
+), inserted AS (
+    INSERT INTO experiment_participants (experiment_id, user_id)
+    SELECT sqlc.arg('experiment_id'), requested.user_id
+    FROM requested
+    RETURNING user_id, assigned_at
+)
+SELECT u.id,
+       u.email,
+       u.name,
+       u.avatar_url,
+       u.roles::text[] AS roles,
+       u.created_at,
+       u.updated_at,
+       inserted.assigned_at
+FROM inserted
+JOIN requested ON requested.user_id = inserted.user_id
+JOIN users u ON u.id = inserted.user_id
+ORDER BY requested.position;
+
+-- name: DeleteExperimentParticipant :execrows
+DELETE FROM experiment_participants
+WHERE experiment_id = sqlc.arg('experiment_id')
+  AND user_id = sqlc.arg('user_id');

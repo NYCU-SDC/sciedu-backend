@@ -2,23 +2,30 @@ package experiment
 
 import (
 	"context"
+	"errors"
 	"math"
 	"strings"
 	"testing"
 	"time"
 
+	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 type fakeRepository struct {
-	listFn         func(ctx context.Context, params ListParams) ([]Record, error)
-	countFn        func(ctx context.Context, filter ListFilter) (int64, error)
-	createFn       func(ctx context.Context, params CreateParams) (Record, error)
-	findByIDFn     func(ctx context.Context, id uuid.UUID) (Record, error)
-	updateFn       func(ctx context.Context, params UpdateParams) (Record, error)
-	updateStatusFn func(ctx context.Context, id uuid.UUID, status Status) (Record, error)
+	listFn              func(ctx context.Context, params ListParams) ([]Record, error)
+	countFn             func(ctx context.Context, filter ListFilter) (int64, error)
+	createFn            func(ctx context.Context, params CreateParams) (Record, error)
+	findByIDFn          func(ctx context.Context, id uuid.UUID) (Record, error)
+	updateFn            func(ctx context.Context, params UpdateParams) (Record, error)
+	updateStatusFn      func(ctx context.Context, id uuid.UUID, status Status) (Record, error)
+	listParticipantsFn  func(ctx context.Context, params ParticipantListParams) ([]ParticipantAssignment, int64, error)
+	addParticipantsFn   func(ctx context.Context, experimentID uuid.UUID, userIDs []uuid.UUID) ([]ParticipantAssignment, error)
+	removeParticipantFn func(ctx context.Context, experimentID, userID uuid.UUID) error
 
 	createCalls       int
 	listCalls         int
@@ -72,6 +79,34 @@ func (f *fakeRepository) UpdateStatus(ctx context.Context, id uuid.UUID, status 
 		return f.updateStatusFn(ctx, id, status)
 	}
 	return Record{}, nil
+}
+
+func (f *fakeRepository) ListParticipants(
+	ctx context.Context,
+	params ParticipantListParams,
+) ([]ParticipantAssignment, int64, error) {
+	if f.listParticipantsFn != nil {
+		return f.listParticipantsFn(ctx, params)
+	}
+	return nil, 0, nil
+}
+
+func (f *fakeRepository) AddParticipants(
+	ctx context.Context,
+	experimentID uuid.UUID,
+	userIDs []uuid.UUID,
+) ([]ParticipantAssignment, error) {
+	if f.addParticipantsFn != nil {
+		return f.addParticipantsFn(ctx, experimentID, userIDs)
+	}
+	return nil, nil
+}
+
+func (f *fakeRepository) RemoveParticipant(ctx context.Context, experimentID, userID uuid.UUID) error {
+	if f.removeParticipantFn != nil {
+		return f.removeParticipantFn(ctx, experimentID, userID)
+	}
+	return nil
 }
 
 func validEditableParams() EditableParams {
@@ -232,6 +267,137 @@ func TestServiceUpdateStatusValidation(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tt.status, record.Status)
 			assert.Equal(t, 1, repo.updateStatusCalls)
+		})
+	}
+}
+
+func TestServiceListParticipants(t *testing.T) {
+	experimentID := uuid.New()
+	tests := []struct {
+		name           string
+		input          ParticipantListInput
+		total          int64
+		repoErr        error
+		wantError      bool
+		wantNotFound   bool
+		wantTotalPages int32
+		wantOffset     int64
+	}{
+		{name: "empty", input: ParticipantListInput{Page: 1, PageSize: 20}},
+		{name: "first of three pages", input: ParticipantListInput{Page: 1, PageSize: 10}, total: 21, wantTotalPages: 3},
+		{name: "last page", input: ParticipantListInput{Page: 3, PageSize: 10}, total: 21, wantTotalPages: 3, wantOffset: 20},
+		{name: "invalid page", input: ParticipantListInput{Page: 0, PageSize: 20}, wantError: true},
+		{name: "invalid page size", input: ParticipantListInput{Page: 1, PageSize: 101}, wantError: true},
+		{name: "count overflow", input: ParticipantListInput{Page: 1, PageSize: 20}, total: int64(math.MaxInt32) + 1, wantError: true},
+		{name: "missing experiment", input: ParticipantListInput{Page: 1, PageSize: 20}, repoErr: pgx.ErrNoRows, wantError: true, wantNotFound: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var received ParticipantListParams
+			repo := &fakeRepository{listParticipantsFn: func(
+				_ context.Context,
+				params ParticipantListParams,
+			) ([]ParticipantAssignment, int64, error) {
+				received = params
+				return nil, tt.total, tt.repoErr
+			}}
+			page, err := NewService(repo, nil).ListParticipants(context.Background(), experimentID, tt.input)
+
+			if tt.wantError {
+				require.Error(t, err)
+				if tt.wantNotFound {
+					assert.ErrorIs(t, err, handlerutil.ErrNotFound)
+				}
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, experimentID, received.ExperimentID)
+			assert.Equal(t, tt.wantOffset, received.Offset)
+			assert.Equal(t, tt.wantTotalPages, page.TotalPages)
+			assert.Equal(t, tt.input.Page < tt.wantTotalPages, page.HasNextPage)
+		})
+	}
+}
+
+func TestServiceAddParticipants(t *testing.T) {
+	experimentID := uuid.New()
+	firstID := uuid.New()
+	secondID := uuid.New()
+	tests := []struct {
+		name         string
+		userIDs      []uuid.UUID
+		repoErr      error
+		wantError    error
+		wantRepoCall bool
+	}{
+		{name: "adds batch", userIDs: []uuid.UUID{firstID, secondID}, wantRepoCall: true},
+		{name: "empty batch", wantError: errInvalidExperimentPayload},
+		{name: "oversized batch", userIDs: make([]uuid.UUID, maxParticipantBatchSize+1), wantError: errInvalidExperimentPayload},
+		{name: "duplicate IDs", userIDs: []uuid.UUID{firstID, firstID}, wantError: errExperimentParticipantConflict},
+		{name: "overlap conflict", userIDs: []uuid.UUID{firstID}, repoErr: errExperimentParticipantConflict, wantError: errExperimentParticipantConflict, wantRepoCall: true},
+		{name: "concurrent duplicate conflict", userIDs: []uuid.UUID{firstID}, repoErr: &pgconn.PgError{Code: "23505"}, wantError: errExperimentParticipantConflict, wantRepoCall: true},
+		{name: "missing experiment", userIDs: []uuid.UUID{firstID}, repoErr: pgx.ErrNoRows, wantError: handlerutil.ErrNotFound, wantRepoCall: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			calls := 0
+			repo := &fakeRepository{addParticipantsFn: func(
+				_ context.Context,
+				gotExperimentID uuid.UUID,
+				gotUserIDs []uuid.UUID,
+			) ([]ParticipantAssignment, error) {
+				calls++
+				assert.Equal(t, experimentID, gotExperimentID)
+				assert.Equal(t, tt.userIDs, gotUserIDs)
+				return []ParticipantAssignment{{Participant: Participant{ID: firstID}}}, tt.repoErr
+			}}
+
+			assignments, err := NewService(repo, nil).AddParticipants(context.Background(), experimentID, tt.userIDs)
+
+			if tt.wantError != nil {
+				assert.ErrorIs(t, err, tt.wantError)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, assignments, 1)
+				assert.Equal(t, firstID, assignments[0].Participant.ID)
+			}
+			if tt.wantRepoCall {
+				assert.Equal(t, 1, calls)
+			} else {
+				assert.Zero(t, calls)
+			}
+		})
+	}
+}
+
+func TestServiceRemoveParticipant(t *testing.T) {
+	experimentID := uuid.New()
+	userID := uuid.New()
+	repoErr := errors.New("database unavailable")
+	tests := []struct {
+		name      string
+		repoErr   error
+		wantError bool
+	}{
+		{name: "removes assignment"},
+		{name: "repository failure", repoErr: repoErr, wantError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeRepository{removeParticipantFn: func(
+				_ context.Context,
+				gotExperimentID uuid.UUID,
+				gotUserID uuid.UUID,
+			) error {
+				assert.Equal(t, experimentID, gotExperimentID)
+				assert.Equal(t, userID, gotUserID)
+				return tt.repoErr
+			}}
+			err := NewService(repo, nil).RemoveParticipant(context.Background(), experimentID, userID)
+			assert.Equal(t, tt.wantError, err != nil)
 		})
 	}
 }
