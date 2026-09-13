@@ -64,7 +64,7 @@ func main() {
 	contentHandler := content.NewHandler(contentService, logger)
 
 	chatQueriers := chat.New(pool)
-	chatProvider := chat.NewProvider(cfg.LLMURL+"/chat", &http.Client{}, nil)
+	chatProvider := chat.NewProvider(cfg.LLMURL, &http.Client{}, nil)
 	chatStreamHub := chat.NewStreamHub()
 	chatService := chat.NewService(chatProvider, chatQueriers, chatStreamHub, logger)
 	chatHandler := chat.NewHandler(chatService, logger)
