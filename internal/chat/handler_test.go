@@ -15,17 +15,17 @@ import (
 	"go.uber.org/zap"
 )
 
-func TestCreateMessagePassesModelUnchanged(t *testing.T) {
+func TestCreateMessagePassesPresetUnchanged(t *testing.T) {
 	chatID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	userID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
 
 	tests := []struct {
-		name      string
-		body      string
-		wantModel string
+		name       string
+		body       string
+		wantPreset string
 	}{
-		{name: "passes an arbitrary model string", body: `{"content":"hello","model":"provider/custom model@preview"}`, wantModel: "provider/custom model@preview"},
-		{name: "uses an empty model when omitted", body: `{"content":"hello"}`, wantModel: ""},
+		{name: "passes preset", body: `{"content":"hello","preset":"default-agents"}`, wantPreset: "default-agents"},
+		{name: "uses the server default when omitted", body: `{"content":"hello"}`, wantPreset: ""},
 	}
 
 	for _, tt := range tests {
@@ -44,13 +44,27 @@ func TestCreateMessagePassesModelUnchanged(t *testing.T) {
 			protected(rec, req)
 
 			require.Equal(t, http.StatusCreated, rec.Code)
-			require.Equal(t, tt.wantModel, store.model)
+			require.Equal(t, tt.wantPreset, store.preset)
 		})
 	}
 }
 
+func TestWriteSSEDataWritesTypedAgentEvent(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	index := int32(0)
+
+	err := writeSSEData(recorder, recorder, agentChunk(AgentEvent{
+		Type:  AgentEventDelta,
+		Index: &index,
+		Delta: "光合作用",
+	}))
+
+	require.NoError(t, err)
+	require.Equal(t, "data: {\"type\":\"delta\",\"index\":0,\"delta\":\"光合作用\"}\n\n", recorder.Body.String())
+}
+
 type fakeHandlerStore struct {
-	model string
+	preset string
 }
 
 func (f *fakeHandlerStore) CreateChat(context.Context, uuid.UUID) (uuid.UUID, error) {
@@ -61,12 +75,12 @@ func (f *fakeHandlerStore) GetChat(context.Context, uuid.UUID, uuid.UUID) (Chat,
 	return Chat{}, nil, nil
 }
 
-func (f *fakeHandlerStore) CreateMessage(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ string, _ uuid.UUID, model string) (CreateMessageReturn, error) {
-	f.model = model
+func (f *fakeHandlerStore) CreateMessage(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ string, _ uuid.UUID, preset string) (CreateMessageReturn, error) {
+	f.preset = preset
 	return CreateMessageReturn{Message: MessageReturn{ID: uuid.New(), CreatedAt: time.Now()}}, nil
 }
 
-func (f *fakeHandlerStore) Stream(context.Context, uuid.UUID, uuid.UUID) (bool, <-chan StreamDelta, <-chan error, func()) {
+func (f *fakeHandlerStore) Stream(context.Context, uuid.UUID, uuid.UUID) (bool, <-chan StreamChunk, <-chan error, func()) {
 	return false, nil, nil, func() {}
 }
 

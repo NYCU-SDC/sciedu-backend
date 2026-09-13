@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -65,11 +66,101 @@ func TestTruncateTitle(t *testing.T) {
 	}
 }
 
+func TestStreamProcessorPersistsFinalAgenticDataWithoutDeltas(t *testing.T) {
+	messageID := uuid.MustParse("11111111-1111-1111-1111-111111111111")
+	chatID := uuid.MustParse("22222222-2222-2222-2222-222222222222")
+	index := int32(0)
+	startPart := MessagePart{Type: PartTypeText, ID: "p0", Agent: "teacher"}
+	completedPart := startPart
+	completedPart.Text = "光合作用"
+
+	provider := &fakeLLMProvider{chunks: []StreamChunk{
+		agentChunk(AgentEvent{
+			Type:       AgentEventCast,
+			Characters: []Character{{ID: "teacher", DisplayName: "老師", Role: "teacher"}},
+		}),
+		agentChunk(AgentEvent{Type: AgentEventPartStart, Index: &index, Part: &startPart}),
+		agentChunk(AgentEvent{Type: AgentEventDelta, Index: &index, Delta: "光合"}),
+		agentChunk(AgentEvent{Type: AgentEventDelta, Index: &index, Delta: "作用"}),
+		agentChunk(AgentEvent{Type: AgentEventPartEnd, Index: &index, Part: &completedPart}),
+		agentChunk(AgentEvent{Type: AgentEventDone, FinishReason: "stop", Status: MessageStatusDone}),
+	}}
+	querier := &fakeChatQuerier{}
+	hub := NewStreamHub()
+	stream := hub.CreateStream(messageID)
+	service := NewService(provider, querier, hub, zap.NewNop())
+
+	service.streamProcessor(t.Context(), chatID, messageID, stream, AgentsRequest{}, false)
+
+	require.Equal(t, MessageStatusDone, MessageStatus(querier.updateParams.Status))
+	require.Equal(t, "光合作用", querier.updateParams.Content.String)
+	require.NotContains(t, string(querier.updateParams.AgenticData), `"delta"`)
+
+	var data AgenticData
+	require.NoError(t, json.Unmarshal(querier.updateParams.AgenticData, &data))
+	require.Equal(t, "stop", data.FinishReason)
+	require.Equal(t, []MessagePart{completedPart}, data.Parts)
+}
+
+func TestCompletedAgenticStreamReconstructsSnapshotWithoutDeltas(t *testing.T) {
+	data := AgenticData{
+		Cast:         []Character{{ID: "teacher", DisplayName: "老師", Role: "teacher"}},
+		Parts:        []MessagePart{{Type: PartTypeText, ID: "p0", Agent: "teacher", Text: "光合作用"}},
+		FinishReason: "stop",
+	}
+
+	chunks := completedAgenticStream(data)
+	var eventTypes []AgentEventType
+	for chunk := range chunks {
+		require.NotNil(t, chunk.Agentic)
+		require.NotEqual(t, AgentEventDelta, chunk.Agentic.Type)
+		eventTypes = append(eventTypes, chunk.Agentic.Type)
+	}
+	require.Equal(t, []AgentEventType{
+		AgentEventCast,
+		AgentEventAgentStart,
+		AgentEventPartStart,
+		AgentEventPartEnd,
+		AgentEventAgentEnd,
+		AgentEventDone,
+	}, eventTypes)
+}
+
 type fakeChatQuerier struct {
 	*Queries
 	deleteParams       DeleteChatParams
 	deleteRowsAffected int64
 	deleteErr          error
+	updateParams       UpdateMessageParams
+}
+
+func (q *fakeChatQuerier) UpdateMessage(_ context.Context, params UpdateMessageParams) (Message, error) {
+	q.updateParams = params
+	return Message{}, nil
+}
+
+type fakeLLMProvider struct {
+	chunks []StreamChunk
+	err    error
+}
+
+func (p *fakeLLMProvider) Stream(context.Context, AgentsRequest) (<-chan StreamChunk, <-chan error) {
+	chunks := make(chan StreamChunk, len(p.chunks))
+	for _, chunk := range p.chunks {
+		chunks <- chunk
+	}
+	close(chunks)
+
+	errs := make(chan error, 1)
+	if p.err != nil {
+		errs <- p.err
+	}
+	close(errs)
+	return chunks, errs
+}
+
+func (p *fakeLLMProvider) GetTitle(context.Context, []ChatMessage) (string, error) {
+	return "", nil
 }
 
 func (q *fakeChatQuerier) DeleteChat(_ context.Context, params DeleteChatParams) (int64, error) {

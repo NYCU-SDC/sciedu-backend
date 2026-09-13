@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -59,6 +60,7 @@ type ChatReturn struct {
 type MessageReturn struct {
 	ID         uuid.UUID     `json:"id"`
 	Content    string        `json:"content"`
+	Parts      []MessagePart `json:"parts,omitempty"`
 	Role       MessageRole   `json:"role"`
 	PreviousID uuid.UUID     `json:"previousID,omitempty"`
 	Status     MessageStatus `json:"status"`
@@ -107,9 +109,18 @@ func (s *ChatService) fetchMessages(ctx context.Context, chatID uuid.UUID) ([]Me
 		if msg.PreviousID.Valid {
 			ret.PreviousID = uuid.UUID(msg.PreviousID.Bytes)
 		}
-		if msg.Content.String == "" {
-			if stream, ok := s.streamHub.GetStream(msg.ID); ok {
-				_, ret.Content, _ = stream.Get()
+		if len(msg.AgenticData) > 0 {
+			var data AgenticData
+			if err := json.Unmarshal(msg.AgenticData, &data); err != nil {
+				return nil, fmt.Errorf("decode message agentic data: %w", err)
+			}
+			ret.Parts = data.Parts
+		}
+		if stream, ok := s.streamHub.GetStream(msg.ID); ok {
+			_, content, data, agentic, _ := stream.Get()
+			ret.Content = content
+			if agentic {
+				ret.Parts = data.Parts
 			}
 		}
 		result = append(result, ret)
@@ -196,7 +207,7 @@ func (s *ChatService) DeleteChat(ctx context.Context, chatID uuid.UUID, userID u
 	return nil
 }
 
-func (s *ChatService) CreateMessage(ctx context.Context, userID uuid.UUID, chatID uuid.UUID, content string, previousID uuid.UUID, model string) (CreateMessageReturn, error) {
+func (s *ChatService) CreateMessage(ctx context.Context, userID uuid.UUID, chatID uuid.UUID, content string, previousID uuid.UUID, preset string) (CreateMessageReturn, error) {
 
 	chat, err := s.querier.GetChatByUser(ctx, GetChatByUserParams{
 		ID:     chatID,
@@ -269,10 +280,12 @@ func (s *ChatService) CreateMessage(ctx context.Context, userID uuid.UUID, chatI
 	}
 
 	// create provider request
-	providerReq := CreateChatCompletionRequest{
+	providerReq := AgentsRequest{
 		Messages: history,
-		Model:    model,
+		Preset:   preset,
+		Session:  chatID.String(),
 		Stream:   true,
+		User:     userID.String(),
 	}
 
 	streamEvent := s.streamHub.CreateStream(llmMessage.ID)
@@ -292,7 +305,7 @@ func (s *ChatService) CreateMessage(ctx context.Context, userID uuid.UUID, chatI
 
 }
 
-func (s *ChatService) Stream(ctx context.Context, userID uuid.UUID, messageID uuid.UUID) (bool, <-chan StreamDelta, <-chan error, func()) {
+func (s *ChatService) Stream(ctx context.Context, userID uuid.UUID, messageID uuid.UUID) (bool, <-chan StreamChunk, <-chan error, func()) {
 	msg, err := s.querier.GetMessageByUser(ctx, GetMessageByUserParams{
 		ID:     messageID,
 		UserID: userID,
@@ -312,6 +325,13 @@ func (s *ChatService) Stream(ctx context.Context, userID uuid.UUID, messageID uu
 
 	switch MessageStatus(msg.Status) {
 	case MessageStatusDone:
+		if len(msg.AgenticData) > 0 {
+			var data AgenticData
+			if err := json.Unmarshal(msg.AgenticData, &data); err != nil {
+				return true, nil, errorStream(fmt.Errorf("decode message agentic data: %w", err)), func() {}
+			}
+			return true, completedAgenticStream(data), closedErrorStream(), func() {}
+		}
 		return true, completedStream(msg.Content.String), closedErrorStream(), func() {}
 	case MessageStatusError:
 		return true, nil, errorStream(fmt.Errorf("message stream failed")), func() {}
@@ -320,7 +340,7 @@ func (s *ChatService) Stream(ctx context.Context, userID uuid.UUID, messageID uu
 	}
 }
 
-func (s *ChatService) streamProcessor(ctx context.Context, chatID uuid.UUID, messageID uuid.UUID, streamEvent *StreamEvent, providerReq CreateChatCompletionRequest, createTitle bool) {
+func (s *ChatService) streamProcessor(ctx context.Context, chatID uuid.UUID, messageID uuid.UUID, streamEvent *StreamEvent, providerReq AgentsRequest, createTitle bool) {
 	llmCh, errCh := s.provider.Stream(ctx, providerReq)
 	endFlag := false
 	for !endFlag && (llmCh != nil || errCh != nil) {
@@ -341,14 +361,13 @@ func (s *ChatService) streamProcessor(ctx context.Context, chatID uuid.UUID, mes
 			if !ok {
 				llmCh = nil
 				continue
-			} else {
-				if chunk.IsFinished {
-					streamEvent.Complete()
-					endFlag = true
-				} else {
-					streamEvent.AppendDelta(chunk)
-				}
 			}
+			if err := streamEvent.Apply(chunk); err != nil {
+				streamEvent.Fail(err)
+				endFlag = true
+				continue
+			}
+			endFlag = chunk.Terminal()
 		}
 	}
 
@@ -356,25 +375,35 @@ func (s *ChatService) streamProcessor(ctx context.Context, chatID uuid.UUID, mes
 		streamEvent.Fail(fmt.Errorf("upstream stream ended before finish"))
 	}
 
-	status, fullChunk, err := streamEvent.Get()
+	status, fullChunk, agenticData, agentic, err := streamEvent.Get()
 	if err != nil {
 		SSEError(err, s.logger)
 	}
-	s.streamHub.DeleteStream(messageID)
 	// Use a fresh context so client disconnect doesn't prevent persisting the final state.
 	updateCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	var encodedAgenticData []byte
+	if agentic {
+		encodedAgenticData, err = json.Marshal(agenticData)
+		if err != nil {
+			SSEError(fmt.Errorf("encode message agentic data: %w", err), s.logger)
+			status = MessageStatusError
+		}
+	}
 	_, err = s.querier.UpdateMessage(updateCtx, UpdateMessageParams{
 		ID: messageID,
 		Content: pgtype.Text{
 			String: fullChunk,
 			Valid:  true,
 		},
-		Status: string(status),
+		Status:      string(status),
+		AgenticData: encodedAgenticData,
 	})
 	if err != nil {
 		SSEError(err, s.logger)
+		return
 	}
+	s.streamHub.DeleteStream(messageID)
 
 	// title generate
 	if status == MessageStatusDone && createTitle {
@@ -481,15 +510,67 @@ func SSEError(err error, logger *zap.Logger) {
 	logger.Warn("Handling SSE Error", zap.String("problem", "SSE Error"), zap.Error(err))
 }
 
-func completedStream(content string) <-chan StreamDelta {
+func completedStream(content string) <-chan StreamChunk {
 	runes := []rune(content)
-	ch := make(chan StreamDelta, len(runes)+1)
+	ch := make(chan StreamChunk, len(runes)+1)
 	for _, r := range runes {
-		ch <- StreamDelta{Delta: string(r), IsFinished: false}
+		ch <- StreamChunk{Legacy: &StreamDelta{Delta: string(r)}}
 	}
-	ch <- StreamDelta{Delta: "", IsFinished: true}
+	ch <- StreamChunk{Legacy: &StreamDelta{IsFinished: true}}
 	close(ch)
 	return ch
+}
+
+func completedAgenticStream(data AgenticData) <-chan StreamChunk {
+	chunks := make([]StreamChunk, 0, len(data.Parts)*3+4)
+	if len(data.Cast) > 0 {
+		chunks = append(chunks, agentChunk(AgentEvent{Type: AgentEventCast, Characters: data.Cast}))
+	}
+
+	activeAgent := ""
+	for rawIndex, part := range data.Parts {
+		if part.Agent != activeAgent {
+			if activeAgent != "" {
+				chunks = append(chunks, agentChunk(AgentEvent{Type: AgentEventAgentEnd, Agent: activeAgent}))
+			}
+			activeAgent = part.Agent
+			chunks = append(chunks, agentChunk(AgentEvent{Type: AgentEventAgentStart, Agent: activeAgent}))
+		}
+
+		index := int32(rawIndex)
+		startPart := partStartSnapshot(part)
+		chunks = append(chunks,
+			agentChunk(AgentEvent{Type: AgentEventPartStart, Index: &index, Part: &startPart}),
+			agentChunk(AgentEvent{Type: AgentEventPartEnd, Index: &index, Part: &part}),
+		)
+	}
+	if activeAgent != "" {
+		chunks = append(chunks, agentChunk(AgentEvent{Type: AgentEventAgentEnd, Agent: activeAgent}))
+	}
+	chunks = append(chunks, agentChunk(AgentEvent{
+		Type:         AgentEventDone,
+		FinishReason: data.FinishReason,
+		Status:       MessageStatusDone,
+	}))
+
+	ch := make(chan StreamChunk, len(chunks))
+	for _, chunk := range chunks {
+		ch <- chunk
+	}
+	close(ch)
+	return ch
+}
+
+func partStartSnapshot(part MessagePart) MessagePart {
+	part.Text = ""
+	part.Arguments = nil
+	part.Status = ""
+	part.Content = nil
+	return part
+}
+
+func agentChunk(event AgentEvent) StreamChunk {
+	return StreamChunk{Agentic: &event}
 }
 
 func errorStream(err error) <-chan error {
