@@ -401,9 +401,11 @@ func (s *ChatService) streamProcessor(ctx context.Context, chatID uuid.UUID, mes
 	})
 	if err != nil {
 		SSEError(err, s.logger)
-		return
 	}
 	s.streamHub.DeleteStream(messageID)
+	if err != nil {
+		return
+	}
 
 	// title generate
 	if status == MessageStatusDone && createTitle {
