@@ -337,3 +337,25 @@
 
 ### Next Steps
 - Stage the ignored generated PageVisit query file explicitly before commit.
+
+## [2026-09-17 00:24] Task Record
+
+### Task Description
+- Address the SCIEDU-121 PR review request to allow the `Idempotency-Key` request header in CORS preflight responses.
+
+### Actions Taken
+- Updated `internal/cors/middleware.go` to append `Idempotency-Key` to the existing `Access-Control-Allow-Headers` value.
+- Updated `internal/cors/middleware_test.go` so the preflight requests `Idempotency-Key` and asserts the exact allowed-header list retains `Content-Type` and `Authorization`.
+- Left the pre-existing untracked `q` file and recovery stash untouched.
+
+### Attempted Methods
+- The initial patch retained Windows CRLF line endings, causing `git diff --check` to flag trailing whitespace. Ran `gofmt` on only the two changed CORS Go files and verified the final diff is limited to the intended lines.
+
+### Verification
+- `go test ./internal/cors`, `go test ./...`, `go vet ./...`, `go build ./...`, and `git diff --check` passed.
+
+### Issues & Blockers
+- None for this CORS review request.
+
+### Next Steps
+- Review and stage the focused CORS change with the existing SCIEDU-121 PR workflow; no commit or push was performed here.
