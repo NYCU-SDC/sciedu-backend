@@ -12,6 +12,7 @@ erDiagram
 	messages {
 		uuid id PK
 		string content
+		jsonb agenticData
 		enum role
 		enum status
 		uuid previousId

@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -16,52 +17,83 @@ func TestStreamEventFailPublishesSubscriberError(t *testing.T) {
 
 	wantErr := errors.New("upstream failed")
 	stream.Fail(wantErr)
-
-	select {
-	case gotErr := <-errs:
-		require.ErrorIs(t, gotErr, wantErr)
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for stream error")
-	}
+	require.ErrorIs(t, receiveErr(t, errs), wantErr)
 }
 
-func TestStreamEventAppendDeltaPublishesRuneDeltas(t *testing.T) {
+func TestStreamEventAggregatesAgenticPartsWithoutPersistingDeltas(t *testing.T) {
 	stream := NewStreamHub().CreateStream(uuid.MustParse("00000000-0000-0000-0000-000000000001"))
+	index := int32(0)
+	part := MessagePart{Type: PartTypeText, ID: "p0", Agent: "teacher"}
+
+	require.NoError(t, stream.Apply(agentChunk(AgentEvent{
+		Type:       AgentEventCast,
+		Characters: []Character{{ID: "teacher", DisplayName: "老師", Role: "teacher"}},
+	})))
+	require.NoError(t, stream.Apply(agentChunk(AgentEvent{Type: AgentEventPartStart, Index: &index, Part: &part})))
+	require.NoError(t, stream.Apply(agentChunk(AgentEvent{Type: AgentEventDelta, Index: &index, Delta: "光合"})))
+	require.NoError(t, stream.Apply(agentChunk(AgentEvent{Type: AgentEventDelta, Index: &index, Delta: "作用"})))
+
+	status, content, data, agentic, err := stream.Get()
+	require.NoError(t, err)
+	require.True(t, agentic)
+	require.Equal(t, MessageStatusStreaming, status)
+	require.Equal(t, "光合作用", content)
+	require.Equal(t, "光合作用", data.Parts[0].Text)
+
+	encoded, err := json.Marshal(data)
+	require.NoError(t, err)
+	require.NotContains(t, string(encoded), `"delta"`)
+
+	completedPart := part
+	completedPart.Text = "光合作用"
+	require.NoError(t, stream.Apply(agentChunk(AgentEvent{Type: AgentEventPartEnd, Index: &index, Part: &completedPart})))
+	require.NoError(t, stream.Apply(agentChunk(AgentEvent{
+		Type:         AgentEventDone,
+		FinishReason: "stop",
+		Status:       MessageStatusDone,
+	})))
+
+	status, content, data, _, err = stream.Get()
+	require.NoError(t, err)
+	require.Equal(t, MessageStatusDone, status)
+	require.Equal(t, "光合作用", content)
+	require.Equal(t, "stop", data.FinishReason)
+}
+
+func TestStreamEventSubscribeReplaysBufferedEvents(t *testing.T) {
+	stream := NewStreamHub().CreateStream(uuid.MustParse("00000000-0000-0000-0000-000000000001"))
+	index := int32(0)
+	require.NoError(t, stream.Apply(agentChunk(AgentEvent{Type: AgentEventDelta, Index: &index, Delta: "before"})))
+
 	chunks, _, cancel := stream.Subscribe()
 	defer cancel()
+	require.Equal(t, "before", receiveStreamChunk(t, chunks).Agentic.Delta)
 
-	stream.AppendDelta(StreamDelta{Delta: "Hi好"})
-
-	require.Equal(t, StreamDelta{Delta: "H"}, receiveChunk(t, chunks))
-	require.Equal(t, StreamDelta{Delta: "i"}, receiveChunk(t, chunks))
-	require.Equal(t, StreamDelta{Delta: "好"}, receiveChunk(t, chunks))
-
-	_, fullContent, err := stream.Get()
-	require.NoError(t, err)
-	require.Equal(t, "Hi好", fullContent)
+	require.NoError(t, stream.Apply(agentChunk(AgentEvent{Type: AgentEventDelta, Index: &index, Delta: "after"})))
+	require.Equal(t, "after", receiveStreamChunk(t, chunks).Agentic.Delta)
 }
 
 func TestCompletedStreamPublishesRuneDeltas(t *testing.T) {
 	chunks := completedStream("OK了")
 
-	require.Equal(t, StreamDelta{Delta: "O"}, receiveChunk(t, chunks))
-	require.Equal(t, StreamDelta{Delta: "K"}, receiveChunk(t, chunks))
-	require.Equal(t, StreamDelta{Delta: "了"}, receiveChunk(t, chunks))
-	require.Equal(t, StreamDelta{Delta: "", IsFinished: true}, receiveChunk(t, chunks))
+	require.Equal(t, "O", receiveStreamChunk(t, chunks).Legacy.Delta)
+	require.Equal(t, "K", receiveStreamChunk(t, chunks).Legacy.Delta)
+	require.Equal(t, "了", receiveStreamChunk(t, chunks).Legacy.Delta)
+	require.True(t, receiveStreamChunk(t, chunks).Terminal())
 }
 
-func TestStreamEventPublishDoesNotBlockOnSlowSubscriber(t *testing.T) {
+func TestStreamEventApplyDoesNotBlockOnSlowSubscriber(t *testing.T) {
 	stream := NewStreamHub().CreateStream(uuid.MustParse("00000000-0000-0000-0000-000000000001"))
 	chunks, errs, cancel := stream.Subscribe()
 	defer cancel()
 
 	for i := 0; i < cap(chunks); i++ {
-		stream.Publish(StreamDelta{Delta: "x"})
+		require.NoError(t, stream.Apply(StreamChunk{Legacy: &StreamDelta{Delta: "x"}}))
 	}
 
 	published := make(chan struct{})
 	go func() {
-		stream.Publish(StreamDelta{Delta: "overflow"})
+		_ = stream.Apply(StreamChunk{Legacy: &StreamDelta{Delta: "overflow"}})
 		close(published)
 	}()
 

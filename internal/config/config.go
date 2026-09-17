@@ -87,7 +87,7 @@ func Load() (Config, *LogBuffer) {
 		Environment:                "prod",
 		DatabaseURL:                "",
 		MigrationSource:            "file://internal/database/migrations",
-		LLMURL:                     "https://llm.dev.sciedu.sdc.nycu.club",
+		LLMURL:                     "https://llm-backend-sciedu.sdc.nycu.club",
 		AllowOrigins:               "*.sciedu.sdc.nycu.club",
 		GoogleOAuthClientID:        "",
 		GoogleOAuthClientSecret:    "",

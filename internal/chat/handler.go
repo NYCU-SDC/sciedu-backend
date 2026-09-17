@@ -22,8 +22,8 @@ import (
 type Store interface {
 	CreateChat(ctx context.Context, userID uuid.UUID) (uuid.UUID, error)
 	GetChat(ctx context.Context, userID uuid.UUID, chatID uuid.UUID) (Chat, []MessageReturn, error)
-	CreateMessage(ctx context.Context, userID uuid.UUID, chatID uuid.UUID, content string, previousID uuid.UUID, model string) (CreateMessageReturn, error)
-	Stream(ctx context.Context, userID uuid.UUID, messageID uuid.UUID) (bool, <-chan StreamDelta, <-chan error, func())
+	CreateMessage(ctx context.Context, userID uuid.UUID, chatID uuid.UUID, content string, previousID uuid.UUID, preset string) (CreateMessageReturn, error)
+	Stream(ctx context.Context, userID uuid.UUID, messageID uuid.UUID) (bool, <-chan StreamChunk, <-chan error, func())
 	ValidatePreviousID(ctx context.Context, userID uuid.UUID, previousID uuid.UUID, chatID uuid.UUID) error
 	ListChats(ctx context.Context, userID uuid.UUID, page, pageSize int32) (ChatPage, error)
 	DeleteChat(ctx context.Context, chatID uuid.UUID, userID uuid.UUID) error
@@ -39,7 +39,7 @@ type Handler struct {
 type CreateMessageRequest struct {
 	Content    string    `json:"content" validate:"required"`
 	PreviousID uuid.UUID `json:"previousID,omitempty"`
-	Model      string    `json:"model,omitempty"`
+	Preset     string    `json:"preset,omitempty"`
 }
 
 type bodyParseError struct{ err error }
@@ -162,7 +162,7 @@ func (h *Handler) CreateMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	message, err := h.store.CreateMessage(ctx, userID, chatID, req.Content, req.PreviousID, req.Model)
+	message, err := h.store.CreateMessage(ctx, userID, chatID, req.Content, req.PreviousID, req.Preset)
 	if err != nil {
 		h.problemWriter.WriteError(ctx, w, err, logger)
 		return
@@ -232,7 +232,7 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 				logger.Warn("failed to write SSE chunk", zap.Error(err))
 				return
 			}
-			if chunk.IsFinished {
+			if chunk.Terminal() {
 				return
 			}
 		}
@@ -314,7 +314,7 @@ func parsePaginationParams(r *http.Request) (int32, int32, error) {
 	return page, pageSize, nil
 }
 
-func writeSSEData(w http.ResponseWriter, flusher http.Flusher, chunk StreamDelta) error {
+func writeSSEData(w http.ResponseWriter, flusher http.Flusher, chunk StreamChunk) error {
 	b, err := json.Marshal(chunk)
 	if err != nil {
 		return err
@@ -334,11 +334,12 @@ func writeSSEData(w http.ResponseWriter, flusher http.Flusher, chunk StreamDelta
 }
 
 func writeSSEError(w http.ResponseWriter, flusher http.Flusher, streamErr error) error {
-	b, err := json.Marshal(map[string]string{"error": streamErr.Error()})
+	b, err := json.Marshal(AgentEvent{
+		Type:  AgentEventError,
+		Error: streamErr.Error(),
+		Code:  "stream_error",
+	})
 	if err != nil {
-		return err
-	}
-	if _, err := w.Write([]byte("event: error\n")); err != nil {
 		return err
 	}
 	if _, err := w.Write([]byte("data: ")); err != nil {

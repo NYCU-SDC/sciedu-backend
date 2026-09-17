@@ -12,7 +12,7 @@ import (
 )
 
 type LLMProvider interface {
-	Stream(ctx context.Context, req CreateChatCompletionRequest) (<-chan StreamDelta, <-chan error)
+	Stream(ctx context.Context, req AgentsRequest) (<-chan StreamChunk, <-chan error)
 	GetTitle(ctx context.Context, messages []ChatMessage) (string, error)
 }
 
@@ -33,33 +33,68 @@ func NewProvider(endpoint string, client *http.Client, headers http.Header) *Pro
 		}
 	}
 	return &Provider{
-		endpoint: endpoint,
+		endpoint: strings.TrimRight(endpoint, "/"),
 		client:   client,
 		headers:  h,
 	}
 }
 
-func parseSSEEventData(payload string) (StreamDelta, bool, error) {
+func parseSSEEventData(payload string) (StreamChunk, bool, error) {
 	payload = strings.TrimSpace(payload)
 	if payload == "" {
-		return StreamDelta{}, false, nil
+		return StreamChunk{}, false, nil
 	}
 
 	if payload == "[DONE]" {
-		return StreamDelta{Delta: "", IsFinished: true}, true, nil
+		chunk := StreamChunk{Legacy: &StreamDelta{IsFinished: true}}
+		return chunk, true, nil
 	}
 
-	// JSON payload support
 	if strings.HasPrefix(payload, "{") {
+		var envelope struct {
+			Type AgentEventType `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
+			return StreamChunk{}, false, fmt.Errorf("invalid json chunk payload: %w", err)
+		}
+		if envelope.Type != "" {
+			if !validAgentEventType(envelope.Type) {
+				return StreamChunk{}, false, fmt.Errorf("unsupported agent event type %q", envelope.Type)
+			}
+			var event AgentEvent
+			if err := json.Unmarshal([]byte(payload), &event); err != nil {
+				return StreamChunk{}, false, fmt.Errorf("invalid agent event payload: %w", err)
+			}
+			chunk := StreamChunk{Agentic: &event}
+			return chunk, chunk.Terminal(), nil
+		}
+
 		var c StreamDelta
 		if err := json.Unmarshal([]byte(payload), &c); err != nil {
-			return StreamDelta{}, false, fmt.Errorf("invalid json chunk payload: %w", err)
+			return StreamChunk{}, false, fmt.Errorf("invalid legacy chunk payload: %w", err)
 		}
-		return c, c.IsFinished, nil
+		chunk := StreamChunk{Legacy: &c}
+		return chunk, chunk.Terminal(), nil
 	}
 
-	// Plain text Delta
-	return StreamDelta{Delta: payload, IsFinished: false}, false, nil
+	chunk := StreamChunk{Legacy: &StreamDelta{Delta: payload}}
+	return chunk, false, nil
+}
+
+func validAgentEventType(eventType AgentEventType) bool {
+	switch eventType {
+	case AgentEventCast,
+		AgentEventPartStart,
+		AgentEventDelta,
+		AgentEventPartEnd,
+		AgentEventAgentStart,
+		AgentEventAgentEnd,
+		AgentEventDone,
+		AgentEventError:
+		return true
+	default:
+		return false
+	}
 }
 
 func readSSEEventFromLines(lines []string) string {
@@ -79,8 +114,8 @@ func readSSEEventFromLines(lines []string) string {
 	return strings.TrimSpace(strings.Join(dataLines, "\n"))
 }
 
-func (p *Provider) Stream(ctx context.Context, req CreateChatCompletionRequest) (<-chan StreamDelta, <-chan error) {
-	chunks := make(chan StreamDelta)
+func (p *Provider) Stream(ctx context.Context, req AgentsRequest) (<-chan StreamChunk, <-chan error) {
+	chunks := make(chan StreamChunk)
 	errs := make(chan error, 1)
 
 	go func() {
@@ -96,14 +131,14 @@ func (p *Provider) Stream(ctx context.Context, req CreateChatCompletionRequest) 
 			return
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint+"/agents", bytes.NewReader(body))
 		if err != nil {
 			errs <- err
 			return
 		}
 
 		httpReq.Header.Set("Content-Type", "application/json")
-		httpReq.Header.Set("Accept", "text/event-Stream")
+		httpReq.Header.Set("Accept", "text/event-stream")
 		for k, vs := range p.headers {
 			for _, v := range vs {
 				httpReq.Header.Add(k, v)
@@ -189,7 +224,7 @@ func (p *Provider) Stream(ctx context.Context, req CreateChatCompletionRequest) 
 	return chunks, errs
 }
 
-func publishSSEPayload(ctx context.Context, eventLines []string, chunks chan<- StreamDelta) (bool, error) {
+func publishSSEPayload(ctx context.Context, eventLines []string, chunks chan<- StreamChunk) (bool, error) {
 	payload := readSSEEventFromLines(eventLines)
 	chunk, done, err := parseSSEEventData(payload)
 	if err != nil {
@@ -217,7 +252,7 @@ func (p *Provider) GetTitle(ctx context.Context, messages []ChatMessage) (string
 		return "", err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint+"/title", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint+"/chat/title", bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}

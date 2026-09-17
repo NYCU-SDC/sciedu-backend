@@ -152,3 +152,24 @@ The content type will be `text/event-stream`. Data is returned in chunks as delt
 2. **Multimodal Support**: Based on the OpenAPI spec, the API supports images (`image_url`), audio (`input_audio`), and files (`file`). If an Agent needs to handle multimodal prompts, it must construct the `content` property using the array structure defined in `ChatCompletionUserMessageParam`.
     
 3. **Tool Calling Handling**: If the model's response includes `tool_calls`, the Agent must parse this request, execute the corresponding custom tool/function locally, and append the result back into the `messages` array using `role: "tool"` before initiating the next request.
+
+## 3. Agentic Chat Endpoint
+
+The backend chat module uses `POST /agents` for server-owned agent workflows.
+Clients choose a preset; the preset controls the model, tools, retrieval, subagents,
+and step budget.
+
+```json
+{
+  "messages": [{"role": "user", "content": "Explain photosynthesis"}],
+  "preset": "default-agents",
+  "session": "chat-uuid",
+  "stream": true,
+  "user": "user-uuid"
+}
+```
+
+The SSE response uses typed events: `cast`, `agent_start`, `part_start`,
+`delta`, `part_end`, `agent_end`, `done`, and `error`. The backend buffers
+`delta` events only while the response is streaming. It persists the cast,
+completed parts, and finish reason, but not individual deltas.
