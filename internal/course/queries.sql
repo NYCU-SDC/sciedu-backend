@@ -53,7 +53,7 @@ SELECT c.id,
              AND ec.course_id = c.id
              AND e.status = 'ACTIVE'
              AND e.scheduled_start_at <= CURRENT_TIMESTAMP
-             AND e.scheduled_end_at >= CURRENT_TIMESTAMP
+             AND e.scheduled_end_at > CURRENT_TIMESTAMP
              AND c.status = 'PUBLISHED'
        ) AS allowed
 FROM courses c

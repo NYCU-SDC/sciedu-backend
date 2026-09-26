@@ -223,13 +223,14 @@ type ExperimentParticipant struct {
 }
 
 type Message struct {
-	ID         uuid.UUID
-	ChatID     uuid.UUID
-	PreviousID pgtype.UUID
-	Content    pgtype.Text
-	Role       string
-	Status     string
-	CreatedAt  pgtype.Timestamptz
+	ID          uuid.UUID
+	ChatID      uuid.UUID
+	PreviousID  pgtype.UUID
+	Content     pgtype.Text
+	AgenticData []byte
+	Role        string
+	Status      string
+	CreatedAt   pgtype.Timestamptz
 }
 
 type OauthAccount struct {
@@ -283,6 +284,17 @@ type PageBlock struct {
 	Required     bool
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+}
+
+type PageVisit struct {
+	ID              uuid.UUID
+	StudentID       uuid.UUID
+	CourseID        uuid.UUID
+	PageID          uuid.UUID
+	ClientSessionID uuid.UUID
+	IdempotencyKey  uuid.UUID
+	EnteredAt       pgtype.Timestamptz
+	LeftAt          pgtype.Timestamptz
 }
 
 type Question struct {

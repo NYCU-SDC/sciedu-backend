@@ -182,6 +182,7 @@ func TestCORSPreflightRequest(t *testing.T) {
 	req := httptest.NewRequest("OPTIONS", "/test", nil)
 	req.Header.Set("Origin", "https://dev.sciedu.sdc.nycu.club")
 	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "Idempotency-Key")
 	rec := httptest.NewRecorder()
 
 	// Execute
@@ -200,8 +201,8 @@ func TestCORSPreflightRequest(t *testing.T) {
 		t.Error("Expected Access-Control-Allow-Methods header to be set")
 	}
 
-	if rec.Header().Get("Access-Control-Allow-Headers") == "" {
-		t.Error("Expected Access-Control-Allow-Headers header to be set")
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); got != "Content-Type, Authorization, Idempotency-Key" {
+		t.Errorf("Expected Content-Type, Authorization, and Idempotency-Key to be allowed, got %q", got)
 	}
 
 	if rec.Header().Get("Access-Control-Allow-Credentials") != "true" {

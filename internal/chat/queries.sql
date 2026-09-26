@@ -30,7 +30,7 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 -- name: UpdateMessage :one
 UPDATE messages
-SET content = $2, status = $3
+SET content = $2, status = $3, agentic_data = $4
 WHERE id = $1
 RETURNING *;
 -- name: DeleteChat :execrows

@@ -70,6 +70,13 @@ func TestCourseStoreCourseForStudentTruthTable(t *testing.T) {
 			},
 		},
 		{
+			name: "end boundary is denied",
+			scenario: accessScenario{
+				participant: true, assigned: true, experimentStatus: StatusActive,
+				courseStatus: "PUBLISHED", start: now.Add(-time.Hour), end: now,
+			},
+		},
+		{
 			name: "expired experiment is denied",
 			scenario: accessScenario{
 				participant: true, assigned: true, experimentStatus: StatusActive,

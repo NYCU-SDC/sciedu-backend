@@ -14,6 +14,7 @@ import (
 	"sciedu-backend/internal/course"
 	"sciedu-backend/internal/experiment"
 	"sciedu-backend/internal/page"
+	"sciedu-backend/internal/pagevisit"
 	"sciedu-backend/internal/question"
 	"sciedu-backend/internal/user"
 
@@ -69,7 +70,7 @@ func main() {
 	contentHandler := content.NewHandler(contentService, logger)
 
 	chatQueriers := chat.New(pool)
-	chatProvider := chat.NewProvider(cfg.LLMURL+"/chat", &http.Client{}, nil)
+	chatProvider := chat.NewProvider(cfg.LLMURL, &http.Client{}, nil)
 	chatStreamHub := chat.NewStreamHub()
 	chatService := chat.NewService(chatProvider, chatQueriers, chatStreamHub, logger)
 	chatHandler := chat.NewHandler(chatService, logger)
@@ -105,7 +106,7 @@ func main() {
 	userService := user.NewService(userStore, logger)
 	userHandler := user.NewHandler(userService, logger)
 	experimentStore := experiment.NewStore(pool)
-	experimentService := experiment.NewService(experimentStore, logger)
+	experimentService := experiment.NewServiceWithRoles(experimentStore, authStore, logger)
 	experimentHandler := experiment.NewHandler(experimentService, logger)
 
 	courseStore := course.NewStore(pool)
@@ -116,6 +117,9 @@ func main() {
 	blockService := page.NewBlockService(pageStore, pageStore, contentService, questionService, logger)
 	pageService := page.NewPageService(pageStore, blockService, courseService, logger)
 	pageHandler := page.NewHandler(pageService, blockService, logger)
+	pageVisitStore := pagevisit.NewStore(pool)
+	pageVisitService := pagevisit.NewService(pageVisitStore, nil)
+	pageVisitHandler := pagevisit.NewHandler(pageVisitService, logger)
 
 	// Health check route
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -134,6 +138,7 @@ func main() {
 	contentHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	chatHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	pageHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
+	pageVisitHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
 
 	logger.Info("Start listening on port: 8080")
 

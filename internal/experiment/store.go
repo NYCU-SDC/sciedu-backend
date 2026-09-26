@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Status string
@@ -60,6 +60,37 @@ type Record struct {
 	CourseCount      int32
 }
 
+type Participant struct {
+	ID         uuid.UUID
+	Email      string
+	Name       string
+	AvatarURL  *string
+	Roles      []string
+	DisabledAt *time.Time
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+type ParticipantAssignment struct {
+	Participant Participant
+	AssignedAt  time.Time
+}
+
+type AssignedCourse struct {
+	ID          uuid.UUID
+	Code        string
+	Title       string
+	Description *string
+	Status      CourseStatus
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+type CourseAssignment struct {
+	Course   AssignedCourse
+	LinkedAt time.Time
+}
+
 type ListFilter struct {
 	Status        *Status
 	ScheduledFrom *time.Time
@@ -91,12 +122,35 @@ type UpdateParams struct {
 	ID uuid.UUID
 }
 
-type Store struct {
-	queries *Queries
+type transactionDB interface {
+	DBTX
+	Begin(ctx context.Context) (pgx.Tx, error)
 }
 
-func NewStore(pool *pgxpool.Pool) *Store {
-	return &Store{queries: New(pool)}
+type Store struct {
+	queries *Queries
+	db      transactionDB
+}
+
+func NewStore(db transactionDB) *Store {
+	return &Store{queries: New(db), db: db}
+}
+
+func (s *Store) WithinTx(ctx context.Context, fn func(MutationRepository) error) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	txStore := &Store{queries: s.queries.WithTx(tx)}
+	if err := fn(txStore); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (s *Store) List(ctx context.Context, params ListParams) ([]Record, error) {
@@ -132,6 +186,91 @@ func (s *Store) Count(ctx context.Context, filter ListFilter) (int64, error) {
 	})
 }
 
+func (s *Store) ListParticipants(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]ParticipantAssignment, error) {
+	rows, err := s.queries.ListExperimentParticipants(ctx, ListExperimentParticipantsParams{
+		ExperimentID: experimentID,
+		Limit:        limit,
+		Offset:       offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	assignments := make([]ParticipantAssignment, 0, len(rows))
+	for _, row := range rows {
+		assignments = append(assignments, participantAssignment(
+			row.ID,
+			row.Email,
+			row.Name,
+			row.AvatarUrl,
+			row.Roles,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.AssignedAt,
+		))
+	}
+	return assignments, nil
+}
+
+func (s *Store) CountParticipants(ctx context.Context, experimentID uuid.UUID) (int64, error) {
+	return s.queries.CountExperimentParticipants(ctx, experimentID)
+}
+
+func (s *Store) ListCourses(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]CourseAssignment, error) {
+	rows, err := s.queries.ListExperimentCourses(ctx, ListExperimentCoursesParams{
+		ExperimentID: experimentID,
+		Limit:        limit,
+		Offset:       offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	assignments := make([]CourseAssignment, 0, len(rows))
+	for _, row := range rows {
+		assignments = append(assignments, courseAssignment(
+			row.ID, row.Code, row.Title, row.Description, row.Status,
+			row.CreatedAt, row.UpdatedAt, row.LinkedAt,
+		))
+	}
+	return assignments, nil
+}
+
+func (s *Store) CountCourses(ctx context.Context, experimentID uuid.UUID) (int64, error) {
+	return s.queries.CountExperimentCourses(ctx, experimentID)
+}
+
+func (s *Store) StudentExperimentAccessible(ctx context.Context, experimentID, studentID uuid.UUID) (bool, error) {
+	return s.queries.StudentExperimentAccessible(ctx, StudentExperimentAccessibleParams{
+		ExperimentID: experimentID,
+		StudentID:    studentID,
+	})
+}
+
+func (s *Store) ListStudentCourses(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]CourseAssignment, error) {
+	rows, err := s.queries.ListStudentExperimentCourses(ctx, ListStudentExperimentCoursesParams{
+		ExperimentID: experimentID,
+		Limit:        limit,
+		Offset:       offset,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	assignments := make([]CourseAssignment, 0, len(rows))
+	for _, row := range rows {
+		assignments = append(assignments, courseAssignment(
+			row.ID, row.Code, row.Title, row.Description, row.Status,
+			row.CreatedAt, row.UpdatedAt, row.LinkedAt,
+		))
+	}
+	return assignments, nil
+}
+
+func (s *Store) CountStudentCourses(ctx context.Context, experimentID uuid.UUID) (int64, error) {
+	return s.queries.CountStudentExperimentCourses(ctx, experimentID)
+}
+
 func (s *Store) Create(ctx context.Context, params CreateParams) (Record, error) {
 	configuration, err := json.Marshal(params.Configuration)
 	if err != nil {
@@ -157,6 +296,130 @@ func (s *Store) FindByID(ctx context.Context, id uuid.UUID) (Record, error) {
 		return Record{}, err
 	}
 	return s.withCounts(ctx, row)
+}
+
+func (s *Store) LockByID(ctx context.Context, id uuid.UUID) (Record, error) {
+	row, err := s.queries.LockExperimentByID(ctx, id)
+	if err != nil {
+		return Record{}, err
+	}
+	return recordFromRow(row)
+}
+
+func (s *Store) LockParticipantUsers(ctx context.Context, experimentID uuid.UUID) ([]uuid.UUID, error) {
+	return s.queries.LockExperimentParticipantUsers(ctx, experimentID)
+}
+
+func (s *Store) LockParticipantCandidates(ctx context.Context, userIDs []uuid.UUID) ([]Participant, error) {
+	rows, err := s.queries.LockParticipantCandidates(ctx, userIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	participants := make([]Participant, 0, len(rows))
+	for _, row := range rows {
+		participants = append(participants, participantFromFields(
+			row.ID,
+			row.Email,
+			row.Name,
+			row.AvatarUrl,
+			row.Roles,
+			timePtr(row.DisabledAt),
+			row.CreatedAt,
+			row.UpdatedAt,
+		))
+	}
+	return participants, nil
+}
+
+func (s *Store) LockCourseCandidates(ctx context.Context, courseIDs []uuid.UUID) ([]AssignedCourse, error) {
+	rows, err := s.queries.LockCourseCandidates(ctx, courseIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	courses := make([]AssignedCourse, 0, len(rows))
+	for _, row := range rows {
+		courses = append(courses, assignedCourse(
+			row.ID, row.Code, row.Title, row.Description, row.Status, row.CreatedAt, row.UpdatedAt,
+		))
+	}
+	return courses, nil
+}
+
+func (s *Store) HasParticipantScheduleConflict(
+	ctx context.Context,
+	experimentID uuid.UUID,
+	userIDs []uuid.UUID,
+	start time.Time,
+	end time.Time,
+) (bool, error) {
+	return s.queries.HasParticipantScheduleConflict(ctx, HasParticipantScheduleConflictParams{
+		UserIds:          userIDs,
+		ExperimentID:     experimentID,
+		ScheduledEndAt:   pgTimestamptz(end),
+		ScheduledStartAt: pgTimestamptz(start),
+	})
+}
+
+func (s *Store) AddParticipants(ctx context.Context, experimentID uuid.UUID, userIDs []uuid.UUID) ([]ParticipantAssignment, error) {
+	rows, err := s.queries.AddExperimentParticipants(ctx, AddExperimentParticipantsParams{
+		ExperimentID: experimentID,
+		UserIds:      userIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	assignments := make([]ParticipantAssignment, 0, len(rows))
+	for _, row := range rows {
+		assignments = append(assignments, participantAssignment(
+			row.ID,
+			row.Email,
+			row.Name,
+			row.AvatarUrl,
+			row.Roles,
+			row.CreatedAt,
+			row.UpdatedAt,
+			row.AssignedAt,
+		))
+	}
+	return assignments, nil
+}
+
+func (s *Store) RemoveParticipant(ctx context.Context, experimentID, userID uuid.UUID) error {
+	_, err := s.queries.RemoveExperimentParticipant(ctx, RemoveExperimentParticipantParams{
+		ExperimentID: experimentID,
+		UserID:       userID,
+	})
+	return err
+}
+
+func (s *Store) AddCourses(ctx context.Context, experimentID uuid.UUID, courseIDs []uuid.UUID) ([]CourseAssignment, error) {
+	rows, err := s.queries.AddExperimentCourses(ctx, AddExperimentCoursesParams{
+		ExperimentID: experimentID,
+		CourseIds:    courseIDs,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	assignments := make([]CourseAssignment, 0, len(rows))
+	for _, row := range rows {
+		assignments = append(assignments, courseAssignment(
+			row.ID, row.Code, row.Title, row.Description, row.Status,
+			row.CreatedAt, row.UpdatedAt, row.LinkedAt,
+		))
+	}
+	return assignments, nil
+}
+
+func (s *Store) RemoveCourse(ctx context.Context, experimentID, courseID uuid.UUID) error {
+	_, err := s.queries.RemoveExperimentCourse(ctx, RemoveExperimentCourseParams{
+		ExperimentID: experimentID,
+		CourseID:     courseID,
+	})
+	return err
 }
 
 func (s *Store) Update(ctx context.Context, params UpdateParams) (Record, error) {
@@ -256,4 +519,85 @@ func textPtr(value pgtype.Text) *string {
 		return nil
 	}
 	return &value.String
+}
+
+func timePtr(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	return &value.Time
+}
+
+func participantFromFields(
+	id uuid.UUID,
+	email string,
+	name string,
+	avatarURL pgtype.Text,
+	roles []string,
+	disabledAt *time.Time,
+	createdAt pgtype.Timestamptz,
+	updatedAt pgtype.Timestamptz,
+) Participant {
+	return Participant{
+		ID:         id,
+		Email:      email,
+		Name:       name,
+		AvatarURL:  textPtr(avatarURL),
+		Roles:      roles,
+		DisabledAt: disabledAt,
+		CreatedAt:  createdAt.Time,
+		UpdatedAt:  updatedAt.Time,
+	}
+}
+
+func participantAssignment(
+	id uuid.UUID,
+	email string,
+	name string,
+	avatarURL pgtype.Text,
+	roles []string,
+	createdAt pgtype.Timestamptz,
+	updatedAt pgtype.Timestamptz,
+	assignedAt pgtype.Timestamptz,
+) ParticipantAssignment {
+	return ParticipantAssignment{
+		Participant: participantFromFields(id, email, name, avatarURL, roles, nil, createdAt, updatedAt),
+		AssignedAt:  assignedAt.Time,
+	}
+}
+
+func assignedCourse(
+	id uuid.UUID,
+	code string,
+	title string,
+	description pgtype.Text,
+	status CourseStatus,
+	createdAt pgtype.Timestamptz,
+	updatedAt pgtype.Timestamptz,
+) AssignedCourse {
+	return AssignedCourse{
+		ID:          id,
+		Code:        code,
+		Title:       title,
+		Description: textPtr(description),
+		Status:      status,
+		CreatedAt:   createdAt.Time,
+		UpdatedAt:   updatedAt.Time,
+	}
+}
+
+func courseAssignment(
+	id uuid.UUID,
+	code string,
+	title string,
+	description pgtype.Text,
+	status CourseStatus,
+	createdAt pgtype.Timestamptz,
+	updatedAt pgtype.Timestamptz,
+	linkedAt pgtype.Timestamptz,
+) CourseAssignment {
+	return CourseAssignment{
+		Course:   assignedCourse(id, code, title, description, status, createdAt, updatedAt),
+		LinkedAt: linkedAt.Time,
+	}
 }
