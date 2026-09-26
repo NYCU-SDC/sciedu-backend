@@ -32,6 +32,7 @@ const (
 
 type HandlerService interface {
 	List(ctx context.Context, input ListInput) (ExperimentPage, error)
+	Current(ctx context.Context, studentID uuid.UUID) (CurrentExperiment, error)
 	Create(ctx context.Context, createdBy uuid.UUID, params EditableParams) (Record, error)
 	FindByID(ctx context.Context, id uuid.UUID) (Record, error)
 	ListParticipants(ctx context.Context, experimentID uuid.UUID, page, pageSize int32) (ParticipantPage, error)
@@ -156,6 +157,11 @@ type paginatedExperimentCoursesResponse struct {
 	HasNextPage bool                                 `json:"hasNextPage"`
 }
 
+type currentExperimentResponse struct {
+	Experiment experimentResponse       `json:"experiment"`
+	Courses    []assignedCourseResponse `json:"courses"`
+}
+
 func NewHandler(service HandlerService, logger *zap.Logger) *Handler {
 	if logger == nil {
 		logger = zap.NewNop()
@@ -188,6 +194,7 @@ func NewHandler(service HandlerService, logger *zap.Logger) *Handler {
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil.Set, authorizer *auth.Authorizer) {
 	managementAccess := middlewares.Append(authorizer.RequireAnyRole(auth.EXPERIMENTER, auth.ADMIN))
+	studentAccess := middlewares.Append(authorizer.RequireAnyRole(auth.STUDENT))
 	handle := func(pattern string, set *middlewareutil.Set, fn http.HandlerFunc) {
 		if set != nil {
 			fn = set.HandlerFunc(fn)
@@ -196,6 +203,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil
 	}
 
 	handle("GET /api/experiments", managementAccess, h.List)
+	handle("GET /api/experiments/current", studentAccess, h.Current)
 	handle("POST /api/experiments", managementAccess, h.Create)
 	handle("GET /api/experiments/{id}", managementAccess, h.Get)
 	handle("PUT /api/experiments/{id}", managementAccess, h.Update)
@@ -206,6 +214,29 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil
 	handle("GET /api/experiments/{id}/courses", middlewares, h.ListCourses)
 	handle("POST /api/experiments/{id}/courses", managementAccess, h.AddCourses)
 	handle("DELETE /api/experiments/{id}/courses/{courseId}", managementAccess, h.RemoveCourse)
+}
+
+func (h *Handler) Current(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger := logutil.WithContext(ctx, h.logger)
+	studentID, ok := auth.UserIDFromContext(ctx)
+	if !ok {
+		h.problemWriter.WriteError(ctx, w, handlerutil.ErrUnauthorized, logger)
+		return
+	}
+	current, err := h.service.Current(ctx, studentID)
+	if err != nil {
+		h.problemWriter.WriteError(ctx, w, err, logger)
+		return
+	}
+	courses := make([]assignedCourseResponse, 0, len(current.Courses))
+	for _, course := range current.Courses {
+		courses = append(courses, assignedCourseResponse(course))
+	}
+	handlerutil.WriteJSONResponse(w, http.StatusOK, currentExperimentResponse{
+		Experiment: responseFromRecord(current.Experiment),
+		Courses:    courses,
+	})
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {

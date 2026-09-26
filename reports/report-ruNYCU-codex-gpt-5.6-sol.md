@@ -359,3 +359,68 @@
 
 ### Next Steps
 - Review and stage the focused CORS change with the existing SCIEDU-121 PR workflow; no commit or push was performed here.
+
+## [2026-09-26] Task Record
+
+### Task Description
+- Implement SCIEDU-113 `GET /api/experiments/current` for authenticated Students, returning the current ACTIVE Experiment and its assigned PUBLISHED Courses.
+
+### Actions Taken
+- Added current-Experiment and PUBLISHED-course sqlc queries using the established half-open schedule window (`scheduled_start_at <= CURRENT_TIMESTAMP` and `CURRENT_TIMESTAMP < scheduled_end_at`).
+- Added Store and Service flow for resolving the authenticated Student's current Experiment and assigned PUBLISHED Courses.
+- Added defensive handling for invalid overlapping current Experiments without inventing a tie-breaker; valid domain writes already reject overlapping participant schedules.
+- Registered the Student-only route and reused the existing Experiment and Course response projections.
+- Added table-driven service, handler, route-authorization, and PostgreSQL integration tests, including schedule-boundary coverage.
+
+### Attempted Methods
+- The repository-wide sqlc command could not complete because the current `sqlc.yaml` references Answer query files absent from this branch. Generated only the Experiment package with sqlc v1.30.0 and removed unrelated generated model drift.
+- Attempted to verify the known disposable PostgreSQL database, but Docker CLI was unavailable in this environment; integration-tagged tests compiled and reported their database-backed cases as skipped because `EXPERIMENT_INTEGRATION_DATABASE_URL` was unset.
+
+### Verification
+- `go test ./internal/experiment` passed.
+- `go test ./...` passed.
+- `go vet ./...` passed.
+- `go build ./...` passed.
+- `go test -tags integration ./internal/experiment -count=1 -v` passed for non-database tests; all PostgreSQL-backed tests were explicitly skipped because `EXPERIMENT_INTEGRATION_DATABASE_URL` was not set.
+- `git diff --check` passed.
+- `staticcheck` and `golangci-lint` were unavailable.
+
+### Issues & Blockers
+- No SCIEDU-113 implementation blocker remains.
+- Real PostgreSQL execution of the new current-Experiment integration cases remains a verification-only follow-up.
+- `internal/experiment/queries.sql.go` was regenerated locally and remains ignored, matching the existing Experiment package convention; no generated file is added to the tracked diff.
+
+### Next Steps
+- Run the Experiment integration suite against a dedicated migrated PostgreSQL database before commit when available.
+
+## [2026-09-27] Task Record
+
+### Task Description
+- Prepare and execute a minimal local Yaak-compatible smoke test for SCIEDU-113 `GET /api/experiments/current` against the disposable `sciedu_pagevisit_test` database.
+
+### Actions Taken
+- Verified the target database name, migration state (`15`, `dirty=false`), deterministic development Student, and absence of existing Experiment fixtures using a temporary parameterized pgx helper that was removed afterward.
+- Inserted one disposable PUBLISHED Course, one current ACTIVE Experiment, its Student participant assignment, and its Course assignment in one transaction.
+- Avoided the repository's duplicate version-15 migration source by creating a temporary migration directory containing versions 1-14 plus `15_page_visits`; no repository migration was renamed or edited.
+- Started the current working-tree backend with CLI flags that override `.env`, authenticated through `/api/auth/dev-login`, and called `/api/experiments/current` with a cookie session.
+- Confirmed a 200 response containing Experiment `11300000-0000-4000-8000-000000000002` and only PUBLISHED Course `11300000-0000-4000-8000-000000000001`.
+- Stopped the temporary backend process and removed the temporary migration directory. The unrelated `q` file and recovery stash were untouched.
+
+### Attempted Methods
+- An absolute Windows `file:///C:/...` migration source failed before database migration because golang-migrate rejected the path format. The repository-style relative source `file://.tmp_sciedu113_migrations` succeeded and reported no migration required.
+- Sending Ctrl-C to the `go run` parent left the compiled child listening on port 8080. Verified the exact PID/path belonged to this run, stopped that child explicitly, and confirmed the port was no longer serving.
+
+### Verification
+- Database precheck: `current_database() = sciedu_pagevisit_test`, schema migration version 15, `dirty=false`.
+- Fixture transaction committed successfully; the target DB then contained one Experiment and one participant assignment.
+- Backend migration startup reported version 15 and `Database schema is up to date, no migration required`.
+- `POST /api/auth/dev-login` returned 200.
+- `GET /api/experiments/current` returned 200 with the expected ACTIVE Experiment and PUBLISHED Course.
+
+### Issues & Blockers
+- No smoke-test blocker remains.
+- The fixture intentionally remains only in the disposable `sciedu_pagevisit_test` database for manual Yaak testing; it was not added to repository code.
+- A 404 case was not executed because the single deterministic dev Student now has the happy-path fixture, and mutating it solely for an optional test was unnecessary.
+
+### Next Steps
+- Start the backend with the documented temporary migration-source procedure, use Yaak's cookie jar for dev-login, and call `/api/experiments/current`.
