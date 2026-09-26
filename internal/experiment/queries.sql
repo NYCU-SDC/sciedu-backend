@@ -182,6 +182,31 @@ SELECT EXISTS (
       AND CURRENT_TIMESTAMP < e.scheduled_end_at
 );
 
+-- name: ListCurrentStudentExperiments :many
+SELECT e.*
+FROM experiments e
+JOIN experiment_participants ep ON ep.experiment_id = e.id
+WHERE ep.user_id = sqlc.arg('student_id')
+  AND e.status = 'ACTIVE'
+  AND e.scheduled_start_at <= CURRENT_TIMESTAMP
+  AND CURRENT_TIMESTAMP < e.scheduled_end_at
+ORDER BY e.scheduled_start_at, e.id
+LIMIT 2;
+
+-- name: ListCurrentStudentExperimentCourses :many
+SELECT c.id,
+       c.code,
+       c.title,
+       c.description,
+       c.status,
+       c.created_at,
+       c.updated_at
+FROM experiment_courses ec
+JOIN courses c ON c.id = ec.course_id
+WHERE ec.experiment_id = sqlc.arg('experiment_id')
+  AND c.status = 'PUBLISHED'
+ORDER BY ec.linked_at DESC, c.id;
+
 -- name: ListStudentExperimentCourses :many
 SELECT c.id,
        c.code,

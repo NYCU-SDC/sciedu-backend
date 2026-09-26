@@ -35,6 +35,8 @@ type fakeRepository struct {
 	studentAccessibleFn   func(ctx context.Context, experimentID, studentID uuid.UUID) (bool, error)
 	listStudentCoursesFn  func(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]CourseAssignment, error)
 	countStudentCoursesFn func(ctx context.Context, experimentID uuid.UUID) (int64, error)
+	listCurrentFn         func(ctx context.Context, studentID uuid.UUID) ([]Record, error)
+	listCurrentCoursesFn  func(ctx context.Context, experimentID uuid.UUID) ([]AssignedCourse, error)
 	courseCandidates      []AssignedCourse
 	addCoursesFn          func(ctx context.Context, experimentID uuid.UUID, courseIDs []uuid.UUID) ([]CourseAssignment, error)
 	removeCourseFn        func(ctx context.Context, experimentID, courseID uuid.UUID) error
@@ -141,6 +143,20 @@ func (f *fakeRepository) CountStudentCourses(ctx context.Context, experimentID u
 		return f.countStudentCoursesFn(ctx, experimentID)
 	}
 	return 0, nil
+}
+
+func (f *fakeRepository) ListCurrentForStudent(ctx context.Context, studentID uuid.UUID) ([]Record, error) {
+	if f.listCurrentFn != nil {
+		return f.listCurrentFn(ctx, studentID)
+	}
+	return nil, nil
+}
+
+func (f *fakeRepository) ListCurrentCourses(ctx context.Context, experimentID uuid.UUID) ([]AssignedCourse, error) {
+	if f.listCurrentCoursesFn != nil {
+		return f.listCurrentCoursesFn(ctx, experimentID)
+	}
+	return nil, nil
 }
 
 func (f *fakeRepository) Update(ctx context.Context, params UpdateParams) (Record, error) {

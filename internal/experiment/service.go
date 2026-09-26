@@ -44,6 +44,8 @@ type Repository interface {
 	StudentExperimentAccessible(ctx context.Context, experimentID, studentID uuid.UUID) (bool, error)
 	ListStudentCourses(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]CourseAssignment, error)
 	CountStudentCourses(ctx context.Context, experimentID uuid.UUID) (int64, error)
+	ListCurrentForStudent(ctx context.Context, studentID uuid.UUID) ([]Record, error)
+	ListCurrentCourses(ctx context.Context, experimentID uuid.UUID) ([]AssignedCourse, error)
 	UpdateStatus(ctx context.Context, id uuid.UUID, status Status) (Record, error)
 	WithinTx(ctx context.Context, fn func(MutationRepository) error) error
 }
@@ -82,6 +84,11 @@ type CourseAssignmentPage struct {
 	CurrentPage int32
 	PageSize    int32
 	HasNextPage bool
+}
+
+type CurrentExperiment struct {
+	Experiment Record
+	Courses    []AssignedCourse
 }
 
 type Service struct {
@@ -176,6 +183,25 @@ func (s *Service) FindByID(ctx context.Context, id uuid.UUID) (Record, error) {
 		return Record{}, databaseutil.WrapDBErrorWithKeyValue(err, "experiments", "id", id.String(), s.logger, "get experiment")
 	}
 	return record, nil
+}
+
+func (s *Service) Current(ctx context.Context, studentID uuid.UUID) (CurrentExperiment, error) {
+	experiments, err := s.repo.ListCurrentForStudent(ctx, studentID)
+	if err != nil {
+		return CurrentExperiment{}, databaseutil.WrapDBError(err, s.logger, "find current student experiment")
+	}
+	if len(experiments) == 0 {
+		return CurrentExperiment{}, handlerutil.NewNotFoundError("experiments", "", "", "current experiment not found")
+	}
+	if len(experiments) > 1 {
+		return CurrentExperiment{}, fmt.Errorf("multiple current experiments found for student")
+	}
+
+	courses, err := s.repo.ListCurrentCourses(ctx, experiments[0].ID)
+	if err != nil {
+		return CurrentExperiment{}, databaseutil.WrapDBError(err, s.logger, "list current student experiment courses")
+	}
+	return CurrentExperiment{Experiment: experiments[0], Courses: courses}, nil
 }
 
 func (s *Service) ListParticipants(ctx context.Context, experimentID uuid.UUID, page, pageSize int32) (ParticipantPage, error) {
