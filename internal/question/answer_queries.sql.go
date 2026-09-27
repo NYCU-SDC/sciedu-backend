@@ -12,15 +12,44 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const answerExperimentConfiguration = `-- name: AnswerExperimentConfiguration :one
+SELECT configuration FROM experiments WHERE id = $1
+`
+
+func (q *Queries) AnswerExperimentConfiguration(ctx context.Context, id uuid.UUID) ([]byte, error) {
+	row := q.db.QueryRow(ctx, answerExperimentConfiguration, id)
+	var configuration []byte
+	err := row.Scan(&configuration)
+	return configuration, err
+}
+
+const countAnswersByQuestionAndExperiment = `-- name: CountAnswersByQuestionAndExperiment :one
+SELECT COUNT(*) FROM answers
+WHERE question_id = $1 AND experiment_id = $2
+`
+
+type CountAnswersByQuestionAndExperimentParams struct {
+	QuestionID   uuid.UUID
+	ExperimentID uuid.UUID
+}
+
+func (q *Queries) CountAnswersByQuestionAndExperiment(ctx context.Context, arg CountAnswersByQuestionAndExperimentParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countAnswersByQuestionAndExperiment, arg.QuestionID, arg.ExperimentID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAnswer = `-- name: CreateAnswer :one
-INSERT INTO answers (question_id, user_id, selected_option_id, text_answer)
-VALUES ($1, $2, $3, $4)
-RETURNING id, question_id, user_id, selected_option_id, text_answer, created_at, updated_at
+INSERT INTO answers (question_id, user_id, experiment_id, selected_option_id, text_answer)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, question_id, user_id, experiment_id, selected_option_id, text_answer, created_at, updated_at
 `
 
 type CreateAnswerParams struct {
 	QuestionID       uuid.UUID
 	UserID           uuid.UUID
+	ExperimentID     uuid.UUID
 	SelectedOptionID pgtype.UUID
 	TextAnswer       pgtype.Text
 }
@@ -29,6 +58,7 @@ func (q *Queries) CreateAnswer(ctx context.Context, arg CreateAnswerParams) (Ans
 	row := q.db.QueryRow(ctx, createAnswer,
 		arg.QuestionID,
 		arg.UserID,
+		arg.ExperimentID,
 		arg.SelectedOptionID,
 		arg.TextAnswer,
 	)
@@ -37,6 +67,7 @@ func (q *Queries) CreateAnswer(ctx context.Context, arg CreateAnswerParams) (Ans
 		&i.ID,
 		&i.QuestionID,
 		&i.UserID,
+		&i.ExperimentID,
 		&i.SelectedOptionID,
 		&i.TextAnswer,
 		&i.CreatedAt,
@@ -45,31 +76,349 @@ func (q *Queries) CreateAnswer(ctx context.Context, arg CreateAnswerParams) (Ans
 	return i, err
 }
 
-const listAnswersByQuestion = `-- name: ListAnswersByQuestion :many
-SELECT id, question_id, user_id, selected_option_id, text_answer, created_at, updated_at
-FROM answers
-WHERE question_id = $1
-ORDER BY created_at DESC
+const createAnswerResult = `-- name: CreateAnswerResult :one
+INSERT INTO answer_results (answer_id, status, method, is_correct, graded_at, correct_answer_version)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING answer_id, status, method, is_correct, graded_at, correct_answer_version
 `
 
-func (q *Queries) ListAnswersByQuestion(ctx context.Context, questionID uuid.UUID) ([]Answer, error) {
-	rows, err := q.db.Query(ctx, listAnswersByQuestion, questionID)
+type CreateAnswerResultParams struct {
+	AnswerID             uuid.UUID
+	Status               string
+	Method               pgtype.Text
+	IsCorrect            pgtype.Bool
+	GradedAt             pgtype.Timestamptz
+	CorrectAnswerVersion pgtype.Int8
+}
+
+func (q *Queries) CreateAnswerResult(ctx context.Context, arg CreateAnswerResultParams) (AnswerResult, error) {
+	row := q.db.QueryRow(ctx, createAnswerResult,
+		arg.AnswerID,
+		arg.Status,
+		arg.Method,
+		arg.IsCorrect,
+		arg.GradedAt,
+		arg.CorrectAnswerVersion,
+	)
+	var i AnswerResult
+	err := row.Scan(
+		&i.AnswerID,
+		&i.Status,
+		&i.Method,
+		&i.IsCorrect,
+		&i.GradedAt,
+		&i.CorrectAnswerVersion,
+	)
+	return i, err
+}
+
+const findAnswerResultByQuestionAndID = `-- name: FindAnswerResultByQuestionAndID :one
+SELECT a.id AS answer_id, a.question_id, a.user_id, a.experiment_id,
+       ar.status AS grading_status, ar.method AS grading_method, ar.is_correct, ar.graded_at,
+       ar.correct_answer_version, ca.version AS current_correct_answer_version
+FROM answers AS a
+LEFT JOIN answer_results AS ar ON ar.answer_id = a.id
+LEFT JOIN correct_answers AS ca ON ca.question_id = a.question_id
+WHERE a.question_id = $1 AND a.id = $2
+`
+
+type FindAnswerResultByQuestionAndIDParams struct {
+	QuestionID uuid.UUID
+	AnswerID   uuid.UUID
+}
+
+type FindAnswerResultByQuestionAndIDRow struct {
+	AnswerID                    uuid.UUID
+	QuestionID                  uuid.UUID
+	UserID                      uuid.UUID
+	ExperimentID                uuid.UUID
+	GradingStatus               pgtype.Text
+	GradingMethod               pgtype.Text
+	IsCorrect                   pgtype.Bool
+	GradedAt                    pgtype.Timestamptz
+	CorrectAnswerVersion        pgtype.Int8
+	CurrentCorrectAnswerVersion pgtype.Int8
+}
+
+func (q *Queries) FindAnswerResultByQuestionAndID(ctx context.Context, arg FindAnswerResultByQuestionAndIDParams) (FindAnswerResultByQuestionAndIDRow, error) {
+	row := q.db.QueryRow(ctx, findAnswerResultByQuestionAndID, arg.QuestionID, arg.AnswerID)
+	var i FindAnswerResultByQuestionAndIDRow
+	err := row.Scan(
+		&i.AnswerID,
+		&i.QuestionID,
+		&i.UserID,
+		&i.ExperimentID,
+		&i.GradingStatus,
+		&i.GradingMethod,
+		&i.IsCorrect,
+		&i.GradedAt,
+		&i.CorrectAnswerVersion,
+		&i.CurrentCorrectAnswerVersion,
+	)
+	return i, err
+}
+
+const isAnswerManagementScopeReachable = `-- name: IsAnswerManagementScopeReachable :one
+SELECT EXISTS (
+    SELECT 1 FROM experiments AS e
+    JOIN experiment_courses AS ec ON ec.experiment_id = e.id
+    JOIN pages AS p ON p.course_id = ec.course_id
+    JOIN page_blocks AS pb ON pb.page_id = p.id
+    WHERE e.id = $1
+      AND pb.question_id = $2
+) AS reachable
+`
+
+type IsAnswerManagementScopeReachableParams struct {
+	ExperimentID uuid.UUID
+	QuestionID   pgtype.UUID
+}
+
+func (q *Queries) IsAnswerManagementScopeReachable(ctx context.Context, arg IsAnswerManagementScopeReachableParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isAnswerManagementScopeReachable, arg.ExperimentID, arg.QuestionID)
+	var reachable bool
+	err := row.Scan(&reachable)
+	return reachable, err
+}
+
+const listAnswerSynchronizationCandidates = `-- name: ListAnswerSynchronizationCandidates :many
+SELECT a.id, a.selected_option_id, ca.selected_option_id AS correct_option_id, ca.version
+FROM answers AS a
+JOIN questions AS q ON q.id = a.question_id
+JOIN experiments AS e ON e.id = a.experiment_id
+JOIN correct_answers AS ca ON ca.question_id = a.question_id
+LEFT JOIN answer_results AS ar ON ar.answer_id = a.id
+WHERE a.question_id = $1 AND ca.version = $2
+  AND q.type = 'CHOICE' AND ca.type = 'CHOICE' AND a.selected_option_id IS NOT NULL
+  AND e.configuration->>'gradingMode' = 'AUTOMATIC'
+  AND ar.method IS DISTINCT FROM 'MANUAL'
+  AND (ar.answer_id IS NULL OR ar.correct_answer_version IS NULL
+       OR ar.correct_answer_version < ca.version
+       OR (ar.correct_answer_version = ca.version AND ar.status <> 'GRADED'))
+ORDER BY a.id
+LIMIT $3
+`
+
+type ListAnswerSynchronizationCandidatesParams struct {
+	QuestionID    uuid.UUID
+	TargetVersion int64
+	BatchSize     int32
+}
+
+type ListAnswerSynchronizationCandidatesRow struct {
+	ID               uuid.UUID
+	SelectedOptionID pgtype.UUID
+	CorrectOptionID  pgtype.UUID
+	Version          int64
+}
+
+func (q *Queries) ListAnswerSynchronizationCandidates(ctx context.Context, arg ListAnswerSynchronizationCandidatesParams) ([]ListAnswerSynchronizationCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, listAnswerSynchronizationCandidates, arg.QuestionID, arg.TargetVersion, arg.BatchSize)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Answer
+	var items []ListAnswerSynchronizationCandidatesRow
 	for rows.Next() {
-		var i Answer
+		var i ListAnswerSynchronizationCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SelectedOptionID,
+			&i.CorrectOptionID,
+			&i.Version,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAnswersByQuestionAndExperimentPage = `-- name: ListAnswersByQuestionAndExperimentPage :many
+SELECT a.id, a.question_id, a.user_id, a.experiment_id, a.selected_option_id, a.text_answer,
+       a.created_at, ar.status AS grading_status, ar.method AS grading_method, ar.is_correct,
+       ar.graded_at, ar.correct_answer_version, ca.version AS current_correct_answer_version
+FROM answers AS a
+LEFT JOIN answer_results AS ar ON ar.answer_id = a.id
+LEFT JOIN correct_answers AS ca ON ca.question_id = a.question_id
+WHERE a.question_id = $1 AND a.experiment_id = $2
+ORDER BY a.created_at DESC, a.id DESC
+LIMIT $4 OFFSET $3
+`
+
+type ListAnswersByQuestionAndExperimentPageParams struct {
+	QuestionID   uuid.UUID
+	ExperimentID uuid.UUID
+	PageOffset   int32
+	PageSize     int32
+}
+
+type ListAnswersByQuestionAndExperimentPageRow struct {
+	ID                          uuid.UUID
+	QuestionID                  uuid.UUID
+	UserID                      uuid.UUID
+	ExperimentID                uuid.UUID
+	SelectedOptionID            pgtype.UUID
+	TextAnswer                  pgtype.Text
+	CreatedAt                   pgtype.Timestamptz
+	GradingStatus               pgtype.Text
+	GradingMethod               pgtype.Text
+	IsCorrect                   pgtype.Bool
+	GradedAt                    pgtype.Timestamptz
+	CorrectAnswerVersion        pgtype.Int8
+	CurrentCorrectAnswerVersion pgtype.Int8
+}
+
+func (q *Queries) ListAnswersByQuestionAndExperimentPage(ctx context.Context, arg ListAnswersByQuestionAndExperimentPageParams) ([]ListAnswersByQuestionAndExperimentPageRow, error) {
+	rows, err := q.db.Query(ctx, listAnswersByQuestionAndExperimentPage,
+		arg.QuestionID,
+		arg.ExperimentID,
+		arg.PageOffset,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAnswersByQuestionAndExperimentPageRow
+	for rows.Next() {
+		var i ListAnswersByQuestionAndExperimentPageRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.QuestionID,
 			&i.UserID,
+			&i.ExperimentID,
 			&i.SelectedOptionID,
 			&i.TextAnswer,
 			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.GradingStatus,
+			&i.GradingMethod,
+			&i.IsCorrect,
+			&i.GradedAt,
+			&i.CorrectAnswerVersion,
+			&i.CurrentCorrectAnswerVersion,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockAnswerQuestion = `-- name: LockAnswerQuestion :one
+SELECT id FROM questions WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) LockAnswerQuestion(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, lockAnswerQuestion, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
+const regradeAnswerResultForVersion = `-- name: RegradeAnswerResultForVersion :one
+WITH current_answer AS MATERIALIZED (
+    SELECT ca.question_id, ca.type, ca.selected_option_id, ca.reference_answer, ca.version, ca.answer_result_sync_status, ca.updated_at FROM correct_answers AS ca
+    JOIN answers AS a ON a.question_id = ca.question_id
+    WHERE a.id = $6 AND ca.version = $5
+    FOR SHARE OF ca
+)
+INSERT INTO answer_results AS ar (answer_id, status, method, is_correct, graded_at, correct_answer_version)
+SELECT a.id, $1::text, $2::text, $3::boolean,
+       $4::timestamptz, $5::bigint
+FROM answers AS a
+JOIN questions AS q ON q.id = a.question_id
+JOIN experiments AS e ON e.id = a.experiment_id
+JOIN current_answer AS ca ON ca.question_id = a.question_id
+WHERE a.id = $6 AND ca.version = $5
+  AND q.type = 'CHOICE' AND ca.type = 'CHOICE'
+  AND a.selected_option_id IS NOT NULL
+  AND e.configuration->>'gradingMode' = 'AUTOMATIC'
+  AND $1 = 'GRADED' AND $2 = 'DETERMINISTIC'
+  AND $3 = (a.selected_option_id = ca.selected_option_id)
+ON CONFLICT (answer_id) DO UPDATE
+SET status = EXCLUDED.status, method = EXCLUDED.method, is_correct = EXCLUDED.is_correct,
+    graded_at = EXCLUDED.graded_at, correct_answer_version = EXCLUDED.correct_answer_version
+WHERE ar.method IS DISTINCT FROM 'MANUAL'
+  AND (ar.correct_answer_version IS NULL OR ar.correct_answer_version < EXCLUDED.correct_answer_version
+       OR (ar.correct_answer_version = EXCLUDED.correct_answer_version AND ar.status <> 'GRADED'))
+RETURNING ar.answer_id, ar.status, ar.method, ar.is_correct, ar.graded_at, ar.correct_answer_version
+`
+
+type RegradeAnswerResultForVersionParams struct {
+	Status        string
+	Method        pgtype.Text
+	IsCorrect     pgtype.Bool
+	GradedAt      pgtype.Timestamptz
+	TargetVersion int64
+	AnswerID      uuid.UUID
+}
+
+func (q *Queries) RegradeAnswerResultForVersion(ctx context.Context, arg RegradeAnswerResultForVersionParams) (AnswerResult, error) {
+	row := q.db.QueryRow(ctx, regradeAnswerResultForVersion,
+		arg.Status,
+		arg.Method,
+		arg.IsCorrect,
+		arg.GradedAt,
+		arg.TargetVersion,
+		arg.AnswerID,
+	)
+	var i AnswerResult
+	err := row.Scan(
+		&i.AnswerID,
+		&i.Status,
+		&i.Method,
+		&i.IsCorrect,
+		&i.GradedAt,
+		&i.CorrectAnswerVersion,
+	)
+	return i, err
+}
+
+const resolveAnswerSubmissionContexts = `-- name: ResolveAnswerSubmissionContexts :many
+SELECT e.id AS experiment_id, e.configuration
+FROM experiment_participants AS ep
+JOIN experiments AS e ON e.id = ep.experiment_id
+JOIN experiment_courses AS ec ON ec.experiment_id = e.id
+JOIN courses AS c ON c.id = ec.course_id
+JOIN pages AS p ON p.course_id = c.id
+JOIN page_blocks AS pb ON pb.page_id = p.id
+WHERE ep.user_id = $1
+  AND pb.question_id = $2
+  AND e.status = 'ACTIVE'
+  AND e.scheduled_start_at <= CURRENT_TIMESTAMP
+  AND e.scheduled_end_at >= CURRENT_TIMESTAMP
+  AND c.status = 'PUBLISHED'
+GROUP BY e.id, e.configuration
+ORDER BY e.id
+LIMIT 2
+`
+
+type ResolveAnswerSubmissionContextsParams struct {
+	UserID     uuid.UUID
+	QuestionID pgtype.UUID
+}
+
+type ResolveAnswerSubmissionContextsRow struct {
+	ExperimentID  uuid.UUID
+	Configuration []byte
+}
+
+func (q *Queries) ResolveAnswerSubmissionContexts(ctx context.Context, arg ResolveAnswerSubmissionContextsParams) ([]ResolveAnswerSubmissionContextsRow, error) {
+	rows, err := q.db.Query(ctx, resolveAnswerSubmissionContexts, arg.UserID, arg.QuestionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ResolveAnswerSubmissionContextsRow
+	for rows.Next() {
+		var i ResolveAnswerSubmissionContextsRow
+		if err := rows.Scan(&i.ExperimentID, &i.Configuration); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
