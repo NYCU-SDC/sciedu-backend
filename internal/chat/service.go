@@ -61,6 +61,8 @@ type MessageReturn struct {
 	ID         uuid.UUID     `json:"id"`
 	Content    string        `json:"content"`
 	Parts      []MessagePart `json:"parts,omitempty"`
+	Characters []Character   `json:"characters,omitempty"`
+	AgentRuns  []AgentRun    `json:"agentRuns,omitempty"`
 	Role       MessageRole   `json:"role"`
 	PreviousID uuid.UUID     `json:"previousID,omitempty"`
 	Status     MessageStatus `json:"status"`
@@ -115,12 +117,17 @@ func (s *ChatService) fetchMessages(ctx context.Context, chatID uuid.UUID) ([]Me
 				return nil, fmt.Errorf("decode message agentic data: %w", err)
 			}
 			ret.Parts = data.Parts
+			ret.Characters = data.Cast
+			ret.AgentRuns = data.AgentRuns
+			ret.Content = visibleText(data.Parts)
 		}
 		if stream, ok := s.streamHub.GetStream(msg.ID); ok {
 			_, content, data, agentic, _ := stream.Get()
 			ret.Content = content
 			if agentic {
 				ret.Parts = data.Parts
+				ret.Characters = data.Cast
+				ret.AgentRuns = data.AgentRuns
 			}
 		}
 		result = append(result, ret)
@@ -529,25 +536,10 @@ func completedAgenticStream(data AgenticData) <-chan StreamChunk {
 		chunks = append(chunks, agentChunk(AgentEvent{Type: AgentEventCast, Characters: data.Cast}))
 	}
 
-	activeAgent := ""
-	for rawIndex, part := range data.Parts {
-		if part.Agent != activeAgent {
-			if activeAgent != "" {
-				chunks = append(chunks, agentChunk(AgentEvent{Type: AgentEventAgentEnd, Agent: activeAgent}))
-			}
-			activeAgent = part.Agent
-			chunks = append(chunks, agentChunk(AgentEvent{Type: AgentEventAgentStart, Agent: activeAgent}))
-		}
-
-		index := int32(rawIndex)
-		startPart := partStartSnapshot(part)
-		chunks = append(chunks,
-			agentChunk(AgentEvent{Type: AgentEventPartStart, Index: &index, Part: &startPart}),
-			agentChunk(AgentEvent{Type: AgentEventPartEnd, Index: &index, Part: &part}),
-		)
-	}
-	if activeAgent != "" {
-		chunks = append(chunks, agentChunk(AgentEvent{Type: AgentEventAgentEnd, Agent: activeAgent}))
+	if len(data.AgentRuns) > 0 {
+		chunks = appendAgentRunSnapshot(chunks, data)
+	} else {
+		chunks = appendLegacyPartSnapshot(chunks, data.Parts)
 	}
 	chunks = append(chunks, agentChunk(AgentEvent{
 		Type:         AgentEventDone,
@@ -561,6 +553,87 @@ func completedAgenticStream(data AgenticData) <-chan StreamChunk {
 	}
 	close(ch)
 	return ch
+}
+
+// appendAgentRunSnapshot replays persisted invocations rather than treating
+// consecutive parts from the same character as a single run.
+func appendAgentRunSnapshot(chunks []StreamChunk, data AgenticData) []StreamChunk {
+	runIndices := make(map[string]int, len(data.AgentRuns))
+	for i, run := range data.AgentRuns {
+		runIndices[run.ID] = i
+	}
+	var active []AgentRun
+	closeRun := func() {
+		run := active[len(active)-1]
+		chunks = append(chunks, agentChunk(AgentEvent{Type: AgentEventAgentEnd, Agent: run.Agent}))
+		active = active[:len(active)-1]
+	}
+	startRun := func(run AgentRun) {
+		for len(active) > 0 && active[len(active)-1].ID != run.ParentRunID {
+			closeRun()
+		}
+		var parent string
+		if i, ok := runIndices[run.ParentRunID]; ok {
+			parent = data.AgentRuns[i].Agent
+		}
+		chunks = append(chunks, agentChunk(AgentEvent{
+			Type:       AgentEventAgentStart,
+			Agent:      run.Agent,
+			Parent:     parent,
+			SummonedBy: run.SummonedBy,
+		}))
+		active = append(active, run)
+	}
+
+	nextRun := 0
+	for i, part := range data.Parts {
+		if target, ok := runIndices[part.AgentRunID]; ok {
+			for nextRun <= target {
+				startRun(data.AgentRuns[nextRun])
+				nextRun++
+			}
+			for len(active) > 0 && active[len(active)-1].ID != part.AgentRunID {
+				closeRun()
+			}
+		}
+		chunks = appendPartSnapshot(chunks, int32(i), part)
+	}
+	for nextRun < len(data.AgentRuns) {
+		startRun(data.AgentRuns[nextRun])
+		nextRun++
+	}
+	for len(active) > 0 {
+		closeRun()
+	}
+	return chunks
+}
+
+// Older snapshots do not contain invocation IDs. Keep their existing replay
+// behavior without inventing run IDs that would change on each reload.
+func appendLegacyPartSnapshot(chunks []StreamChunk, parts []MessagePart) []StreamChunk {
+	var activeAgent string
+	for i, part := range parts {
+		if part.Agent != activeAgent {
+			if activeAgent != "" {
+				chunks = append(chunks, agentChunk(AgentEvent{Type: AgentEventAgentEnd, Agent: activeAgent}))
+			}
+			activeAgent = part.Agent
+			chunks = append(chunks, agentChunk(AgentEvent{Type: AgentEventAgentStart, Agent: activeAgent}))
+		}
+		chunks = appendPartSnapshot(chunks, int32(i), part)
+	}
+	if activeAgent != "" {
+		chunks = append(chunks, agentChunk(AgentEvent{Type: AgentEventAgentEnd, Agent: activeAgent}))
+	}
+	return chunks
+}
+
+func appendPartSnapshot(chunks []StreamChunk, index int32, part MessagePart) []StreamChunk {
+	startPart := partStartSnapshot(part)
+	return append(chunks,
+		agentChunk(AgentEvent{Type: AgentEventPartStart, Index: &index, Part: &startPart}),
+		agentChunk(AgentEvent{Type: AgentEventPartEnd, Index: &index, Part: &part}),
+	)
 }
 
 func partStartSnapshot(part MessagePart) MessagePart {
