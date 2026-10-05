@@ -16,6 +16,12 @@ type Repository interface {
 	ProgressByStudentCourse(ctx context.Context, studentID, courseID uuid.UUID) ([]ProgressRow, error)
 	UpsertReach(ctx context.Context, studentID, pageID uuid.UUID, reachedAt time.Time) (ProgressRow, error)
 	UpsertComplete(ctx context.Context, studentID, pageID uuid.UUID, completedAt time.Time) (ProgressRow, error)
+
+	ListCourseParticipants(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]Participant, error)
+	CountCourseParticipants(ctx context.Context, experimentID uuid.UUID) (int64, error)
+	ProgressForParticipants(ctx context.Context, courseID uuid.UUID, studentIDs []uuid.UUID) (map[uuid.UUID][]ProgressRow, error)
+	ExperimentCourseExists(ctx context.Context, experimentID, courseID uuid.UUID) (bool, error)
+	ParticipantInExperiment(ctx context.Context, experimentID, studentID uuid.UUID) (bool, error)
 }
 
 type CurrentExperimentFinder interface {
@@ -125,6 +131,89 @@ func (s *Service) authorizeStudentCourse(ctx context.Context, studentID, courseI
 		return ErrForbidden
 	}
 	return nil
+}
+
+const (
+	maxMgmtPageSize = 100
+	minMgmtPage     = 1
+)
+
+func (s *Service) ListCourseStudentProgress(ctx context.Context, input ListCourseStudentProgressInput) (StudentCourseProgressPage, error) {
+	if input.Page < minMgmtPage || input.PageSize < 1 || input.PageSize > maxMgmtPageSize {
+		return StudentCourseProgressPage{}, fmt.Errorf("%w: page must be >= 1 and pageSize between 1 and %d", ErrInvalidInput, maxMgmtPageSize)
+	}
+
+	exists, err := s.repo.ExperimentCourseExists(ctx, input.ExperimentID, input.CourseID)
+	if err != nil {
+		return StudentCourseProgressPage{}, fmt.Errorf("check experiment-course assignment: %w", err)
+	}
+	if !exists {
+		return StudentCourseProgressPage{}, ErrNotFound
+	}
+
+	total, err := s.repo.CountCourseParticipants(ctx, input.ExperimentID)
+	if err != nil {
+		return StudentCourseProgressPage{}, fmt.Errorf("count participants: %w", err)
+	}
+
+	offset := int64(input.Page-1) * int64(input.PageSize)
+	participants, err := s.repo.ListCourseParticipants(ctx, input.ExperimentID, input.PageSize, offset)
+	if err != nil {
+		return StudentCourseProgressPage{}, fmt.Errorf("list participants: %w", err)
+	}
+
+	pages, err := s.repo.PagesByCourse(ctx, input.CourseID)
+	if err != nil {
+		return StudentCourseProgressPage{}, fmt.Errorf("list pages: %w", err)
+	}
+
+	ids := make([]uuid.UUID, 0, len(participants))
+	for _, p := range participants {
+		ids = append(ids, p.ID)
+	}
+	progressByStudent, err := s.repo.ProgressForParticipants(ctx, input.CourseID, ids)
+	if err != nil {
+		return StudentCourseProgressPage{}, fmt.Errorf("fetch participant progress: %w", err)
+	}
+
+	items := make([]StudentCourseProgress, 0, len(participants))
+	for _, p := range participants {
+		summary, _ := summarize(pages, progressByStudent[p.ID])
+		items = append(items, StudentCourseProgress{Participant: p, Summary: summary})
+	}
+
+	totalPages := int32(0)
+	if total > 0 {
+		totalPages = int32((total + int64(input.PageSize) - 1) / int64(input.PageSize))
+	}
+	return StudentCourseProgressPage{
+		Items:       items,
+		TotalPages:  totalPages,
+		TotalItems:  int32(total),
+		CurrentPage: input.Page,
+		PageSize:    input.PageSize,
+		HasNextPage: input.Page < totalPages,
+	}, nil
+}
+
+func (s *Service) GetStudentCourseProgress(ctx context.Context, studentID, experimentID, courseID uuid.UUID) (CourseProgressDetail, error) {
+	assigned, err := s.repo.ExperimentCourseExists(ctx, experimentID, courseID)
+	if err != nil {
+		return CourseProgressDetail{}, fmt.Errorf("check experiment-course assignment: %w", err)
+	}
+	if !assigned {
+		return CourseProgressDetail{}, ErrNotFound
+	}
+
+	participates, err := s.repo.ParticipantInExperiment(ctx, experimentID, studentID)
+	if err != nil {
+		return CourseProgressDetail{}, fmt.Errorf("check participant membership: %w", err)
+	}
+	if !participates {
+		return CourseProgressDetail{}, ErrNotFound
+	}
+
+	return s.buildDetail(ctx, studentID, courseID)
 }
 
 func (s *Service) buildDetail(ctx context.Context, studentID, courseID uuid.UUID) (CourseProgressDetail, error) {

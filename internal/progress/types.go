@@ -64,3 +64,19 @@ type StudentCourseProgress struct {
 	Participant Participant
 	Summary     CourseProgressSummary
 }
+
+type StudentCourseProgressPage struct {
+	Items       []StudentCourseProgress
+	TotalPages  int32
+	TotalItems  int32
+	CurrentPage int32
+	PageSize    int32
+	HasNextPage bool
+}
+
+type ListCourseStudentProgressInput struct {
+	ExperimentID uuid.UUID
+	CourseID     uuid.UUID
+	Page         int32
+	PageSize     int32
+}
