@@ -14,7 +14,6 @@ const (
 	StatusCompleted  Status = "COMPLETED"
 )
 
-// Page is a snapshot of a page used for progress derivation.
 type PageInfo struct {
 	ID           uuid.UUID
 	CourseID     uuid.UUID
@@ -22,7 +21,6 @@ type PageInfo struct {
 	DisplayOrder int32
 }
 
-// ProgressRow is a single student's progress on a single page.
 type ProgressRow struct {
 	StudentID   uuid.UUID
 	PageID      uuid.UUID
@@ -31,7 +29,6 @@ type ProgressRow struct {
 	CompletedAt *time.Time
 }
 
-// PageProgressView is the per-page view returned by Progress APIs.
 type PageProgressView struct {
 	PageID      uuid.UUID
 	PageNumber  int32
@@ -55,7 +52,6 @@ type CourseProgressDetail struct {
 	Pages    []PageProgressView
 }
 
-// Participant is the minimal user shape used by Progress listing endpoints.
 type Participant struct {
 	ID         uuid.UUID
 	Email      string
@@ -64,7 +60,6 @@ type Participant struct {
 	AssignedAt time.Time
 }
 
-// StudentCourseProgress combines participant identity with their summary.
 type StudentCourseProgress struct {
 	Participant Participant
 	Summary     CourseProgressSummary
