@@ -47,6 +47,9 @@ SELECT u.id,
        u.email,
        u.name,
        u.avatar_url,
+       u.roles::text[] AS roles,
+       u.created_at,
+       u.updated_at,
        ep.assigned_at
 FROM experiment_participants ep
 JOIN users u ON u.id = ep.user_id

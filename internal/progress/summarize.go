@@ -12,7 +12,7 @@ func summarize(pages []PageInfo, rows []ProgressRow) (CourseProgressSummary, []P
 
 	views := make([]PageProgressView, 0, len(pages))
 	var reached, completed int32
-	var highestReachedPage *uuid.UUID
+	var highestReachedPage *ProgressPageReference
 	var highestOrder int32 = -1
 
 	for i, p := range pages {
@@ -33,8 +33,11 @@ func summarize(pages []PageInfo, rows []ProgressRow) (CourseProgressSummary, []P
 			}
 			if p.DisplayOrder > highestOrder {
 				highestOrder = p.DisplayOrder
-				id := p.ID
-				highestReachedPage = &id
+				highestReachedPage = &ProgressPageReference{
+					PageID:     p.ID,
+					PageNumber: pageNumber,
+					Title:      p.Title,
+				}
 			}
 		}
 		views = append(views, view)

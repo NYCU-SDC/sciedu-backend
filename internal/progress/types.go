@@ -37,19 +37,27 @@ type PageProgressView struct {
 	CompletedAt *time.Time
 }
 
+type ProgressPageReference struct {
+	PageID     uuid.UUID
+	PageNumber int32
+	Title      string
+}
+
 type CourseProgressSummary struct {
 	TotalPages           int32
 	ReachedPages         int32
 	CompletedPages       int32
 	CompletionPercentage int32
 	Status               Status
-	HighestReachedPage   *uuid.UUID
+	HighestReachedPage   *ProgressPageReference
 }
 
 type CourseProgressDetail struct {
-	CourseID uuid.UUID
-	Summary  CourseProgressSummary
-	Pages    []PageProgressView
+	StudentID    uuid.UUID
+	ExperimentID uuid.UUID
+	CourseID     uuid.UUID
+	Summary      CourseProgressSummary
+	Pages        []PageProgressView
 }
 
 type Participant struct {
@@ -57,6 +65,9 @@ type Participant struct {
 	Email      string
 	Name       string
 	AvatarURL  *string
+	Roles      []string
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 	AssignedAt time.Time
 }
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -64,10 +65,11 @@ func NewService(repo Repository, experiment CurrentExperimentFinder, access Stud
 }
 
 func (s *Service) GetMyCourseProgress(ctx context.Context, studentID, courseID uuid.UUID) (CourseProgressDetail, error) {
-	if err := s.authorizeStudentCourse(ctx, studentID, courseID); err != nil {
+	expID, err := s.authorizeStudentCourse(ctx, studentID, courseID)
+	if err != nil {
 		return CourseProgressDetail{}, err
 	}
-	return s.buildDetail(ctx, studentID, courseID)
+	return s.buildDetail(ctx, studentID, expID, courseID)
 }
 
 func (s *Service) ReachPage(ctx context.Context, studentID, pageID uuid.UUID) (CourseProgressDetail, error) {
@@ -75,13 +77,14 @@ func (s *Service) ReachPage(ctx context.Context, studentID, pageID uuid.UUID) (C
 	if err != nil {
 		return CourseProgressDetail{}, err
 	}
-	if err := s.authorizeStudentCourse(ctx, studentID, courseID); err != nil {
+	expID, err := s.authorizeStudentCourse(ctx, studentID, courseID)
+	if err != nil {
 		return CourseProgressDetail{}, err
 	}
 	if _, err := s.repo.UpsertReach(ctx, studentID, pageID, s.now().UTC()); err != nil {
 		return CourseProgressDetail{}, fmt.Errorf("upsert reach: %w", err)
 	}
-	return s.buildDetail(ctx, studentID, courseID)
+	return s.buildDetail(ctx, studentID, expID, courseID)
 }
 
 func (s *Service) CompletePage(ctx context.Context, studentID, pageID uuid.UUID) (CourseProgressDetail, error) {
@@ -89,13 +92,14 @@ func (s *Service) CompletePage(ctx context.Context, studentID, pageID uuid.UUID)
 	if err != nil {
 		return CourseProgressDetail{}, err
 	}
-	if err := s.authorizeStudentCourse(ctx, studentID, courseID); err != nil {
+	expID, err := s.authorizeStudentCourse(ctx, studentID, courseID)
+	if err != nil {
 		return CourseProgressDetail{}, err
 	}
 	if _, err := s.repo.UpsertComplete(ctx, studentID, pageID, s.now().UTC()); err != nil {
 		return CourseProgressDetail{}, fmt.Errorf("upsert complete: %w", err)
 	}
-	return s.buildDetail(ctx, studentID, courseID)
+	return s.buildDetail(ctx, studentID, expID, courseID)
 }
 
 func (s *Service) resolvePageCourse(ctx context.Context, pageID uuid.UUID) (uuid.UUID, error) {
@@ -109,28 +113,28 @@ func (s *Service) resolvePageCourse(ctx context.Context, pageID uuid.UUID) (uuid
 	return page.CourseID, nil
 }
 
-// Order matters: a missing current experiment yields ErrNotFound before any
-// course-level check can leak into ErrForbidden.
-func (s *Service) authorizeStudentCourse(ctx context.Context, studentID, courseID uuid.UUID) error {
-	_, found, err := s.experiment.CurrentExperimentForStudent(ctx, studentID)
+// Order matters: a missing current experiment yields NotFound before any
+// course-level check can leak into Forbidden.
+func (s *Service) authorizeStudentCourse(ctx context.Context, studentID, courseID uuid.UUID) (uuid.UUID, error) {
+	expID, found, err := s.experiment.CurrentExperimentForStudent(ctx, studentID)
 	if err != nil {
-		return fmt.Errorf("current experiment for student: %w", err)
+		return uuid.Nil, fmt.Errorf("current experiment for student: %w", err)
 	}
 	if !found {
-		return ErrNotFound
+		return uuid.Nil, ErrNotFound
 	}
 
 	decision, err := s.access.CheckStudentCourseAccess(ctx, studentID, courseID)
 	if err != nil {
-		return fmt.Errorf("check student course access: %w", err)
+		return uuid.Nil, fmt.Errorf("check student course access: %w", err)
 	}
 	if !decision.Found {
-		return ErrNotFound
+		return uuid.Nil, ErrNotFound
 	}
 	if !decision.Allowed {
-		return ErrForbidden
+		return uuid.Nil, handlerutil.ErrForbidden
 	}
-	return nil
+	return expID, nil
 }
 
 const (
@@ -213,10 +217,10 @@ func (s *Service) GetStudentCourseProgress(ctx context.Context, studentID, exper
 		return CourseProgressDetail{}, ErrNotFound
 	}
 
-	return s.buildDetail(ctx, studentID, courseID)
+	return s.buildDetail(ctx, studentID, experimentID, courseID)
 }
 
-func (s *Service) buildDetail(ctx context.Context, studentID, courseID uuid.UUID) (CourseProgressDetail, error) {
+func (s *Service) buildDetail(ctx context.Context, studentID, experimentID, courseID uuid.UUID) (CourseProgressDetail, error) {
 	pages, err := s.repo.PagesByCourse(ctx, courseID)
 	if err != nil {
 		return CourseProgressDetail{}, fmt.Errorf("list pages: %w", err)
@@ -227,8 +231,10 @@ func (s *Service) buildDetail(ctx context.Context, studentID, courseID uuid.UUID
 	}
 	summary, views := summarize(pages, rows)
 	return CourseProgressDetail{
-		CourseID: courseID,
-		Summary:  summary,
-		Pages:    views,
+		StudentID:    studentID,
+		ExperimentID: experimentID,
+		CourseID:     courseID,
+		Summary:      summary,
+		Pages:        views,
 	}, nil
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSummarize(t *testing.T) {
@@ -122,9 +123,10 @@ func TestSummarize(t *testing.T) {
 			if tc.wantHighestIdx < 0 {
 				assert.Nil(t, summary.HighestReachedPage)
 			} else {
-				require := assert.New(t)
-				require.NotNil(summary.HighestReachedPage)
-				require.Equal(tc.pages[tc.wantHighestIdx].ID, *summary.HighestReachedPage)
+				require.NotNil(t, summary.HighestReachedPage)
+				assert.Equal(t, tc.pages[tc.wantHighestIdx].ID, summary.HighestReachedPage.PageID)
+				assert.Equal(t, int32(tc.wantHighestIdx+1), summary.HighestReachedPage.PageNumber)
+				assert.Equal(t, tc.pages[tc.wantHighestIdx].Title, summary.HighestReachedPage.Title)
 			}
 
 			assert.Len(t, views, len(tc.pages))

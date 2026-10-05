@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	handlerutil "github.com/NYCU-SDC/summer/pkg/handler"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -141,7 +142,7 @@ func TestServiceGetMyCourseProgress(t *testing.T) {
 		assert.Equal(t, StatusNotStarted, detail.Summary.Status)
 	})
 
-	t.Run("no current experiment returns ErrNotFound", func(t *testing.T) {
+	t.Run("no current experiment returns NotFound", func(t *testing.T) {
 		svc := newServiceWithStubs(newHappyRepo(),
 			stubExperiment{found: false},
 			stubAccess{decision: CourseAccessDecision{Found: true, Allowed: true}},
@@ -150,7 +151,7 @@ func TestServiceGetMyCourseProgress(t *testing.T) {
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
-	t.Run("course not found returns ErrNotFound", func(t *testing.T) {
+	t.Run("course not found returns NotFound", func(t *testing.T) {
 		svc := newServiceWithStubs(newHappyRepo(),
 			stubExperiment{id: testExpID, found: true},
 			stubAccess{decision: CourseAccessDecision{Found: false}},
@@ -159,13 +160,13 @@ func TestServiceGetMyCourseProgress(t *testing.T) {
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
-	t.Run("course exists but unallowed returns ErrForbidden", func(t *testing.T) {
+	t.Run("course exists but unallowed returns Forbidden", func(t *testing.T) {
 		svc := newServiceWithStubs(newHappyRepo(),
 			stubExperiment{id: testExpID, found: true},
 			stubAccess{decision: CourseAccessDecision{Found: true, Allowed: false}},
 			testNow)
 		_, err := svc.GetMyCourseProgress(context.Background(), testStudentID, testCourseID)
-		assert.ErrorIs(t, err, ErrForbidden)
+		assert.ErrorIs(t, err, handlerutil.ErrForbidden)
 	})
 
 	t.Run("experiment query error propagates", func(t *testing.T) {
@@ -194,7 +195,7 @@ func TestServiceReachPage(t *testing.T) {
 		assert.Equal(t, testCourseID, detail.CourseID)
 	})
 
-	t.Run("missing page returns ErrNotFound", func(t *testing.T) {
+	t.Run("missing page returns NotFound", func(t *testing.T) {
 		repo := newHappyRepo()
 		svc := newServiceWithStubs(repo,
 			stubExperiment{id: testExpID, found: true},
@@ -214,7 +215,7 @@ func TestServiceReachPage(t *testing.T) {
 			testNow)
 
 		_, err := svc.ReachPage(context.Background(), testStudentID, testPageID)
-		assert.ErrorIs(t, err, ErrForbidden)
+		assert.ErrorIs(t, err, handlerutil.ErrForbidden)
 		assert.Equal(t, 0, repo.upsertReachCalls)
 	})
 }
@@ -233,7 +234,7 @@ func TestServiceCompletePage(t *testing.T) {
 		assert.True(t, testNow.Equal(repo.lastCompleteTime))
 	})
 
-	t.Run("missing page returns ErrNotFound", func(t *testing.T) {
+	t.Run("missing page returns NotFound", func(t *testing.T) {
 		repo := newHappyRepo()
 		svc := newServiceWithStubs(repo,
 			stubExperiment{id: testExpID, found: true},
@@ -245,7 +246,7 @@ func TestServiceCompletePage(t *testing.T) {
 		assert.Equal(t, 0, repo.upsertCompleteCalls)
 	})
 
-	t.Run("no current experiment returns ErrNotFound without upserting", func(t *testing.T) {
+	t.Run("no current experiment returns NotFound without upserting", func(t *testing.T) {
 		repo := newHappyRepo()
 		svc := newServiceWithStubs(repo,
 			stubExperiment{found: false},
@@ -343,7 +344,7 @@ func TestServiceListCourseStudentProgress(t *testing.T) {
 		assert.False(t, pageResult.HasNextPage)
 	})
 
-	t.Run("course not assigned returns ErrNotFound", func(t *testing.T) {
+	t.Run("course not assigned returns NotFound", func(t *testing.T) {
 		repo := newMgmtRepo(nil, nil, nil)
 		repo.expCourseExists = func(_, _ uuid.UUID) (bool, error) { return false, nil }
 
@@ -386,14 +387,14 @@ func TestServiceGetStudentCourseProgress(t *testing.T) {
 		assert.Equal(t, StatusCompleted, detail.Summary.Status)
 	})
 
-	t.Run("course not assigned returns ErrNotFound", func(t *testing.T) {
+	t.Run("course not assigned returns NotFound", func(t *testing.T) {
 		repo := newRepo()
 		repo.expCourseExists = func(_, _ uuid.UUID) (bool, error) { return false, nil }
 		_, err := svcMgmt(repo).GetStudentCourseProgress(context.Background(), testStudentID, testExpID, testCourseID)
 		assert.ErrorIs(t, err, ErrNotFound)
 	})
 
-	t.Run("student not participant returns ErrNotFound", func(t *testing.T) {
+	t.Run("student not participant returns NotFound", func(t *testing.T) {
 		repo := newRepo()
 		repo.participantIn = func(_, _ uuid.UUID) (bool, error) { return false, nil }
 		_, err := svcMgmt(repo).GetStudentCourseProgress(context.Background(), testStudentID, testExpID, testCourseID)

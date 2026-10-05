@@ -118,6 +118,9 @@ func (s *Store) ListCourseParticipants(ctx context.Context, experimentID uuid.UU
 			Email:      r.Email,
 			Name:       r.Name,
 			AvatarURL:  textPtr(r.AvatarUrl),
+			Roles:      r.Roles,
+			CreatedAt:  r.CreatedAt.Time.UTC(),
+			UpdatedAt:  r.UpdatedAt.Time.UTC(),
 			AssignedAt: r.AssignedAt.Time.UTC(),
 		})
 	}
