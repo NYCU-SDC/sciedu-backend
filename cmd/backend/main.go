@@ -14,6 +14,7 @@ import (
 	"sciedu-backend/internal/course"
 	"sciedu-backend/internal/experiment"
 	"sciedu-backend/internal/page"
+	"sciedu-backend/internal/pagevisit"
 	"sciedu-backend/internal/question"
 	"sciedu-backend/internal/user"
 
@@ -57,7 +58,12 @@ func main() {
 	optionService := question.NewOptionService(questionStore, logger)
 	questionService := question.NewQuestionService(questionStore, optionService, logger)
 	answerService := question.NewAnswerService(questionStore, questionService, logger)
-	questionHandler := question.NewHandler(questionService, answerService, logger)
+	correctAnswerService := question.NewCorrectAnswerService(questionStore, questionService, logger)
+	questionHandler := question.NewHandler(questionService, answerService, correctAnswerService, logger).
+		WithSubmission(question.NewAnswerSubmissionOrchestrator(answerService, questionStore, questionStore))
+	syncContext, cancelSync := context.WithCancel(context.Background())
+	defer cancelSync()
+	go question.RunAnswerSynchronization(syncContext, questionStore, logger)
 
 	contentQueries := content.New(pool)
 	contentService := content.NewService(contentQueries, logger)
@@ -94,6 +100,7 @@ func main() {
 	authMiddleware := auth.NewMiddleware(authService, logger)
 	protectedMiddlewareSet := middlewareSet.Append(authMiddleware.HandlerFunc)
 	authorizer := auth.NewAuthorizer(authStore, logger)
+	questionHandler.WithResults(question.NewAnswerResultService(questionStore, questionStore, logger), authStore)
 
 	userStore := user.NewStore(pool)
 	userService := user.NewService(userStore, logger)
@@ -110,6 +117,9 @@ func main() {
 	blockService := page.NewBlockService(pageStore, pageStore, contentService, questionService, logger)
 	pageService := page.NewPageService(pageStore, blockService, courseService, logger)
 	pageHandler := page.NewHandler(pageService, blockService, logger)
+	pageVisitStore := pagevisit.NewStore(pool)
+	pageVisitService := pagevisit.NewService(pageVisitStore, nil)
+	pageVisitHandler := pagevisit.NewHandler(pageVisitService, logger)
 
 	// Health check route
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -128,6 +138,7 @@ func main() {
 	contentHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	chatHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	pageHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
+	pageVisitHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
 
 	logger.Info("Start listening on port: 8080")
 

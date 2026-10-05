@@ -8,17 +8,21 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	"sciedu-backend/internal/auth"
 )
 
 type fakeQuerier struct {
+	scopeFn                 func(context.Context, IsAnswerManagementScopeReachableParams) (bool, error)
 	listQuestionFn          func(ctx context.Context) ([]Question, error)
 	getQuestionFn           func(ctx context.Context, id uuid.UUID) (Question, error)
 	createQuestionFn        func(ctx context.Context, arg CreateQuestionParams) (Question, error)
@@ -30,13 +34,18 @@ type fakeQuerier struct {
 	updateOptionFn          func(ctx context.Context, arg UpdateOptionParams) (Option, error)
 	deleteOptionFn          func(ctx context.Context, id uuid.UUID) error
 	createAnswerFn          func(ctx context.Context, arg CreateAnswerParams) (Answer, error)
-	listAnswersFn           func(ctx context.Context, questionID uuid.UUID) ([]Answer, error)
+	listAnswersFn           func(ctx context.Context, arg ListAnswersByQuestionAndExperimentPageParams) ([]ListAnswersByQuestionAndExperimentPageRow, error)
+	countAnswersFn          func(ctx context.Context, questionID uuid.UUID) (int64, error)
+	findAnswerResultFn      func(ctx context.Context, arg FindAnswerResultByQuestionAndIDParams) (FindAnswerResultByQuestionAndIDRow, error)
+	getCorrectAnswerFn      func(ctx context.Context, questionID uuid.UUID) (CorrectAnswer, error)
+	upsertCorrectAnswerFn   func(ctx context.Context, arg UpsertCorrectAnswerParams) (CorrectAnswer, error)
 
-	createQuestionCalls []CreateQuestionParams
-	updateQuestionCalls []UpdateQuestionParams
-	createOptionCalls   []CreateOptionParams
-	deleteOptionCalls   []uuid.UUID
-	createAnswerCalls   []CreateAnswerParams
+	createQuestionCalls      []CreateQuestionParams
+	updateQuestionCalls      []UpdateQuestionParams
+	createOptionCalls        []CreateOptionParams
+	deleteOptionCalls        []uuid.UUID
+	createAnswerCalls        []CreateAnswerParams
+	upsertCorrectAnswerCalls []UpsertCorrectAnswerParams
 }
 
 func (f *fakeQuerier) ListQuestion(ctx context.Context) ([]Question, error) {
@@ -121,11 +130,54 @@ func (f *fakeQuerier) CreateAnswer(ctx context.Context, arg CreateAnswerParams) 
 	return Answer{}, nil
 }
 
-func (f *fakeQuerier) ListAnswersByQuestion(ctx context.Context, questionID uuid.UUID) ([]Answer, error) {
+func (f *fakeQuerier) ListAnswersByQuestionAndExperimentPage(ctx context.Context, arg ListAnswersByQuestionAndExperimentPageParams) ([]ListAnswersByQuestionAndExperimentPageRow, error) {
 	if f.listAnswersFn != nil {
-		return f.listAnswersFn(ctx, questionID)
+		return f.listAnswersFn(ctx, arg)
 	}
 	return nil, nil
+}
+
+func (f *fakeQuerier) CountAnswersByQuestionAndExperiment(ctx context.Context, arg CountAnswersByQuestionAndExperimentParams) (int64, error) {
+	if f.countAnswersFn != nil {
+		return f.countAnswersFn(ctx, arg.QuestionID)
+	}
+	return 0, nil
+}
+
+func (f *fakeQuerier) IsAnswerManagementScopeReachable(ctx context.Context, arg IsAnswerManagementScopeReachableParams) (bool, error) {
+	if f.scopeFn != nil {
+		return f.scopeFn(ctx, arg)
+	}
+	_, err := f.GetQuestion(ctx, uuid.UUID(arg.QuestionID.Bytes))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (f *fakeQuerier) FindAnswerResultByQuestionAndID(
+	ctx context.Context,
+	arg FindAnswerResultByQuestionAndIDParams,
+) (FindAnswerResultByQuestionAndIDRow, error) {
+	if f.findAnswerResultFn != nil {
+		return f.findAnswerResultFn(ctx, arg)
+	}
+	return FindAnswerResultByQuestionAndIDRow{}, pgx.ErrNoRows
+}
+
+func (f *fakeQuerier) GetCorrectAnswer(ctx context.Context, questionID uuid.UUID) (CorrectAnswer, error) {
+	if f.getCorrectAnswerFn != nil {
+		return f.getCorrectAnswerFn(ctx, questionID)
+	}
+	return CorrectAnswer{}, pgx.ErrNoRows
+}
+
+func (f *fakeQuerier) UpsertCorrectAnswer(ctx context.Context, arg UpsertCorrectAnswerParams) (CorrectAnswer, error) {
+	f.upsertCorrectAnswerCalls = append(f.upsertCorrectAnswerCalls, arg)
+	if f.upsertCorrectAnswerFn != nil {
+		return f.upsertCorrectAnswerFn(ctx, arg)
+	}
+	return CorrectAnswer{}, nil
 }
 
 func (f *fakeQuerier) WithinTx(_ context.Context, fn func(QuestionQuerier, OptionQuerier) error) error {
@@ -137,7 +189,15 @@ func newTestMux(q *fakeQuerier) *http.ServeMux {
 	optionService := NewOptionService(q, logger)
 	questionService := NewQuestionService(q, optionService, logger)
 	answerService := NewAnswerService(q, questionService, logger)
-	handler := NewHandler(questionService, answerService, logger)
+	correctAnswerService := NewCorrectAnswerService(q, questionService, logger)
+	handler := NewHandler(questionService, answerService, correctAnswerService, logger)
+	handler.WithSubmission(NewAnswerSubmissionOrchestrator(answerService,
+		&fakeSubmissionContextResolver{resolveFn: func(context.Context, uuid.UUID, uuid.UUID) (SubmissionContext, error) {
+			return SubmissionContext{ExperimentID: uuid.MustParse("00000000-0000-0000-0000-000000000001"), GradingMode: SubmissionGradingModeAutomatic}, nil
+		}}, &fakeAnswerSubmissionTransaction{submitFn: func(ctx context.Context, command AnswerSubmissionCommand) (Answer, error) {
+			return q.CreateAnswer(ctx, CreateAnswerParams{QuestionID: command.Answer.QuestionID, UserID: command.Answer.UserID,
+				ExperimentID: command.Context.ExperimentID, SelectedOptionID: nullableUUID(command.Answer.SelectedOptionID), TextAnswer: nullableText(command.Answer.TextAnswer)})
+		}}))
 
 	mux := http.NewServeMux()
 	handler.RegisterRoutes(mux, nil, nil)
@@ -811,48 +871,129 @@ func TestHandlerSubmitAnswer_PassesUserAndConversions(t *testing.T) {
 
 func TestHandlerListAnswers_TableDriven(t *testing.T) {
 	questionID := uuid.New()
+	answerID := uuid.New()
+	userID := uuid.New()
+	otherAnswerID := uuid.New()
+	otherUserID := uuid.New()
+	gradedAt := time.Now().UTC()
 
 	tests := []struct {
 		name       string
+		query      string
 		querier    *fakeQuerier
 		wantStatus int
-		wantLen    int
+		assertBody func(t *testing.T, body map[string]any)
 	}{
 		{
-			name: "returns answers newest first",
+			name:  "returns paginated graded answer",
+			query: "?page=2&pageSize=1",
 			querier: &fakeQuerier{
-				listAnswersFn: func(_ context.Context, gotQuestionID uuid.UUID) ([]Answer, error) {
-					if gotQuestionID != questionID {
-						t.Errorf("querier received wrong question id: want %s got %s", questionID, gotQuestionID)
+				listAnswersFn: func(_ context.Context, arg ListAnswersByQuestionAndExperimentPageParams) ([]ListAnswersByQuestionAndExperimentPageRow, error) {
+					if arg.QuestionID != questionID || arg.PageOffset != 1 || arg.PageSize != 1 {
+						t.Errorf("unexpected list params: %+v", arg)
 					}
-					return []Answer{
-						{ID: uuid.New(), QuestionID: questionID, UserID: uuid.New(), TextAnswer: pgtype.Text{String: "newer", Valid: true}},
-						{ID: uuid.New(), QuestionID: questionID, UserID: uuid.New(), TextAnswer: pgtype.Text{String: "older", Valid: true}},
+					return []ListAnswersByQuestionAndExperimentPageRow{
+						{
+							ID: answerID, QuestionID: questionID, UserID: userID,
+							TextAnswer:                  pgtype.Text{String: "answer", Valid: true},
+							CreatedAt:                   pgtype.Timestamptz{Time: gradedAt, Valid: true},
+							GradingStatus:               pgtype.Text{String: "GRADED", Valid: true},
+							GradingMethod:               pgtype.Text{String: "DETERMINISTIC", Valid: true},
+							IsCorrect:                   pgtype.Bool{Bool: true, Valid: true},
+							GradedAt:                    pgtype.Timestamptz{Time: gradedAt, Valid: true},
+							CorrectAnswerVersion:        pgtype.Int8{Int64: 2, Valid: true},
+							CurrentCorrectAnswerVersion: pgtype.Int8{Int64: 2, Valid: true},
+						},
 					}, nil
 				},
+				countAnswersFn: func(context.Context, uuid.UUID) (int64, error) { return 2, nil },
 			},
 			wantStatus: http.StatusOK,
-			wantLen:    2,
+			assertBody: func(t *testing.T, body map[string]any) {
+				t.Helper()
+				items := body["items"].([]any)
+				item := items[0].(map[string]any)
+				if item["gradingStatus"] != "GRADED" || item["gradingMethod"] != "DETERMINISTIC" || item["isCorrect"] != true {
+					t.Fatalf("unexpected grading response: %v", item)
+				}
+				if body["totalPages"] != float64(2) || body["currentPage"] != float64(2) || body["hasNextPage"] != false {
+					t.Fatalf("unexpected pagination response: %v", body)
+				}
+			},
 		},
 		{
-			name: "returns answers from every user, not just the caller",
+			name: "returns multiple users newest first",
 			querier: &fakeQuerier{
-				listAnswersFn: func(context.Context, uuid.UUID) ([]Answer, error) {
-					return []Answer{
-						{ID: uuid.New(), QuestionID: questionID, UserID: uuid.New(), TextAnswer: pgtype.Text{String: "newer", Valid: true}},
-						{ID: uuid.New(), QuestionID: questionID, UserID: uuid.New(), TextAnswer: pgtype.Text{String: "middle", Valid: true}},
-						{ID: uuid.New(), QuestionID: questionID, UserID: uuid.New(), TextAnswer: pgtype.Text{String: "older", Valid: true}},
+				listAnswersFn: func(context.Context, ListAnswersByQuestionAndExperimentPageParams) ([]ListAnswersByQuestionAndExperimentPageRow, error) {
+					return []ListAnswersByQuestionAndExperimentPageRow{
+						{ID: answerID, QuestionID: questionID, UserID: userID, TextAnswer: pgtype.Text{String: "newer", Valid: true}},
+						{ID: otherAnswerID, QuestionID: questionID, UserID: otherUserID, TextAnswer: pgtype.Text{String: "older", Valid: true}},
 					}, nil
+				},
+				countAnswersFn: func(context.Context, uuid.UUID) (int64, error) { return 2, nil },
+			},
+			wantStatus: http.StatusOK,
+			assertBody: func(t *testing.T, body map[string]any) {
+				t.Helper()
+				items := body["items"].([]any)
+				if len(items) != 2 {
+					t.Fatalf("expected answers from two users: %v", items)
+				}
+				newer := items[0].(map[string]any)
+				older := items[1].(map[string]any)
+				if newer["id"] != answerID.String() || newer["userId"] != userID.String() || newer["textAnswer"] != "newer" {
+					t.Fatalf("unexpected newest answer: %v", newer)
+				}
+				if older["id"] != otherAnswerID.String() || older["userId"] != otherUserID.String() || older["textAnswer"] != "older" {
+					t.Fatalf("unexpected older answer: %v", older)
+				}
+			},
+		},
+		{
+			name: "stale result is pending and omits correctness",
+			querier: &fakeQuerier{
+				listAnswersFn: func(context.Context, ListAnswersByQuestionAndExperimentPageParams) ([]ListAnswersByQuestionAndExperimentPageRow, error) {
+					return []ListAnswersByQuestionAndExperimentPageRow{
+						{
+							ID: answerID, QuestionID: questionID, UserID: userID,
+							GradingStatus:               pgtype.Text{String: "GRADED", Valid: true},
+							IsCorrect:                   pgtype.Bool{Bool: false, Valid: true},
+							CorrectAnswerVersion:        pgtype.Int8{Int64: 1, Valid: true},
+							CurrentCorrectAnswerVersion: pgtype.Int8{Int64: 2, Valid: true},
+						},
+					}, nil
+				},
+				countAnswersFn: func(context.Context, uuid.UUID) (int64, error) { return 1, nil },
+			},
+			wantStatus: http.StatusOK,
+			assertBody: func(t *testing.T, body map[string]any) {
+				t.Helper()
+				item := body["items"].([]any)[0].(map[string]any)
+				if item["gradingStatus"] != "PENDING" {
+					t.Fatalf("stale result must be pending: %v", item)
+				}
+				if _, ok := item["isCorrect"]; ok {
+					t.Fatalf("stale result must omit isCorrect: %v", item)
+				}
+			},
+		},
+		{
+			name: "omitted pagination uses defaults",
+			querier: &fakeQuerier{
+				listAnswersFn: func(_ context.Context, arg ListAnswersByQuestionAndExperimentPageParams) ([]ListAnswersByQuestionAndExperimentPageRow, error) {
+					if arg.PageOffset != 0 || arg.PageSize != 20 {
+						t.Errorf("unexpected default pagination params: %+v", arg)
+					}
+					return nil, nil
 				},
 			},
 			wantStatus: http.StatusOK,
-			wantLen:    3,
-		},
-		{
-			name:       "no answers returns empty array",
-			querier:    &fakeQuerier{},
-			wantStatus: http.StatusOK,
-			wantLen:    0,
+			assertBody: func(t *testing.T, body map[string]any) {
+				t.Helper()
+				if len(body["items"].([]any)) != 0 || body["totalItems"] != float64(0) {
+					t.Fatalf("unexpected empty page: %v", body)
+				}
+			},
 		},
 		{
 			name: "question not found returns 404",
@@ -860,20 +1001,28 @@ func TestHandlerListAnswers_TableDriven(t *testing.T) {
 				getQuestionFn: func(context.Context, uuid.UUID) (Question, error) {
 					return Question{}, pgx.ErrNoRows
 				},
-				listAnswersFn: func(context.Context, uuid.UUID) ([]Answer, error) {
+				listAnswersFn: func(context.Context, ListAnswersByQuestionAndExperimentPageParams) ([]ListAnswersByQuestionAndExperimentPageRow, error) {
 					t.Error("querier should not be called when the question does not exist")
 					return nil, nil
 				},
 			},
 			wantStatus: http.StatusNotFound,
-			wantLen:    0,
 		},
+		{name: "rejects invalid page", query: "?page=0", querier: &fakeQuerier{}, wantStatus: http.StatusBadRequest},
+		{name: "rejects excessive page size", query: "?pageSize=101", querier: &fakeQuerier{}, wantStatus: http.StatusBadRequest},
+		{name: "rejects empty page", query: "?page=", querier: &fakeQuerier{}, wantStatus: http.StatusBadRequest},
+		{name: "rejects empty page size", query: "?pageSize=", querier: &fakeQuerier{}, wantStatus: http.StatusBadRequest},
+		{name: "rejects non integer page", query: "?page=x", querier: &fakeQuerier{}, wantStatus: http.StatusBadRequest},
+		{name: "rejects non integer page size", query: "?pageSize=x", querier: &fakeQuerier{}, wantStatus: http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequest(http.MethodGet, "/api/questions/"+questionID.String()+"/answers", nil)
+			req := httptest.NewRequest(http.MethodGet, "/api/questions/"+questionID.String()+"/answers"+tt.query, nil)
+			values := req.URL.Query()
+			values.Set("experimentId", uuid.NewString())
+			req.URL.RawQuery = values.Encode()
 
 			newTestMux(tt.querier).ServeHTTP(rec, req)
 
@@ -884,26 +1033,71 @@ func TestHandlerListAnswers_TableDriven(t *testing.T) {
 				return
 			}
 
-			var got []map[string]any
-			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			var body map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 				t.Fatalf("failed to decode body: %v", err)
 			}
-			if len(got) != tt.wantLen {
-				t.Fatalf("want %d answers, got %d", tt.wantLen, len(got))
+			if tt.assertBody != nil {
+				tt.assertBody(t, body)
 			}
-			if tt.wantLen > 0 && got[0]["textAnswer"] != "newer" {
-				t.Fatalf("order not preserved: %v", got[0]["textAnswer"])
+		})
+	}
+}
+
+func TestBuildAnswerResultResponse_TableDriven(t *testing.T) {
+	answerID := uuid.New()
+	questionID := uuid.New()
+	method := GradingMethodDeterministic
+	correct := true
+	gradedAt := time.Date(2026, time.August, 25, 8, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name       string
+		result     AnswerResultView
+		wantFields map[string]any
+		omitFields []string
+	}{
+		{
+			name: "graded response includes visible correctness",
+			result: AnswerResultView{
+				AnswerID: answerID, QuestionID: questionID, Status: GradingStatusGraded,
+				Method: &method, ResultVisible: true, IsCorrect: &correct, GradedAt: &gradedAt,
+			},
+			wantFields: map[string]any{"status": "GRADED", "method": "DETERMINISTIC", "resultVisible": true, "isCorrect": true},
+		},
+		{
+			name: "pending response omits correctness",
+			result: AnswerResultView{
+				AnswerID: answerID, QuestionID: questionID, Status: GradingStatusPending,
+				ResultVisible: true,
+			},
+			wantFields: map[string]any{"status": "PENDING", "resultVisible": true},
+			omitFields: []string{"method", "isCorrect", "gradedAt"},
+		},
+		{
+			name: "failed response omits correctness",
+			result: AnswerResultView{
+				AnswerID: answerID, QuestionID: questionID, Status: GradingStatusFailed,
+				ResultVisible: true,
+			},
+			wantFields: map[string]any{"status": "FAILED", "resultVisible": true},
+			omitFields: []string{"isCorrect"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := json.Marshal(buildAnswerResultResponse(tt.result))
+			require.NoError(t, err)
+			var decoded map[string]any
+			require.NoError(t, json.Unmarshal(body, &decoded))
+			assert.Equal(t, answerID.String(), decoded["answerId"])
+			assert.Equal(t, questionID.String(), decoded["questionId"])
+			for key, value := range tt.wantFields {
+				assert.Equal(t, value, decoded[key], key)
 			}
-			seen := make(map[string]bool, len(got))
-			for i, item := range got {
-				uid, ok := item["userId"].(string)
-				if !ok || uid == "" || uid == uuid.Nil.String() {
-					t.Fatalf("answer %d missing userId: %v", i, item)
-				}
-				if seen[uid] {
-					t.Fatalf("userId %s duplicated across answers", uid)
-				}
-				seen[uid] = true
+			for _, key := range tt.omitFields {
+				assert.NotContains(t, decoded, key)
 			}
 		})
 	}
@@ -922,7 +1116,15 @@ func newAuthorizedMux(q *fakeQuerier, actorID uuid.UUID, roles []auth.Role) *htt
 	optionService := NewOptionService(q, logger)
 	questionService := NewQuestionService(q, optionService, logger)
 	answerService := NewAnswerService(q, questionService, logger)
-	handler := NewHandler(questionService, answerService, logger)
+	correctAnswerService := NewCorrectAnswerService(q, questionService, logger)
+	handler := NewHandler(questionService, answerService, correctAnswerService, logger)
+	handler.WithSubmission(NewAnswerSubmissionOrchestrator(answerService,
+		&fakeSubmissionContextResolver{resolveFn: func(context.Context, uuid.UUID, uuid.UUID) (SubmissionContext, error) {
+			return SubmissionContext{ExperimentID: uuid.MustParse("00000000-0000-0000-0000-000000000001"), GradingMode: SubmissionGradingModeAutomatic}, nil
+		}}, &fakeAnswerSubmissionTransaction{submitFn: func(ctx context.Context, command AnswerSubmissionCommand) (Answer, error) {
+			return q.CreateAnswer(ctx, CreateAnswerParams{QuestionID: command.Answer.QuestionID, UserID: command.Answer.UserID,
+				ExperimentID: command.Context.ExperimentID, SelectedOptionID: nullableUUID(command.Answer.SelectedOptionID), TextAnswer: nullableText(command.Answer.TextAnswer)})
+		}}))
 
 	set := middlewareutil.NewSet(func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -946,9 +1148,10 @@ func TestHandlerListAnswers_Authorization(t *testing.T) {
 			getQuestionFn: func(context.Context, uuid.UUID) (Question, error) {
 				return Question{ID: questionID, Type: "TEXT", Content: "q"}, nil
 			},
-			listAnswersFn: func(context.Context, uuid.UUID) ([]Answer, error) {
-				return []Answer{{ID: uuid.New(), QuestionID: questionID, UserID: uuid.New(), TextAnswer: pgtype.Text{String: "a", Valid: true}}}, nil
+			listAnswersFn: func(context.Context, ListAnswersByQuestionAndExperimentPageParams) ([]ListAnswersByQuestionAndExperimentPageRow, error) {
+				return []ListAnswersByQuestionAndExperimentPageRow{{ID: uuid.New(), QuestionID: questionID, UserID: uuid.New(), TextAnswer: pgtype.Text{String: "a", Valid: true}}}, nil
 			},
+			countAnswersFn: func(context.Context, uuid.UUID) (int64, error) { return 1, nil },
 		}
 	}
 
@@ -973,7 +1176,7 @@ func TestHandlerListAnswers_Authorization(t *testing.T) {
 			if tt.method == http.MethodPost {
 				req = httptest.NewRequest(http.MethodPost, url, strings.NewReader(`{"textAnswer":"my answer"}`))
 			} else {
-				req = httptest.NewRequest(http.MethodGet, url, nil)
+				req = httptest.NewRequest(http.MethodGet, url+"?experimentId="+uuid.NewString(), nil)
 			}
 
 			rec := httptest.NewRecorder()
@@ -981,6 +1184,181 @@ func TestHandlerListAnswers_Authorization(t *testing.T) {
 
 			if rec.Code != tt.wantCode {
 				t.Fatalf("status mismatch: want %d got %d, body=%s", tt.wantCode, rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestHandlerCorrectAnswer_TableDriven(t *testing.T) {
+	questionID := uuid.New()
+	optionID := uuid.New()
+	updatedAt := time.Date(2026, time.August, 18, 5, 14, 58, 0, time.UTC)
+	longReference := strings.Repeat("a", maxReferenceAnswerLength+1)
+
+	tests := []struct {
+		name        string
+		method      string
+		body        string
+		querier     *fakeQuerier
+		wantStatus  int
+		wantUpserts int
+		assertBody  func(t *testing.T, body map[string]any)
+	}{
+		{
+			name:   "gets choice correct answer",
+			method: http.MethodGet,
+			querier: &fakeQuerier{
+				getQuestionFn: choiceQuestion(questionID),
+				getCorrectAnswerFn: func(context.Context, uuid.UUID) (CorrectAnswer, error) {
+					return CorrectAnswer{
+						QuestionID:             questionID,
+						Type:                   "CHOICE",
+						SelectedOptionID:       pgtype.UUID{Bytes: optionID, Valid: true},
+						Version:                1,
+						AnswerResultSyncStatus: "PENDING",
+						UpdatedAt:              pgtype.Timestamptz{Time: updatedAt, Valid: true},
+					}, nil
+				},
+			},
+			wantStatus: http.StatusOK,
+			assertBody: func(t *testing.T, body map[string]any) {
+				t.Helper()
+				if body["selectedOptionId"] != optionID.String() || body["version"] != float64(1) {
+					t.Fatalf("unexpected response: %v", body)
+				}
+				if _, ok := body["referenceAnswer"]; ok {
+					t.Fatalf("choice response must omit referenceAnswer: %v", body)
+				}
+			},
+		},
+		{
+			name:   "missing correct answer returns 404",
+			method: http.MethodGet,
+			querier: &fakeQuerier{
+				getQuestionFn:      choiceQuestion(questionID),
+				getCorrectAnswerFn: func(context.Context, uuid.UUID) (CorrectAnswer, error) { return CorrectAnswer{}, pgx.ErrNoRows },
+			},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:   "upserts choice correct answer",
+			method: http.MethodPut,
+			body:   `{"type":"CHOICE","selectedOptionId":"` + optionID.String() + `"}`,
+			querier: &fakeQuerier{
+				getQuestionFn: choiceQuestion(questionID),
+				getOptionFn: func(context.Context, uuid.UUID) (Option, error) {
+					return Option{ID: optionID, QuestionID: questionID}, nil
+				},
+				upsertCorrectAnswerFn: func(_ context.Context, arg UpsertCorrectAnswerParams) (CorrectAnswer, error) {
+					return CorrectAnswer{QuestionID: arg.QuestionID, Type: arg.Type, SelectedOptionID: arg.SelectedOptionID, Version: 1, AnswerResultSyncStatus: "PENDING"}, nil
+				},
+			},
+			wantStatus:  http.StatusOK,
+			wantUpserts: 1,
+		},
+		{
+			name:   "upserts text correct answer",
+			method: http.MethodPut,
+			body:   `{"type":"TEXT","referenceAnswer":"reference"}`,
+			querier: &fakeQuerier{
+				getQuestionFn: textQuestion(questionID),
+				upsertCorrectAnswerFn: func(_ context.Context, arg UpsertCorrectAnswerParams) (CorrectAnswer, error) {
+					return CorrectAnswer{QuestionID: arg.QuestionID, Type: arg.Type, ReferenceAnswer: arg.ReferenceAnswer, Version: 2, AnswerResultSyncStatus: "PENDING"}, nil
+				},
+			},
+			wantStatus:  http.StatusOK,
+			wantUpserts: 1,
+			assertBody: func(t *testing.T, body map[string]any) {
+				t.Helper()
+				if body["referenceAnswer"] != "reference" || body["version"] != float64(2) {
+					t.Fatalf("unexpected response: %v", body)
+				}
+			},
+		},
+		{
+			name:       "rejects mismatched type",
+			method:     http.MethodPut,
+			body:       `{"type":"TEXT","referenceAnswer":"reference"}`,
+			querier:    &fakeQuerier{getQuestionFn: choiceQuestion(questionID)},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "rejects overlong reference answer",
+			method:     http.MethodPut,
+			body:       `{"type":"TEXT","referenceAnswer":"` + longReference + `"}`,
+			querier:    &fakeQuerier{getQuestionFn: textQuestion(questionID)},
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(tt.method, "/api/questions/"+questionID.String()+"/correct-answer", strings.NewReader(tt.body))
+			request.Header.Set("Content-Type", "application/json")
+
+			newTestMux(tt.querier).ServeHTTP(recorder, request)
+
+			if recorder.Code != tt.wantStatus {
+				t.Fatalf("status mismatch: want %d got %d, body=%s", tt.wantStatus, recorder.Code, recorder.Body.String())
+			}
+			if got := len(tt.querier.upsertCorrectAnswerCalls); got != tt.wantUpserts {
+				t.Fatalf("upsert calls mismatch: want %d got %d", tt.wantUpserts, got)
+			}
+			if tt.assertBody != nil {
+				var body map[string]any
+				if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+					t.Fatalf("decode response: %v", err)
+				}
+				tt.assertBody(t, body)
+			}
+		})
+	}
+}
+
+func TestHandlerCorrectAnswerAuthorization(t *testing.T) {
+	questionID := uuid.New()
+	actorID := uuid.New()
+	referenceAnswer := "reference"
+
+	tests := []struct {
+		name     string
+		roles    []auth.Role
+		method   string
+		wantCode int
+	}{
+		{name: "student cannot get", roles: []auth.Role{auth.STUDENT}, method: http.MethodGet, wantCode: http.StatusForbidden},
+		{name: "student cannot put", roles: []auth.Role{auth.STUDENT}, method: http.MethodPut, wantCode: http.StatusForbidden},
+		{name: "experimenter can get", roles: []auth.Role{auth.EXPERIMENTER}, method: http.MethodGet, wantCode: http.StatusOK},
+		{name: "experimenter can put", roles: []auth.Role{auth.EXPERIMENTER}, method: http.MethodPut, wantCode: http.StatusOK},
+		{name: "admin can get", roles: []auth.Role{auth.ADMIN}, method: http.MethodGet, wantCode: http.StatusOK},
+		{name: "admin can put", roles: []auth.Role{auth.ADMIN}, method: http.MethodPut, wantCode: http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			querier := &fakeQuerier{
+				getQuestionFn: textQuestion(questionID),
+				getCorrectAnswerFn: func(context.Context, uuid.UUID) (CorrectAnswer, error) {
+					return CorrectAnswer{QuestionID: questionID, Type: "TEXT", ReferenceAnswer: pgtype.Text{String: referenceAnswer, Valid: true}, Version: 1, AnswerResultSyncStatus: "PENDING"}, nil
+				},
+				upsertCorrectAnswerFn: func(_ context.Context, arg UpsertCorrectAnswerParams) (CorrectAnswer, error) {
+					return CorrectAnswer{QuestionID: arg.QuestionID, Type: arg.Type, ReferenceAnswer: arg.ReferenceAnswer, Version: 1, AnswerResultSyncStatus: "PENDING"}, nil
+				},
+			}
+			mux := newAuthorizedMux(querier, actorID, tt.roles)
+			body := ""
+			if tt.method == http.MethodPut {
+				body = `{"type":"TEXT","referenceAnswer":"` + referenceAnswer + `"}`
+			}
+			request := httptest.NewRequest(tt.method, "/api/questions/"+questionID.String()+"/correct-answer", strings.NewReader(body))
+			request.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+
+			mux.ServeHTTP(recorder, request)
+
+			if recorder.Code != tt.wantCode {
+				t.Fatalf("status mismatch: want %d got %d, body=%s", tt.wantCode, recorder.Code, recorder.Body.String())
 			}
 		})
 	}
