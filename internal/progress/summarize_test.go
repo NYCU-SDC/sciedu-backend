@@ -62,7 +62,7 @@ func TestSummarize(t *testing.T) {
 			wantReached:    2,
 			wantTotal:      3,
 			wantPercent:    0,
-			wantHighestIdx: 1, // pageB
+			wantHighestIdx: 1,
 		},
 		{
 			name:           "partial completed",

@@ -61,10 +61,7 @@ func NewHandler(service HandlerService, logger *zap.Logger) *Handler {
 	}
 }
 
-// TODO(SCIEDU-xxx): management endpoints only run a role check for now; scope
-// checks against experiments.created_by or a future collaborators table will
-// need to be added here before EXPERIMENTER accounts can be partitioned by
-// experiment ownership.
+// TODO(experiment-scope): add owner / collaborator check using experiments.created_by once the model exists.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux, middlewares *middlewareutil.Set, authorizer *auth.Authorizer) {
 	studentAccess := middlewares.Append(authorizer.RequireAnyRole(auth.STUDENT))
 	managementAccess := middlewares.Append(authorizer.RequireAnyRole(auth.EXPERIMENTER, auth.ADMIN))

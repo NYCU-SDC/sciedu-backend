@@ -252,9 +252,6 @@ type currentExperimentForStudentQuerier interface {
 	CurrentExperimentForStudent(ctx context.Context, studentID uuid.UUID) (uuid.UUID, error)
 }
 
-// resolveCurrentExperimentForStudent maps the sqlc pgx.ErrNoRows path to
-// (uuid.Nil, false, nil) so callers do not need to compare error values.
-// Split out for pure-Go testability.
 func resolveCurrentExperimentForStudent(ctx context.Context, q currentExperimentForStudentQuerier, studentID uuid.UUID) (uuid.UUID, bool, error) {
 	id, err := q.CurrentExperimentForStudent(ctx, studentID)
 	if err != nil {

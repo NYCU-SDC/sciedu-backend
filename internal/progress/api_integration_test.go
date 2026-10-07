@@ -199,7 +199,6 @@ func TestAPIProgressStudentHappyPath(t *testing.T) {
 	}
 	mux := newProgressIntegrationAPI(t, pool, fx.studentA, rolesByUser)
 
-	// GET /me returns NOT_STARTED
 	code, body := callProgressAPI(t, mux, http.MethodGet, "/api/progress/me?courseId="+fx.course.String())
 	require.Equal(t, http.StatusOK, code, "body: %s", body)
 	detail := decodeDetail(t, body)
@@ -207,7 +206,6 @@ func TestAPIProgressStudentHappyPath(t *testing.T) {
 	assert.Equal(t, int32(2), detail.TotalPageCount)
 	assert.Equal(t, fx.experiment, detail.ExperimentID)
 
-	// Reach page A
 	code, body = callProgressAPI(t, mux, http.MethodPut, "/api/progress/me/pages/"+fx.pageA.String()+"/reach")
 	require.Equal(t, http.StatusOK, code, "body: %s", body)
 	detail = decodeDetail(t, body)
@@ -218,7 +216,6 @@ func TestAPIProgressStudentHappyPath(t *testing.T) {
 	require.NotNil(t, detail.HighestReachedPage)
 	assert.Equal(t, fx.pageA, detail.HighestReachedPage.PageID)
 
-	// Complete page A
 	code, body = callProgressAPI(t, mux, http.MethodPut, "/api/progress/me/pages/"+fx.pageA.String()+"/completion")
 	require.Equal(t, http.StatusOK, code, "body: %s", body)
 	detail = decodeDetail(t, body)
@@ -226,7 +223,6 @@ func TestAPIProgressStudentHappyPath(t *testing.T) {
 	assert.Equal(t, int32(1), detail.CompletedPageCount)
 	assert.True(t, detail.Pages[0].Completed)
 
-	// Complete page B → COMPLETED
 	code, body = callProgressAPI(t, mux, http.MethodPut, "/api/progress/me/pages/"+fx.pageB.String()+"/completion")
 	require.Equal(t, http.StatusOK, code, "body: %s", body)
 	detail = decodeDetail(t, body)
@@ -243,12 +239,10 @@ func TestAPIProgressManagementListAndDetail(t *testing.T) {
 		fx.studentA: {auth.STUDENT},
 	}
 
-	// Have studentA reach one page, studentB untouched.
 	studentMux := newProgressIntegrationAPI(t, pool, fx.studentA, rolesByUser)
 	code, _ := callProgressAPI(t, studentMux, http.MethodPut, "/api/progress/me/pages/"+fx.pageA.String()+"/reach")
 	require.Equal(t, http.StatusOK, code)
 
-	// Act as EXPERIMENTER for mgmt endpoints.
 	mgmtMux := newProgressIntegrationAPI(t, pool, fx.actorID, rolesByUser)
 
 	code, body := callProgressAPI(t, mgmtMux, http.MethodGet, fmt.Sprintf("/api/progress/students?experimentId=%s&courseId=%s", fx.experiment, fx.course))
@@ -280,40 +274,43 @@ func TestAPIProgressAuthFailures(t *testing.T) {
 	}
 	mux := newProgressIntegrationAPI(t, pool, fx.studentA, rolesByUser)
 
-	// Unknown course → 404 (course does not exist in DB)
-	code, _ := callProgressAPI(t, mux, http.MethodGet, "/api/progress/me?courseId="+uuid.NewString())
-	assert.Equal(t, http.StatusNotFound, code)
-
-	// Student not assigned to any experiment → 404
-	loneStudent := uuid.New()
-	_, err := pool.Exec(t.Context(),
-		"INSERT INTO users (id, email, name, roles) VALUES ($1, $2, $3, ARRAY['STUDENT']::user_role[])",
-		loneStudent, "progress-lone-"+loneStudent.String()+"@example.test", "Lone student")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		//nolint:errcheck
-		pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", loneStudent)
-	})
-	loneMux := newProgressIntegrationAPI(t, pool, loneStudent, map[uuid.UUID][]auth.Role{loneStudent: {auth.STUDENT}})
-	code, _ = callProgressAPI(t, loneMux, http.MethodGet, "/api/progress/me?courseId="+fx.course.String())
-	assert.Equal(t, http.StatusNotFound, code)
-
-	// Draft course + student in current exp → 403
-	draftCourseID := uuid.New()
-	require.NoError(t, pool.QueryRow(t.Context(),
-		"INSERT INTO courses (code, title, status) VALUES ($1, $2, 'DRAFT') RETURNING id",
-		"DRAFT-"+uuid.NewString(), "Draft Course").Scan(&draftCourseID))
-	_, err = pool.Exec(t.Context(),
-		"INSERT INTO experiment_courses (experiment_id, course_id) VALUES ($1, $2)",
-		fx.experiment, draftCourseID)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		//nolint:errcheck
-		pool.Exec(context.Background(), "DELETE FROM courses WHERE id = $1", draftCourseID)
+	t.Run("unknown course returns 404", func(t *testing.T) {
+		code, _ := callProgressAPI(t, mux, http.MethodGet, "/api/progress/me?courseId="+uuid.NewString())
+		assert.Equal(t, http.StatusNotFound, code)
 	})
 
-	code, _ = callProgressAPI(t, mux, http.MethodGet, "/api/progress/me?courseId="+draftCourseID.String())
-	assert.Equal(t, http.StatusForbidden, code)
+	t.Run("student without current experiment returns 404", func(t *testing.T) {
+		loneStudent := uuid.New()
+		_, err := pool.Exec(t.Context(),
+			"INSERT INTO users (id, email, name, roles) VALUES ($1, $2, $3, ARRAY['STUDENT']::user_role[])",
+			loneStudent, "progress-lone-"+loneStudent.String()+"@example.test", "Lone student")
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			//nolint:errcheck
+			pool.Exec(context.Background(), "DELETE FROM users WHERE id = $1", loneStudent)
+		})
+		loneMux := newProgressIntegrationAPI(t, pool, loneStudent, map[uuid.UUID][]auth.Role{loneStudent: {auth.STUDENT}})
+		code, _ := callProgressAPI(t, loneMux, http.MethodGet, "/api/progress/me?courseId="+fx.course.String())
+		assert.Equal(t, http.StatusNotFound, code)
+	})
+
+	t.Run("draft course assigned to current experiment returns 403", func(t *testing.T) {
+		draftCourseID := uuid.New()
+		require.NoError(t, pool.QueryRow(t.Context(),
+			"INSERT INTO courses (code, title, status) VALUES ($1, $2, 'DRAFT') RETURNING id",
+			"DRAFT-"+uuid.NewString(), "Draft Course").Scan(&draftCourseID))
+		_, err := pool.Exec(t.Context(),
+			"INSERT INTO experiment_courses (experiment_id, course_id) VALUES ($1, $2)",
+			fx.experiment, draftCourseID)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			//nolint:errcheck
+			pool.Exec(context.Background(), "DELETE FROM courses WHERE id = $1", draftCourseID)
+		})
+
+		code, _ := callProgressAPI(t, mux, http.MethodGet, "/api/progress/me?courseId="+draftCourseID.String())
+		assert.Equal(t, http.StatusForbidden, code)
+	})
 }
 
 func decodeDetail(t *testing.T, body []byte) courseProgressDetailResponse {
