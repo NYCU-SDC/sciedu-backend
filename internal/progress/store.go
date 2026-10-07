@@ -62,12 +62,7 @@ func (s *Store) PageByID(ctx context.Context, pageID uuid.UUID) (PageInfo, error
 		}
 		return PageInfo{}, err
 	}
-	return PageInfo{
-		ID:           row.ID,
-		CourseID:     row.CourseID,
-		Title:        row.Title,
-		DisplayOrder: row.DisplayOrder,
-	}, nil
+	return PageInfo(row), nil
 }
 
 func (s *Store) PagesByCourse(ctx context.Context, courseID uuid.UUID) ([]PageInfo, error) {
@@ -77,12 +72,7 @@ func (s *Store) PagesByCourse(ctx context.Context, courseID uuid.UUID) ([]PageIn
 	}
 	out := make([]PageInfo, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, PageInfo{
-			ID:           r.ID,
-			CourseID:     r.CourseID,
-			Title:        r.Title,
-			DisplayOrder: r.DisplayOrder,
-		})
+		out = append(out, PageInfo(r))
 	}
 	return out, nil
 }
