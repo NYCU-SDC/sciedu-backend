@@ -424,3 +424,36 @@
 
 ### Next Steps
 - Start the backend with the documented temporary migration-source procedure, use Yaak's cookie jar for dev-login, and call `/api/experiments/current`.
+
+## [2026-10-09] Task Record
+
+### Task Description
+- Address SCIEDU-113 review feedback by untracking the generated Experiment sqlc file and preventing overlapping current Experiments when an Experiment is activated again.
+
+### Actions Taken
+- Confirmed `internal/experiment/queries.sql.go` was tracked only because the SCIEDU-113 commit force-added it despite the existing `.gitignore` rule; removed it from the Git index with `git rm --cached` while preserving the local generated file.
+- Moved status updates into the existing transaction boundary and added `UpdateStatus` to `MutationRepository`.
+- For every non-ACTIVE to ACTIVE transition, the service now locks the Experiment, locks its participant users in the existing stable UUID order, checks the existing half-open schedule-overlap rule, and updates status only when no conflict exists.
+- Kept ACTIVE-to-ACTIVE idempotent behavior and the defensive multiple-current check unchanged.
+- Expanded table-driven service tests for conflicting/non-conflicting reactivation, no-participant activation, idempotent ACTIVE updates, invalid status, and the ARCHIVED-to-SCHEDULED-to-ACTIVE bypass.
+- Added PostgreSQL API integration coverage for the exact reviewer scenario, boundary/disjoint/no-participant success cases, and concurrent overlapping reactivations.
+
+### Attempted Methods
+- Attempted to run the PostgreSQL integration suite against the known disposable `sciedu_pagevisit_test` database. PostgreSQL was not listening on localhost:5432, so DB-backed tests failed during connection setup before executing assertions.
+
+### Verification
+- `go test ./internal/experiment` passed.
+- Integration-tagged Experiment tests compile successfully.
+- `go test ./...` passed.
+- `go vet ./...` passed.
+- `go build ./...` passed.
+- `git diff --check` passed.
+- Real PostgreSQL integration execution remains unavailable because localhost:5432 refused the connection.
+
+### Issues & Blockers
+- No implementation blocker remains.
+- PostgreSQL concurrency/integration cases require rerunning when the disposable database is available.
+- The ignored generated Experiment query file remains available locally; CI, Docker builds, and repository workflows all run generation before building.
+
+### Next Steps
+- Start the disposable PostgreSQL service and rerun `go test -tags integration ./internal/experiment -count=1 -v` before finalizing the review response.

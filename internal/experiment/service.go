@@ -30,6 +30,7 @@ type MutationRepository interface {
 	AddCourses(ctx context.Context, experimentID uuid.UUID, courseIDs []uuid.UUID) ([]CourseAssignment, error)
 	RemoveCourse(ctx context.Context, experimentID, courseID uuid.UUID) error
 	Update(ctx context.Context, params UpdateParams) (Record, error)
+	UpdateStatus(ctx context.Context, id uuid.UUID, status Status) (Record, error)
 }
 
 type Repository interface {
@@ -46,7 +47,6 @@ type Repository interface {
 	CountStudentCourses(ctx context.Context, experimentID uuid.UUID) (int64, error)
 	ListCurrentForStudent(ctx context.Context, studentID uuid.UUID) ([]Record, error)
 	ListCurrentCourses(ctx context.Context, experimentID uuid.UUID) ([]AssignedCourse, error)
-	UpdateStatus(ctx context.Context, id uuid.UUID, status Status) (Record, error)
 	WithinTx(ctx context.Context, fn func(MutationRepository) error) error
 }
 
@@ -626,7 +626,7 @@ func (s *Service) ensureParticipantScheduleAvailable(
 		return databaseutil.WrapDBError(err, s.logger, "check participant schedule conflicts")
 	}
 	if conflict {
-		return fmt.Errorf("%w: updated schedule overlaps another experiment assigned to a participant", errExperimentConflict)
+		return fmt.Errorf("%w: experiment schedule overlaps another experiment assigned to a participant", errExperimentConflict)
 	}
 	return nil
 }
@@ -635,9 +635,30 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, status Status)
 	if !status.Valid() {
 		return Record{}, fmt.Errorf("%w: unknown experiment status", errInvalidExperimentPayload)
 	}
-	record, err := s.repo.UpdateStatus(ctx, id, status)
+
+	var record Record
+	err := s.repo.WithinTx(ctx, func(repo MutationRepository) error {
+		current, err := repo.LockByID(ctx, id)
+		if err != nil {
+			return databaseutil.WrapDBErrorWithKeyValue(err, "experiments", "id", id.String(), s.logger, "lock experiment for status update")
+		}
+		if current.Status != StatusActive && status == StatusActive {
+			if err := s.ensureParticipantScheduleAvailable(ctx, repo, current.ID, current.ScheduledStartAt, current.ScheduledEndAt); err != nil {
+				return err
+			}
+		}
+
+		record, err = repo.UpdateStatus(ctx, id, status)
+		if err != nil {
+			return databaseutil.WrapDBErrorWithKeyValue(err, "experiments", "id", id.String(), s.logger, "update experiment status")
+		}
+		return nil
+	})
 	if err != nil {
-		return Record{}, databaseutil.WrapDBErrorWithKeyValue(err, "experiments", "id", id.String(), s.logger, "update experiment status")
+		if isMappedMutationError(err) {
+			return Record{}, err
+		}
+		return Record{}, databaseutil.WrapDBError(err, s.logger, "update experiment status transaction")
 	}
 	return record, nil
 }
