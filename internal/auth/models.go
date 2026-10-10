@@ -147,10 +147,20 @@ type Answer struct {
 	ID               uuid.UUID
 	QuestionID       uuid.UUID
 	UserID           uuid.UUID
+	ExperimentID     uuid.UUID
 	SelectedOptionID pgtype.UUID
 	TextAnswer       pgtype.Text
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+}
+
+type AnswerResult struct {
+	AnswerID             uuid.UUID
+	Status               string
+	Method               pgtype.Text
+	IsCorrect            pgtype.Bool
+	GradedAt             pgtype.Timestamptz
+	CorrectAnswerVersion pgtype.Int8
 }
 
 type Chat struct {
@@ -165,6 +175,16 @@ type Content struct {
 	ID      uuid.UUID
 	Type    string
 	Content string
+}
+
+type CorrectAnswer struct {
+	QuestionID             uuid.UUID
+	Type                   string
+	SelectedOptionID       pgtype.UUID
+	ReferenceAnswer        pgtype.Text
+	Version                int64
+	AnswerResultSyncStatus string
+	UpdatedAt              pgtype.Timestamptz
 }
 
 type Course struct {
