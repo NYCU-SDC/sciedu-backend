@@ -3,6 +3,7 @@ package experiment
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -245,6 +246,25 @@ func (s *Store) StudentExperimentAccessible(ctx context.Context, experimentID, s
 		ExperimentID: experimentID,
 		StudentID:    studentID,
 	})
+}
+
+type currentExperimentForStudentQuerier interface {
+	CurrentExperimentForStudent(ctx context.Context, studentID uuid.UUID) (uuid.UUID, error)
+}
+
+func resolveCurrentExperimentForStudent(ctx context.Context, q currentExperimentForStudentQuerier, studentID uuid.UUID) (uuid.UUID, bool, error) {
+	id, err := q.CurrentExperimentForStudent(ctx, studentID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, false, nil
+		}
+		return uuid.Nil, false, err
+	}
+	return id, true, nil
+}
+
+func (s *Store) CurrentExperimentForStudent(ctx context.Context, studentID uuid.UUID) (uuid.UUID, bool, error) {
+	return resolveCurrentExperimentForStudent(ctx, s.queries, studentID)
 }
 
 func (s *Store) ListStudentCourses(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]CourseAssignment, error) {

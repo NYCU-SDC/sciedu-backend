@@ -2,7 +2,7 @@
 // versions:
 //   sqlc v1.30.0
 
-package page
+package progress
 
 import (
 	"database/sql/driver"
@@ -347,7 +347,6 @@ type User struct {
 	Email       string
 	Name        string
 	AvatarUrl   pgtype.Text
-	GradeLevel  pgtype.Int4
 	Roles       []interface{}
 	LastLoginAt pgtype.Timestamptz
 	DisabledAt  pgtype.Timestamptz
