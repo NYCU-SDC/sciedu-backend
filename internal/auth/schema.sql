@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS users (
     email CITEXT UNIQUE NOT NULL,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     avatar_url TEXT,
+    grade_level INTEGER CONSTRAINT users_grade_level_check CHECK (grade_level BETWEEN 7 AND 12),
     roles user_role[] NOT NULL CHECK (cardinality(roles) > 0),
     last_login_at TIMESTAMPTZ,
     disabled_at TIMESTAMPTZ,

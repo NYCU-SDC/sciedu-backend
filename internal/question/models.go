@@ -337,6 +337,7 @@ type User struct {
 	Email       string
 	Name        string
 	AvatarUrl   pgtype.Text
+	GradeLevel  pgtype.Int4
 	Roles       []interface{}
 	LastLoginAt pgtype.Timestamptz
 	DisabledAt  pgtype.Timestamptz
