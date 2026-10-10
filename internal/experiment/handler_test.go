@@ -20,6 +20,7 @@ import (
 
 type fakeHandlerService struct {
 	listFn              func(ctx context.Context, input ListInput) (ExperimentPage, error)
+	currentFn           func(ctx context.Context, studentID uuid.UUID) (CurrentExperiment, error)
 	createFn            func(ctx context.Context, createdBy uuid.UUID, params EditableParams) (Record, error)
 	findByIDFn          func(ctx context.Context, id uuid.UUID) (Record, error)
 	listParticipantsFn  func(ctx context.Context, experimentID uuid.UUID, page, pageSize int32) (ParticipantPage, error)
@@ -41,6 +42,13 @@ func (f *fakeHandlerService) List(ctx context.Context, input ListInput) (Experim
 		return f.listFn(ctx, input)
 	}
 	return ExperimentPage{CurrentPage: input.Page, PageSize: input.PageSize}, nil
+}
+
+func (f *fakeHandlerService) Current(ctx context.Context, studentID uuid.UUID) (CurrentExperiment, error) {
+	if f.currentFn != nil {
+		return f.currentFn(ctx, studentID)
+	}
+	return CurrentExperiment{}, nil
 }
 
 func (f *fakeHandlerService) Create(ctx context.Context, createdBy uuid.UUID, params EditableParams) (Record, error) {
@@ -165,6 +173,7 @@ func directMux(handler *Handler, actorID uuid.UUID) *http.ServeMux {
 		}
 	}
 	mux.HandleFunc("GET /api/experiments", inject(handler.List))
+	mux.HandleFunc("GET /api/experiments/current", inject(handler.Current))
 	mux.HandleFunc("POST /api/experiments", inject(handler.Create))
 	mux.HandleFunc("GET /api/experiments/{id}", inject(handler.Get))
 	mux.HandleFunc("PUT /api/experiments/{id}", inject(handler.Update))

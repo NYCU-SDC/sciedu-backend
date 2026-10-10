@@ -30,6 +30,7 @@ type MutationRepository interface {
 	AddCourses(ctx context.Context, experimentID uuid.UUID, courseIDs []uuid.UUID) ([]CourseAssignment, error)
 	RemoveCourse(ctx context.Context, experimentID, courseID uuid.UUID) error
 	Update(ctx context.Context, params UpdateParams) (Record, error)
+	UpdateStatus(ctx context.Context, id uuid.UUID, status Status) (Record, error)
 }
 
 type Repository interface {
@@ -44,7 +45,8 @@ type Repository interface {
 	StudentExperimentAccessible(ctx context.Context, experimentID, studentID uuid.UUID) (bool, error)
 	ListStudentCourses(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]CourseAssignment, error)
 	CountStudentCourses(ctx context.Context, experimentID uuid.UUID) (int64, error)
-	UpdateStatus(ctx context.Context, id uuid.UUID, status Status) (Record, error)
+	ListCurrentForStudent(ctx context.Context, studentID uuid.UUID) ([]Record, error)
+	ListCurrentCourses(ctx context.Context, experimentID uuid.UUID) ([]AssignedCourse, error)
 	WithinTx(ctx context.Context, fn func(MutationRepository) error) error
 }
 
@@ -82,6 +84,11 @@ type CourseAssignmentPage struct {
 	CurrentPage int32
 	PageSize    int32
 	HasNextPage bool
+}
+
+type CurrentExperiment struct {
+	Experiment Record
+	Courses    []AssignedCourse
 }
 
 type Service struct {
@@ -176,6 +183,25 @@ func (s *Service) FindByID(ctx context.Context, id uuid.UUID) (Record, error) {
 		return Record{}, databaseutil.WrapDBErrorWithKeyValue(err, "experiments", "id", id.String(), s.logger, "get experiment")
 	}
 	return record, nil
+}
+
+func (s *Service) Current(ctx context.Context, studentID uuid.UUID) (CurrentExperiment, error) {
+	experiments, err := s.repo.ListCurrentForStudent(ctx, studentID)
+	if err != nil {
+		return CurrentExperiment{}, databaseutil.WrapDBError(err, s.logger, "find current student experiment")
+	}
+	if len(experiments) == 0 {
+		return CurrentExperiment{}, handlerutil.NewNotFoundError("experiments", "", "", "current experiment not found")
+	}
+	if len(experiments) > 1 {
+		return CurrentExperiment{}, fmt.Errorf("multiple current experiments found for student")
+	}
+
+	courses, err := s.repo.ListCurrentCourses(ctx, experiments[0].ID)
+	if err != nil {
+		return CurrentExperiment{}, databaseutil.WrapDBError(err, s.logger, "list current student experiment courses")
+	}
+	return CurrentExperiment{Experiment: experiments[0], Courses: courses}, nil
 }
 
 func (s *Service) ListParticipants(ctx context.Context, experimentID uuid.UUID, page, pageSize int32) (ParticipantPage, error) {
@@ -600,7 +626,7 @@ func (s *Service) ensureParticipantScheduleAvailable(
 		return databaseutil.WrapDBError(err, s.logger, "check participant schedule conflicts")
 	}
 	if conflict {
-		return fmt.Errorf("%w: updated schedule overlaps another experiment assigned to a participant", errExperimentConflict)
+		return fmt.Errorf("%w: experiment schedule overlaps another experiment assigned to a participant", errExperimentConflict)
 	}
 	return nil
 }
@@ -609,9 +635,30 @@ func (s *Service) UpdateStatus(ctx context.Context, id uuid.UUID, status Status)
 	if !status.Valid() {
 		return Record{}, fmt.Errorf("%w: unknown experiment status", errInvalidExperimentPayload)
 	}
-	record, err := s.repo.UpdateStatus(ctx, id, status)
+
+	var record Record
+	err := s.repo.WithinTx(ctx, func(repo MutationRepository) error {
+		current, err := repo.LockByID(ctx, id)
+		if err != nil {
+			return databaseutil.WrapDBErrorWithKeyValue(err, "experiments", "id", id.String(), s.logger, "lock experiment for status update")
+		}
+		if current.Status != StatusActive && status == StatusActive {
+			if err := s.ensureParticipantScheduleAvailable(ctx, repo, current.ID, current.ScheduledStartAt, current.ScheduledEndAt); err != nil {
+				return err
+			}
+		}
+
+		record, err = repo.UpdateStatus(ctx, id, status)
+		if err != nil {
+			return databaseutil.WrapDBErrorWithKeyValue(err, "experiments", "id", id.String(), s.logger, "update experiment status")
+		}
+		return nil
+	})
 	if err != nil {
-		return Record{}, databaseutil.WrapDBErrorWithKeyValue(err, "experiments", "id", id.String(), s.logger, "update experiment status")
+		if isMappedMutationError(err) {
+			return Record{}, err
+		}
+		return Record{}, databaseutil.WrapDBError(err, s.logger, "update experiment status transaction")
 	}
 	return record, nil
 }

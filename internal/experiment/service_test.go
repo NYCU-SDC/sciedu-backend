@@ -35,6 +35,8 @@ type fakeRepository struct {
 	studentAccessibleFn   func(ctx context.Context, experimentID, studentID uuid.UUID) (bool, error)
 	listStudentCoursesFn  func(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]CourseAssignment, error)
 	countStudentCoursesFn func(ctx context.Context, experimentID uuid.UUID) (int64, error)
+	listCurrentFn         func(ctx context.Context, studentID uuid.UUID) ([]Record, error)
+	listCurrentCoursesFn  func(ctx context.Context, experimentID uuid.UUID) ([]AssignedCourse, error)
 	courseCandidates      []AssignedCourse
 	addCoursesFn          func(ctx context.Context, experimentID uuid.UUID, courseIDs []uuid.UUID) ([]CourseAssignment, error)
 	removeCourseFn        func(ctx context.Context, experimentID, courseID uuid.UUID) error
@@ -141,6 +143,20 @@ func (f *fakeRepository) CountStudentCourses(ctx context.Context, experimentID u
 		return f.countStudentCoursesFn(ctx, experimentID)
 	}
 	return 0, nil
+}
+
+func (f *fakeRepository) ListCurrentForStudent(ctx context.Context, studentID uuid.UUID) ([]Record, error) {
+	if f.listCurrentFn != nil {
+		return f.listCurrentFn(ctx, studentID)
+	}
+	return nil, nil
+}
+
+func (f *fakeRepository) ListCurrentCourses(ctx context.Context, experimentID uuid.UUID) ([]AssignedCourse, error) {
+	if f.listCurrentCoursesFn != nil {
+		return f.listCurrentCoursesFn(ctx, experimentID)
+	}
+	return nil, nil
 }
 
 func (f *fakeRepository) Update(ctx context.Context, params UpdateParams) (Record, error) {
@@ -607,33 +623,58 @@ func TestServiceUpdateLifecyclePolicy(t *testing.T) {
 }
 
 func TestServiceUpdateStatusValidation(t *testing.T) {
+	start := time.Date(2026, 9, 1, 1, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name      string
-		status    Status
-		wantError bool
+		name              string
+		currentStatus     Status
+		requestedStatus   Status
+		participants      []uuid.UUID
+		scheduleConflict  bool
+		wantError         error
+		wantScheduleCheck bool
+		wantStatusUpdate  bool
 	}{
-		{name: "draft", status: StatusDraft},
-		{name: "active", status: StatusActive},
-		{name: "unknown", status: "PAUSED", wantError: true},
+		{name: "draft", currentStatus: StatusDraft, requestedStatus: StatusDraft, wantStatusUpdate: true},
+		{name: "scheduled activation", currentStatus: StatusScheduled, requestedStatus: StatusActive, wantStatusUpdate: true},
+		{name: "already active is idempotent", currentStatus: StatusActive, requestedStatus: StatusActive, participants: []uuid.UUID{uuid.New()}, scheduleConflict: true, wantStatusUpdate: true},
+		{name: "archived reactivation without participants", currentStatus: StatusArchived, requestedStatus: StatusActive, wantStatusUpdate: true},
+		{name: "non conflicting archived reactivation", currentStatus: StatusArchived, requestedStatus: StatusActive, participants: []uuid.UUID{uuid.New()}, wantScheduleCheck: true, wantStatusUpdate: true},
+		{name: "conflicting archived reactivation", currentStatus: StatusArchived, requestedStatus: StatusActive, participants: []uuid.UUID{uuid.New()}, scheduleConflict: true, wantError: errExperimentConflict, wantScheduleCheck: true},
+		{name: "indirect archived reactivation cannot bypass check", currentStatus: StatusScheduled, requestedStatus: StatusActive, participants: []uuid.UUID{uuid.New()}, scheduleConflict: true, wantError: errExperimentConflict, wantScheduleCheck: true},
+		{name: "unknown", requestedStatus: "PAUSED", wantError: errInvalidExperimentPayload},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			repo := &fakeRepository{updateStatusFn: func(_ context.Context, id uuid.UUID, status Status) (Record, error) {
-				return Record{ID: id, Status: status}, nil
-			}}
+			id := uuid.New()
+			repo := &fakeRepository{
+				findByIDFn: func(context.Context, uuid.UUID) (Record, error) {
+					return Record{ID: id, Status: tt.currentStatus, ScheduledStartAt: start, ScheduledEndAt: start.Add(time.Hour)}, nil
+				},
+				participantIDs:   tt.participants,
+				scheduleConflict: tt.scheduleConflict,
+				updateStatusFn: func(_ context.Context, id uuid.UUID, status Status) (Record, error) {
+					return Record{ID: id, Status: status}, nil
+				},
+			}
 			service := NewService(repo, nil)
 
-			record, err := service.UpdateStatus(context.Background(), uuid.New(), tt.status)
+			record, err := service.UpdateStatus(context.Background(), id, tt.requestedStatus)
 
-			if tt.wantError {
-				assert.ErrorIs(t, err, errInvalidExperimentPayload)
-				assert.Zero(t, repo.updateStatusCalls)
-				return
+			if tt.wantError != nil {
+				assert.ErrorIs(t, err, tt.wantError)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.requestedStatus, record.Status)
 			}
-			require.NoError(t, err)
-			assert.Equal(t, tt.status, record.Status)
-			assert.Equal(t, 1, repo.updateStatusCalls)
+			assert.Equal(t, tt.wantStatusUpdate, repo.updateStatusCalls == 1)
+			assert.Equal(t, tt.wantScheduleCheck, repo.scheduleConflictCalls == 1)
+			if tt.requestedStatus.Valid() {
+				assert.Equal(t, 1, repo.withinTxCalls)
+				assert.Equal(t, 1, repo.lockByIDCalls)
+			} else {
+				assert.Zero(t, repo.withinTxCalls)
+			}
 		})
 	}
 }

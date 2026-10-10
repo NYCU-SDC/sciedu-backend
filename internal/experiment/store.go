@@ -271,6 +271,36 @@ func (s *Store) CountStudentCourses(ctx context.Context, experimentID uuid.UUID)
 	return s.queries.CountStudentExperimentCourses(ctx, experimentID)
 }
 
+func (s *Store) ListCurrentForStudent(ctx context.Context, studentID uuid.UUID) ([]Record, error) {
+	rows, err := s.queries.ListCurrentStudentExperiments(ctx, studentID)
+	if err != nil {
+		return nil, err
+	}
+	records := make([]Record, 0, len(rows))
+	for _, row := range rows {
+		record, err := recordFromRow(row)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+func (s *Store) ListCurrentCourses(ctx context.Context, experimentID uuid.UUID) ([]AssignedCourse, error) {
+	rows, err := s.queries.ListCurrentStudentExperimentCourses(ctx, experimentID)
+	if err != nil {
+		return nil, err
+	}
+	courses := make([]AssignedCourse, 0, len(rows))
+	for _, row := range rows {
+		courses = append(courses, assignedCourse(
+			row.ID, row.Code, row.Title, row.Description, row.Status, row.CreatedAt, row.UpdatedAt,
+		))
+	}
+	return courses, nil
+}
+
 func (s *Store) Create(ctx context.Context, params CreateParams) (Record, error) {
 	configuration, err := json.Marshal(params.Configuration)
 	if err != nil {
