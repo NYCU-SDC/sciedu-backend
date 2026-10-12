@@ -286,6 +286,16 @@ type PageBlock struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+type PageProgress struct {
+	StudentID   uuid.UUID
+	PageID      uuid.UUID
+	CourseID    uuid.UUID
+	ReachedAt   pgtype.Timestamptz
+	CompletedAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type PageVisit struct {
 	ID              uuid.UUID
 	StudentID       uuid.UUID

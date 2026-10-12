@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -15,12 +16,15 @@ import (
 	"sciedu-backend/internal/experiment"
 	"sciedu-backend/internal/page"
 	"sciedu-backend/internal/pagevisit"
+	"sciedu-backend/internal/progress"
 	"sciedu-backend/internal/question"
 	"sciedu-backend/internal/user"
 
 	databaseutil "github.com/NYCU-SDC/summer/pkg/database"
 	logutil "github.com/NYCU-SDC/summer/pkg/log"
 	middlewareutil "github.com/NYCU-SDC/summer/pkg/middleware"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 )
@@ -121,6 +125,10 @@ func main() {
 	pageVisitService := pagevisit.NewService(pageVisitStore, nil)
 	pageVisitHandler := pagevisit.NewHandler(pageVisitService, logger)
 
+	progressStore := progress.NewStore(pool)
+	progressService := progress.NewService(progressStore, experimentStore, &progressCourseAccess{courseStore}, nil, logger)
+	progressHandler := progress.NewHandler(progressService, logger)
+
 	// Health check route
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -139,6 +147,7 @@ func main() {
 	chatHandler.RegisterRoutes(mux, protectedMiddlewareSet)
 	pageHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
 	pageVisitHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
+	progressHandler.RegisterRoutes(mux, protectedMiddlewareSet, authorizer)
 
 	logger.Info("Start listening on port: 8080")
 
@@ -146,6 +155,21 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+type progressCourseAccess struct {
+	store *course.Store
+}
+
+func (a *progressCourseAccess) CheckStudentCourseAccess(ctx context.Context, studentID, courseID uuid.UUID) (progress.CourseAccessDecision, error) {
+	decision, err := a.store.CourseForStudent(ctx, studentID, courseID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return progress.CourseAccessDecision{Found: false}, nil
+		}
+		return progress.CourseAccessDecision{}, err
+	}
+	return progress.CourseAccessDecision{Found: true, Allowed: decision.Allowed}, nil
 }
 
 func initGoogleOAuthProvider(cfg config.Config) (auth.OAuthProvider, error) {

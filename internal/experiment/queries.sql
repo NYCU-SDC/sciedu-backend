@@ -170,6 +170,16 @@ WHERE ec.experiment_id = sqlc.arg('experiment_id')
 ORDER BY ec.linked_at DESC, c.id
 LIMIT sqlc.arg('limit')::int OFFSET sqlc.arg('offset')::bigint;
 
+-- name: CurrentExperimentForStudent :one
+SELECT e.id
+FROM experiments e
+JOIN experiment_participants ep ON ep.experiment_id = e.id
+WHERE ep.user_id = sqlc.arg('student_id')
+  AND e.status = 'ACTIVE'
+  AND e.scheduled_start_at <= CURRENT_TIMESTAMP
+  AND CURRENT_TIMESTAMP < e.scheduled_end_at
+LIMIT 1;
+
 -- name: StudentExperimentAccessible :one
 SELECT EXISTS (
     SELECT 1
