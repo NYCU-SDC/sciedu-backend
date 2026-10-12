@@ -13,7 +13,10 @@ SELECT sqlc.arg('student_id'), p.id, p.course_id, sqlc.arg('completed_at'), sqlc
 FROM pages p
 WHERE p.id = sqlc.arg('page_id')
 ON CONFLICT (student_id, page_id) DO UPDATE
-    SET completed_at = COALESCE(page_progress.completed_at, EXCLUDED.completed_at),
+    SET completed_at = COALESCE(
+            page_progress.completed_at,
+            GREATEST(EXCLUDED.completed_at, page_progress.reached_at)
+        ),
         updated_at = now()
 RETURNING student_id, page_id, course_id, reached_at, completed_at, created_at, updated_at;
 

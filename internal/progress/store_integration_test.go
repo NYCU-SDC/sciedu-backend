@@ -217,6 +217,28 @@ func TestStoreCompletedBeforeReachRejectedByCheck(t *testing.T) {
 	require.Error(t, err, "CHECK must reject completed_at before reached_at")
 }
 
+// Models the race where a later reach commits before an earlier-timestamped
+// completion executes its UPSERT. Without the GREATEST clamp this triggers the
+// page_progress_completed_at_not_before_reached_at CHECK and fails the write.
+func TestStoreUpsertCompleteClampsCompletedToReachedUnderRace(t *testing.T) {
+	pool := newProgressIntegrationPool(t)
+	fixture := seedProgressFixture(t, pool)
+	store := NewStore(pool)
+	ctx := t.Context()
+
+	laterReach := time.Now().UTC().Truncate(time.Microsecond)
+	earlierComplete := laterReach.Add(-time.Second)
+
+	_, err := store.UpsertReach(ctx, fixture.studentID, fixture.pageA, laterReach)
+	require.NoError(t, err)
+
+	row, err := store.UpsertComplete(ctx, fixture.studentID, fixture.pageA, earlierComplete)
+	require.NoError(t, err, "completion with earlier timestamp than persisted reach must not violate CHECK")
+	assert.True(t, laterReach.Equal(row.ReachedAt), "reached_at must stay at the first-write value")
+	require.NotNil(t, row.CompletedAt)
+	assert.True(t, laterReach.Equal(*row.CompletedAt), "completed_at must be clamped forward to reached_at")
+}
+
 func TestStorePagesByCourseOrdersByDisplayOrder(t *testing.T) {
 	pool := newProgressIntegrationPool(t)
 	fixture := seedProgressFixture(t, pool)
