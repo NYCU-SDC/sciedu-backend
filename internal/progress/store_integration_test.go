@@ -16,12 +16,22 @@ import (
 )
 
 type progressFixture struct {
-	studentID uuid.UUID
-	otherID   uuid.UUID
-	courseID  uuid.UUID
-	pageA     uuid.UUID
-	pageB     uuid.UUID
+	studentID    uuid.UUID
+	otherID      uuid.UUID
+	experimentID uuid.UUID
+	courseID     uuid.UUID
+	pageA        uuid.UUID
+	pageB        uuid.UUID
 }
+
+const integrationExperimentConfiguration = `{
+	"maxAttempts": 1,
+	"allowRetry": false,
+	"showScore": true,
+	"showExplanations": true,
+	"gradingMode": "AUTOMATIC",
+	"correctAnswerReleaseMode": "AFTER_PAGE_SUBMISSION"
+}`
 
 func newProgressIntegrationPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -71,9 +81,20 @@ func seedProgressFixture(t *testing.T, pool *pgxpool.Pool) progressFixture {
 		"INSERT INTO pages (course_id, title, display_order) VALUES ($1, $2, 1) RETURNING id",
 		fixture.courseID, "Progress Page B").Scan(&fixture.pageB), "seed page B")
 
+	start := time.Now().UTC().Add(-time.Hour)
+	end := time.Now().UTC().Add(24 * time.Hour)
+	require.NoError(t, pool.QueryRow(ctx, `
+		INSERT INTO experiments (created_by, name, configuration, status, scheduled_start_at, scheduled_end_at)
+		VALUES ($1, $2, $3::jsonb, 'ACTIVE', $4, $5)
+		RETURNING id`,
+		fixture.otherID, "Progress Store Exp "+suffix, integrationExperimentConfiguration, start, end).
+		Scan(&fixture.experimentID), "seed experiment")
+
 	t.Cleanup(func() {
 		cleanupCtx := context.Background()
 		//nolint:errcheck // best-effort cleanup
+		pool.Exec(cleanupCtx, "DELETE FROM experiments WHERE id = $1", fixture.experimentID)
+		//nolint:errcheck
 		pool.Exec(cleanupCtx, "DELETE FROM users WHERE id = ANY($1::uuid[])",
 			[]uuid.UUID{fixture.studentID, fixture.otherID})
 		//nolint:errcheck
@@ -93,13 +114,13 @@ func TestStoreUpsertReachIsIdempotent(t *testing.T) {
 	ctx := t.Context()
 	first := time.Now().UTC().Truncate(time.Microsecond)
 
-	a, err := store.UpsertReach(ctx, fixture.studentID, fixture.pageA, first)
+	a, err := store.UpsertReach(ctx, fixture.studentID, fixture.experimentID, fixture.pageA, first)
 	require.NoError(t, err)
 	assert.Equal(t, fixture.courseID, a.CourseID)
 	assert.Equal(t, first, a.ReachedAt)
 	assert.Nil(t, a.CompletedAt)
 
-	b, err := store.UpsertReach(ctx, fixture.studentID, fixture.pageA, first.Add(time.Hour))
+	b, err := store.UpsertReach(ctx, fixture.studentID, fixture.experimentID, fixture.pageA, first.Add(time.Hour))
 	require.NoError(t, err)
 	assert.Equal(t, first, b.ReachedAt, "second reach must preserve original reached_at")
 }
@@ -111,7 +132,7 @@ func TestStoreUpsertCompleteStampsReachWhenMissing(t *testing.T) {
 	ctx := t.Context()
 	completed := time.Now().UTC().Truncate(time.Microsecond)
 
-	row, err := store.UpsertComplete(ctx, fixture.studentID, fixture.pageA, completed)
+	row, err := store.UpsertComplete(ctx, fixture.studentID, fixture.experimentID, fixture.pageA, completed)
 	require.NoError(t, err)
 	assert.Equal(t, completed, row.ReachedAt)
 	require.NotNil(t, row.CompletedAt)
@@ -126,10 +147,10 @@ func TestStoreUpsertCompleteKeepsExistingReach(t *testing.T) {
 	reached := time.Now().UTC().Truncate(time.Microsecond)
 	completed := reached.Add(time.Hour)
 
-	_, err := store.UpsertReach(ctx, fixture.studentID, fixture.pageA, reached)
+	_, err := store.UpsertReach(ctx, fixture.studentID, fixture.experimentID, fixture.pageA, reached)
 	require.NoError(t, err)
 
-	row, err := store.UpsertComplete(ctx, fixture.studentID, fixture.pageA, completed)
+	row, err := store.UpsertComplete(ctx, fixture.studentID, fixture.experimentID, fixture.pageA, completed)
 	require.NoError(t, err)
 	assert.Equal(t, reached, row.ReachedAt, "existing reached_at must not be overwritten")
 	require.NotNil(t, row.CompletedAt)
@@ -143,10 +164,10 @@ func TestStoreUpsertCompleteIsIrreversible(t *testing.T) {
 	ctx := t.Context()
 	first := time.Now().UTC().Truncate(time.Microsecond)
 
-	_, err := store.UpsertComplete(ctx, fixture.studentID, fixture.pageA, first)
+	_, err := store.UpsertComplete(ctx, fixture.studentID, fixture.experimentID, fixture.pageA, first)
 	require.NoError(t, err)
 
-	row, err := store.UpsertComplete(ctx, fixture.studentID, fixture.pageA, first.Add(time.Hour))
+	row, err := store.UpsertComplete(ctx, fixture.studentID, fixture.experimentID, fixture.pageA, first.Add(time.Hour))
 	require.NoError(t, err)
 	require.NotNil(t, row.CompletedAt)
 	assert.Equal(t, first, *row.CompletedAt, "completed_at must stay at the first completion")
@@ -157,7 +178,7 @@ func TestStoreUpsertReachForMissingPageReturnsNotFound(t *testing.T) {
 	fixture := seedProgressFixture(t, pool)
 	store := NewStore(pool)
 
-	_, err := store.UpsertReach(t.Context(), fixture.studentID, uuid.New(), time.Now().UTC())
+	_, err := store.UpsertReach(t.Context(), fixture.studentID, fixture.experimentID, uuid.New(), time.Now().UTC())
 	assert.ErrorIs(t, err, ErrPageNotFound)
 }
 
@@ -167,7 +188,7 @@ func TestStorePageCascadeDeletesProgress(t *testing.T) {
 	store := NewStore(pool)
 	ctx := t.Context()
 
-	_, err := store.UpsertReach(ctx, fixture.studentID, fixture.pageA, time.Now().UTC())
+	_, err := store.UpsertReach(ctx, fixture.studentID, fixture.experimentID, fixture.pageA, time.Now().UTC())
 	require.NoError(t, err)
 
 	_, err = pool.Exec(ctx, "DELETE FROM pages WHERE id = $1", fixture.pageA)
@@ -187,18 +208,18 @@ func TestStoreProgressIsScopedToStudent(t *testing.T) {
 	ctx := t.Context()
 	t0 := time.Now().UTC().Truncate(time.Microsecond)
 
-	_, err := store.UpsertReach(ctx, fixture.studentID, fixture.pageA, t0)
+	_, err := store.UpsertReach(ctx, fixture.studentID, fixture.experimentID, fixture.pageA, t0)
 	require.NoError(t, err)
-	_, err = store.UpsertComplete(ctx, fixture.otherID, fixture.pageA, t0)
+	_, err = store.UpsertComplete(ctx, fixture.otherID, fixture.experimentID, fixture.pageA, t0)
 	require.NoError(t, err)
 
-	rows, err := store.ProgressByStudentCourse(ctx, fixture.studentID, fixture.courseID)
+	rows, err := store.ProgressByStudentCourse(ctx, fixture.studentID, fixture.experimentID, fixture.courseID)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, fixture.pageA, rows[0].PageID)
 	assert.Nil(t, rows[0].CompletedAt)
 
-	other, err := store.ProgressByStudentCourse(ctx, fixture.otherID, fixture.courseID)
+	other, err := store.ProgressByStudentCourse(ctx, fixture.otherID, fixture.experimentID, fixture.courseID)
 	require.NoError(t, err)
 	require.Len(t, other, 1)
 	require.NotNil(t, other[0].CompletedAt)
@@ -211,9 +232,9 @@ func TestStoreCompletedBeforeReachRejectedByCheck(t *testing.T) {
 	reached := time.Now().UTC().Truncate(time.Microsecond)
 
 	_, err := pool.Exec(ctx, `
-		INSERT INTO page_progress (student_id, page_id, course_id, reached_at, completed_at)
-		VALUES ($1, $2, $3, $4, $5)`,
-		fixture.studentID, fixture.pageA, fixture.courseID, reached, reached.Add(-time.Second))
+		INSERT INTO page_progress (student_id, experiment_id, page_id, course_id, reached_at, completed_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		fixture.studentID, fixture.experimentID, fixture.pageA, fixture.courseID, reached, reached.Add(-time.Second))
 	require.Error(t, err, "CHECK must reject completed_at before reached_at")
 }
 
@@ -229,10 +250,10 @@ func TestStoreUpsertCompleteClampsCompletedToReachedUnderRace(t *testing.T) {
 	laterReach := time.Now().UTC().Truncate(time.Microsecond)
 	earlierComplete := laterReach.Add(-time.Second)
 
-	_, err := store.UpsertReach(ctx, fixture.studentID, fixture.pageA, laterReach)
+	_, err := store.UpsertReach(ctx, fixture.studentID, fixture.experimentID, fixture.pageA, laterReach)
 	require.NoError(t, err)
 
-	row, err := store.UpsertComplete(ctx, fixture.studentID, fixture.pageA, earlierComplete)
+	row, err := store.UpsertComplete(ctx, fixture.studentID, fixture.experimentID, fixture.pageA, earlierComplete)
 	require.NoError(t, err, "completion with earlier timestamp than persisted reach must not violate CHECK")
 	assert.True(t, laterReach.Equal(row.ReachedAt), "reached_at must stay at the first-write value")
 	require.NotNil(t, row.CompletedAt)

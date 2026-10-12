@@ -24,11 +24,12 @@ func NewStore(db transactionDB) *Store {
 	return &Store{queries: New(db), db: db}
 }
 
-func (s *Store) UpsertReach(ctx context.Context, studentID, pageID uuid.UUID, reachedAt time.Time) (ProgressRow, error) {
+func (s *Store) UpsertReach(ctx context.Context, studentID, experimentID, pageID uuid.UUID, reachedAt time.Time) (ProgressRow, error) {
 	row, err := s.queries.UpsertReach(ctx, UpsertReachParams{
-		StudentID: studentID,
-		PageID:    pageID,
-		ReachedAt: pgTimestamptz(reachedAt),
+		StudentID:    studentID,
+		ExperimentID: experimentID,
+		PageID:       pageID,
+		ReachedAt:    pgTimestamptz(reachedAt),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -39,11 +40,12 @@ func (s *Store) UpsertReach(ctx context.Context, studentID, pageID uuid.UUID, re
 	return progressRowFromDB(row), nil
 }
 
-func (s *Store) UpsertComplete(ctx context.Context, studentID, pageID uuid.UUID, completedAt time.Time) (ProgressRow, error) {
+func (s *Store) UpsertComplete(ctx context.Context, studentID, experimentID, pageID uuid.UUID, completedAt time.Time) (ProgressRow, error) {
 	row, err := s.queries.UpsertComplete(ctx, UpsertCompleteParams{
-		StudentID:   studentID,
-		PageID:      pageID,
-		CompletedAt: pgTimestamptz(completedAt),
+		StudentID:    studentID,
+		ExperimentID: experimentID,
+		PageID:       pageID,
+		CompletedAt:  pgTimestamptz(completedAt),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -77,10 +79,11 @@ func (s *Store) PagesByCourse(ctx context.Context, courseID uuid.UUID) ([]PageIn
 	return out, nil
 }
 
-func (s *Store) ProgressByStudentCourse(ctx context.Context, studentID, courseID uuid.UUID) ([]ProgressRow, error) {
+func (s *Store) ProgressByStudentCourse(ctx context.Context, studentID, experimentID, courseID uuid.UUID) ([]ProgressRow, error) {
 	rows, err := s.queries.ProgressByStudentCourse(ctx, ProgressByStudentCourseParams{
-		StudentID: studentID,
-		CourseID:  courseID,
+		StudentID:    studentID,
+		ExperimentID: experimentID,
+		CourseID:     courseID,
 	})
 	if err != nil {
 		return nil, err
@@ -121,13 +124,14 @@ func (s *Store) CountCourseParticipants(ctx context.Context, experimentID uuid.U
 	return s.queries.CountCourseParticipants(ctx, experimentID)
 }
 
-func (s *Store) ProgressForParticipants(ctx context.Context, courseID uuid.UUID, studentIDs []uuid.UUID) (map[uuid.UUID][]ProgressRow, error) {
+func (s *Store) ProgressForParticipants(ctx context.Context, experimentID, courseID uuid.UUID, studentIDs []uuid.UUID) (map[uuid.UUID][]ProgressRow, error) {
 	if len(studentIDs) == 0 {
 		return map[uuid.UUID][]ProgressRow{}, nil
 	}
 	rows, err := s.queries.ProgressForParticipants(ctx, ProgressForParticipantsParams{
-		CourseID:   courseID,
-		StudentIds: studentIDs,
+		ExperimentID: experimentID,
+		CourseID:     courseID,
+		StudentIds:   studentIDs,
 	})
 	if err != nil {
 		return nil, err

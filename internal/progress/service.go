@@ -14,13 +14,13 @@ import (
 type Repository interface {
 	PageByID(ctx context.Context, pageID uuid.UUID) (PageInfo, error)
 	PagesByCourse(ctx context.Context, courseID uuid.UUID) ([]PageInfo, error)
-	ProgressByStudentCourse(ctx context.Context, studentID, courseID uuid.UUID) ([]ProgressRow, error)
-	UpsertReach(ctx context.Context, studentID, pageID uuid.UUID, reachedAt time.Time) (ProgressRow, error)
-	UpsertComplete(ctx context.Context, studentID, pageID uuid.UUID, completedAt time.Time) (ProgressRow, error)
+	ProgressByStudentCourse(ctx context.Context, studentID, experimentID, courseID uuid.UUID) ([]ProgressRow, error)
+	UpsertReach(ctx context.Context, studentID, experimentID, pageID uuid.UUID, reachedAt time.Time) (ProgressRow, error)
+	UpsertComplete(ctx context.Context, studentID, experimentID, pageID uuid.UUID, completedAt time.Time) (ProgressRow, error)
 
 	ListCourseParticipants(ctx context.Context, experimentID uuid.UUID, limit int32, offset int64) ([]Participant, error)
 	CountCourseParticipants(ctx context.Context, experimentID uuid.UUID) (int64, error)
-	ProgressForParticipants(ctx context.Context, courseID uuid.UUID, studentIDs []uuid.UUID) (map[uuid.UUID][]ProgressRow, error)
+	ProgressForParticipants(ctx context.Context, experimentID, courseID uuid.UUID, studentIDs []uuid.UUID) (map[uuid.UUID][]ProgressRow, error)
 	ExperimentCourseExists(ctx context.Context, experimentID, courseID uuid.UUID) (bool, error)
 	ParticipantInExperiment(ctx context.Context, experimentID, studentID uuid.UUID) (bool, error)
 }
@@ -81,7 +81,7 @@ func (s *Service) ReachPage(ctx context.Context, studentID, pageID uuid.UUID) (C
 	if err != nil {
 		return CourseProgressDetail{}, err
 	}
-	if _, err := s.repo.UpsertReach(ctx, studentID, pageID, s.now().UTC()); err != nil {
+	if _, err := s.repo.UpsertReach(ctx, studentID, expID, pageID, s.now().UTC()); err != nil {
 		return CourseProgressDetail{}, fmt.Errorf("upsert reach: %w", err)
 	}
 	return s.buildDetail(ctx, studentID, expID, courseID)
@@ -96,7 +96,7 @@ func (s *Service) CompletePage(ctx context.Context, studentID, pageID uuid.UUID)
 	if err != nil {
 		return CourseProgressDetail{}, err
 	}
-	if _, err := s.repo.UpsertComplete(ctx, studentID, pageID, s.now().UTC()); err != nil {
+	if _, err := s.repo.UpsertComplete(ctx, studentID, expID, pageID, s.now().UTC()); err != nil {
 		return CourseProgressDetail{}, fmt.Errorf("upsert complete: %w", err)
 	}
 	return s.buildDetail(ctx, studentID, expID, courseID)
@@ -175,7 +175,7 @@ func (s *Service) ListCourseStudentProgress(ctx context.Context, input ListCours
 	for _, p := range participants {
 		ids = append(ids, p.ID)
 	}
-	progressByStudent, err := s.repo.ProgressForParticipants(ctx, input.CourseID, ids)
+	progressByStudent, err := s.repo.ProgressForParticipants(ctx, input.ExperimentID, input.CourseID, ids)
 	if err != nil {
 		return StudentCourseProgressPage{}, fmt.Errorf("fetch participant progress: %w", err)
 	}
@@ -225,7 +225,7 @@ func (s *Service) buildDetail(ctx context.Context, studentID, experimentID, cour
 	if err != nil {
 		return CourseProgressDetail{}, fmt.Errorf("list pages: %w", err)
 	}
-	rows, err := s.repo.ProgressByStudentCourse(ctx, studentID, courseID)
+	rows, err := s.repo.ProgressByStudentCourse(ctx, studentID, experimentID, courseID)
 	if err != nil {
 		return CourseProgressDetail{}, fmt.Errorf("list progress: %w", err)
 	}

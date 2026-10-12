@@ -15,16 +15,18 @@ import (
 type stubRepo struct {
 	pageByID            func(uuid.UUID) (PageInfo, error)
 	pagesByCourse       func(uuid.UUID) ([]PageInfo, error)
-	progressByStudent   func(uuid.UUID, uuid.UUID) ([]ProgressRow, error)
-	upsertReach         func(uuid.UUID, uuid.UUID, time.Time) (ProgressRow, error)
-	upsertComplete      func(uuid.UUID, uuid.UUID, time.Time) (ProgressRow, error)
+	progressByStudent   func(uuid.UUID, uuid.UUID, uuid.UUID) ([]ProgressRow, error)
+	upsertReach         func(uuid.UUID, uuid.UUID, uuid.UUID, time.Time) (ProgressRow, error)
+	upsertComplete      func(uuid.UUID, uuid.UUID, uuid.UUID, time.Time) (ProgressRow, error)
 	listParticipants    func(uuid.UUID, int32, int64) ([]Participant, error)
 	countParticipants   func(uuid.UUID) (int64, error)
-	progressForParts    func(uuid.UUID, []uuid.UUID) (map[uuid.UUID][]ProgressRow, error)
+	progressForParts    func(uuid.UUID, uuid.UUID, []uuid.UUID) (map[uuid.UUID][]ProgressRow, error)
 	expCourseExists     func(uuid.UUID, uuid.UUID) (bool, error)
 	participantIn       func(uuid.UUID, uuid.UUID) (bool, error)
 	upsertReachCalls    int
 	upsertCompleteCalls int
+	lastReachExpID      uuid.UUID
+	lastCompleteExpID   uuid.UUID
 	lastReachTime       time.Time
 	lastCompleteTime    time.Time
 }
@@ -35,25 +37,27 @@ func (s *stubRepo) PageByID(_ context.Context, id uuid.UUID) (PageInfo, error) {
 func (s *stubRepo) PagesByCourse(_ context.Context, id uuid.UUID) ([]PageInfo, error) {
 	return s.pagesByCourse(id)
 }
-func (s *stubRepo) ProgressByStudentCourse(_ context.Context, sid, cid uuid.UUID) ([]ProgressRow, error) {
-	return s.progressByStudent(sid, cid)
+func (s *stubRepo) ProgressByStudentCourse(_ context.Context, sid, eid, cid uuid.UUID) ([]ProgressRow, error) {
+	return s.progressByStudent(sid, eid, cid)
 }
-func (s *stubRepo) UpsertReach(_ context.Context, sid, pid uuid.UUID, t time.Time) (ProgressRow, error) {
+func (s *stubRepo) UpsertReach(_ context.Context, sid, eid, pid uuid.UUID, t time.Time) (ProgressRow, error) {
 	s.upsertReachCalls++
+	s.lastReachExpID = eid
 	s.lastReachTime = t
 	if s.upsertReach == nil {
 		return ProgressRow{StudentID: sid, PageID: pid, ReachedAt: t}, nil
 	}
-	return s.upsertReach(sid, pid, t)
+	return s.upsertReach(sid, eid, pid, t)
 }
-func (s *stubRepo) UpsertComplete(_ context.Context, sid, pid uuid.UUID, t time.Time) (ProgressRow, error) {
+func (s *stubRepo) UpsertComplete(_ context.Context, sid, eid, pid uuid.UUID, t time.Time) (ProgressRow, error) {
 	s.upsertCompleteCalls++
+	s.lastCompleteExpID = eid
 	s.lastCompleteTime = t
 	if s.upsertComplete == nil {
 		c := t
 		return ProgressRow{StudentID: sid, PageID: pid, ReachedAt: t, CompletedAt: &c}, nil
 	}
-	return s.upsertComplete(sid, pid, t)
+	return s.upsertComplete(sid, eid, pid, t)
 }
 func (s *stubRepo) ListCourseParticipants(_ context.Context, eid uuid.UUID, l int32, o int64) ([]Participant, error) {
 	return s.listParticipants(eid, l, o)
@@ -61,8 +65,8 @@ func (s *stubRepo) ListCourseParticipants(_ context.Context, eid uuid.UUID, l in
 func (s *stubRepo) CountCourseParticipants(_ context.Context, eid uuid.UUID) (int64, error) {
 	return s.countParticipants(eid)
 }
-func (s *stubRepo) ProgressForParticipants(_ context.Context, cid uuid.UUID, ids []uuid.UUID) (map[uuid.UUID][]ProgressRow, error) {
-	return s.progressForParts(cid, ids)
+func (s *stubRepo) ProgressForParticipants(_ context.Context, eid, cid uuid.UUID, ids []uuid.UUID) (map[uuid.UUID][]ProgressRow, error) {
+	return s.progressForParts(eid, cid, ids)
 }
 func (s *stubRepo) ExperimentCourseExists(_ context.Context, eid, cid uuid.UUID) (bool, error) {
 	return s.expCourseExists(eid, cid)
@@ -121,7 +125,7 @@ func newHappyRepo() *stubRepo {
 			}
 			return pages, nil
 		},
-		progressByStudent: func(_, _ uuid.UUID) ([]ProgressRow, error) {
+		progressByStudent: func(_, _, _ uuid.UUID) ([]ProgressRow, error) {
 			return nil, nil
 		},
 	}
@@ -262,7 +266,7 @@ func TestServiceCompletePage(t *testing.T) {
 func newMgmtRepo(participants []Participant, pages []PageInfo, progress map[uuid.UUID][]ProgressRow) *stubRepo {
 	return &stubRepo{
 		pagesByCourse: func(_ uuid.UUID) ([]PageInfo, error) { return pages, nil },
-		progressByStudent: func(sid, _ uuid.UUID) ([]ProgressRow, error) {
+		progressByStudent: func(sid, _, _ uuid.UUID) ([]ProgressRow, error) {
 			return progress[sid], nil
 		},
 		listParticipants: func(_ uuid.UUID, limit int32, offset int64) ([]Participant, error) {
@@ -279,7 +283,7 @@ func newMgmtRepo(participants []Participant, pages []PageInfo, progress map[uuid
 		countParticipants: func(_ uuid.UUID) (int64, error) {
 			return int64(len(participants)), nil
 		},
-		progressForParts: func(_ uuid.UUID, ids []uuid.UUID) (map[uuid.UUID][]ProgressRow, error) {
+		progressForParts: func(_, _ uuid.UUID, ids []uuid.UUID) (map[uuid.UUID][]ProgressRow, error) {
 			out := make(map[uuid.UUID][]ProgressRow, len(ids))
 			for _, id := range ids {
 				if rows, ok := progress[id]; ok {
