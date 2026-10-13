@@ -536,7 +536,9 @@ func completedAgenticStream(data AgenticData) <-chan StreamChunk {
 		chunks = append(chunks, agentChunk(AgentEvent{Type: AgentEventCast, Characters: data.Cast}))
 	}
 
-	if len(data.AgentRuns) > 0 {
+	if len(data.ReplayEvents) > 0 {
+		chunks = appendRecordedSnapshot(chunks, data)
+	} else if len(data.AgentRuns) > 0 {
 		chunks = appendAgentRunSnapshot(chunks, data)
 	} else {
 		chunks = appendLegacyPartSnapshot(chunks, data.Parts)
@@ -553,6 +555,38 @@ func completedAgenticStream(data AgenticData) <-chan StreamChunk {
 	}
 	close(ch)
 	return ch
+}
+
+func appendRecordedSnapshot(chunks []StreamChunk, data AgenticData) []StreamChunk {
+	runs := make(map[string]AgentRun, len(data.AgentRuns))
+	for _, run := range data.AgentRuns {
+		runs[run.ID] = run
+	}
+	indices := make(map[string]int32, len(data.Parts))
+	for i, part := range data.Parts {
+		indices[part.ID] = int32(i)
+	}
+	for _, recorded := range data.ReplayEvents {
+		event := AgentEvent{Type: recorded.Type}
+		switch recorded.Type {
+		case AgentEventAgentStart, AgentEventAgentEnd:
+			run := runs[recorded.AgentRunID]
+			event.Agent = run.Agent
+			if recorded.Type == AgentEventAgentStart {
+				event.Parent = runs[run.ParentRunID].Agent
+				event.SummonedBy = run.SummonedBy
+			}
+		case AgentEventPartStart, AgentEventPartEnd:
+			index := indices[recorded.PartID]
+			part := data.Parts[index]
+			if recorded.Type == AgentEventPartStart {
+				part = partStartSnapshot(part)
+			}
+			event.Index, event.Part = &index, &part
+		}
+		chunks = append(chunks, agentChunk(event))
+	}
+	return chunks
 }
 
 // appendAgentRunSnapshot replays persisted invocations rather than treating

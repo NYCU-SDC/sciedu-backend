@@ -134,6 +134,7 @@ func (s *StreamEvent) Apply(chunk StreamChunk) error {
 
 func (s *StreamEvent) applyAgentEventLocked(event AgentEvent) AgentEvent {
 	s.agentic = true
+	replayEvent := SnapshotEvent{Type: event.Type}
 	switch event.Type {
 	case AgentEventCast:
 		s.agenticData.Cast = append([]Character(nil), event.Characters...)
@@ -148,9 +149,11 @@ func (s *StreamEvent) applyAgentEventLocked(event AgentEvent) AgentEvent {
 		}
 		s.activeRuns = append(s.activeRuns, len(s.agenticData.AgentRuns))
 		s.agenticData.AgentRuns = append(s.agenticData.AgentRuns, run)
+		replayEvent.AgentRunID = run.ID
 	case AgentEventAgentEnd:
 		for i := len(s.activeRuns) - 1; i >= 0; i-- {
 			if s.agenticData.AgentRuns[s.activeRuns[i]].Agent == event.Agent {
+				replayEvent.AgentRunID = s.agenticData.AgentRuns[s.activeRuns[i]].ID
 				s.activeRuns = append(s.activeRuns[:i], s.activeRuns[i+1:]...)
 				break
 			}
@@ -165,6 +168,7 @@ func (s *StreamEvent) applyAgentEventLocked(event AgentEvent) AgentEvent {
 			}
 			s.parts[*event.Index] = part
 			event.Part = &part
+			replayEvent.PartID = part.ID
 		}
 	case AgentEventDelta:
 		if event.Index != nil {
@@ -181,6 +185,7 @@ func (s *StreamEvent) applyAgentEventLocked(event AgentEvent) AgentEvent {
 			}
 			s.parts[*event.Index] = part
 			event.Part = &part
+			replayEvent.PartID = part.ID
 			delete(s.partDeltas, *event.Index)
 		}
 	case AgentEventDone:
@@ -188,6 +193,9 @@ func (s *StreamEvent) applyAgentEventLocked(event AgentEvent) AgentEvent {
 		s.status = MessageStatusDone
 	case AgentEventError:
 		s.status = MessageStatusError
+	}
+	if replayEvent.AgentRunID != "" || replayEvent.PartID != "" {
+		s.agenticData.ReplayEvents = append(s.agenticData.ReplayEvents, replayEvent)
 	}
 	s.agenticData.Parts = s.partsLocked()
 	s.fullContent = visibleText(s.agenticData.Parts)
@@ -274,6 +282,7 @@ func (s *StreamEvent) Get() (MessageStatus, string, AgenticData, bool, error) {
 	data := s.agenticData
 	data.Cast = append([]Character(nil), data.Cast...)
 	data.AgentRuns = append([]AgentRun(nil), data.AgentRuns...)
+	data.ReplayEvents = append([]SnapshotEvent(nil), data.ReplayEvents...)
 	data.Parts = s.partsLocked()
 	return s.status, s.fullContent, data, s.agentic, s.err
 }
