@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -79,10 +80,12 @@ func TestStreamProcessorPersistsFinalAgenticDataWithoutDeltas(t *testing.T) {
 			Type:       AgentEventCast,
 			Characters: []Character{{ID: "teacher", DisplayName: "老師", Role: "teacher"}},
 		}),
+		agentChunk(AgentEvent{Type: AgentEventAgentStart, Agent: "teacher"}),
 		agentChunk(AgentEvent{Type: AgentEventPartStart, Index: &index, Part: &startPart}),
 		agentChunk(AgentEvent{Type: AgentEventDelta, Index: &index, Delta: "光合"}),
 		agentChunk(AgentEvent{Type: AgentEventDelta, Index: &index, Delta: "作用"}),
 		agentChunk(AgentEvent{Type: AgentEventPartEnd, Index: &index, Part: &completedPart}),
+		agentChunk(AgentEvent{Type: AgentEventAgentEnd, Agent: "teacher"}),
 		agentChunk(AgentEvent{Type: AgentEventDone, FinishReason: "stop", Status: MessageStatusDone}),
 	}}
 	querier := &fakeChatQuerier{}
@@ -99,7 +102,89 @@ func TestStreamProcessorPersistsFinalAgenticDataWithoutDeltas(t *testing.T) {
 	var data AgenticData
 	require.NoError(t, json.Unmarshal(querier.updateParams.AgenticData, &data))
 	require.Equal(t, "stop", data.FinishReason)
+	require.Len(t, data.AgentRuns, 1)
+	completedPart.AgentRunID = data.AgentRuns[0].ID
 	require.Equal(t, []MessagePart{completedPart}, data.Parts)
+	querier.messages = []Message{{ID: messageID, Role: "assistant", Status: querier.updateParams.Status,
+		Content: querier.updateParams.Content, AgenticData: querier.updateParams.AgenticData}}
+	for range 2 {
+		messages, err := service.fetchMessages(t.Context(), chatID)
+		require.NoError(t, err)
+		require.Equal(t, data.Cast, messages[0].Characters)
+		require.Equal(t, data.AgentRuns, messages[0].AgentRuns)
+		require.Equal(t, data.Parts, messages[0].Parts)
+	}
+}
+
+func TestChatServiceReturnsAgenticSnapshots(t *testing.T) {
+	characters := []Character{{ID: "teacher", DisplayName: "老師", Role: "teacher"}}
+	data := AgenticData{
+		Cast:      characters,
+		AgentRuns: []AgentRun{{ID: "saved-run", Agent: "teacher"}},
+		Parts: []MessagePart{
+			{Type: PartTypeText, ID: "p0", Agent: "teacher", AgentRunID: "saved-run", Text: "光合"},
+			{Type: PartTypeText, ID: "p1", Agent: "teacher", AgentRunID: "saved-run", Text: "作用"},
+		},
+	}
+	legacy := AgenticData{Cast: characters, Parts: []MessagePart{{Type: PartTypeText, ID: "p0", Agent: "teacher", Text: "legacy"}}}
+	tests := []struct {
+		name     string
+		snapshot *AgenticData
+		live     bool
+		status   MessageStatus
+		content  string
+	}{
+		{name: "completed snapshot", snapshot: &data, status: MessageStatusDone, content: "光合作用"},
+		{name: "failed snapshot remains readable", snapshot: &data, status: MessageStatusError, content: "光合作用"},
+		{name: "old snapshot without runs", snapshot: &legacy, status: MessageStatusDone, content: "legacy"},
+		{name: "plain message", status: MessageStatusDone, content: "plain"},
+		{name: "live snapshot", live: true, status: MessageStatusStreaming, content: "光合"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chatID, messageID := uuid.New(), uuid.New()
+			msg := Message{ID: messageID, Role: "assistant", Status: string(tt.status), Content: pgtype.Text{String: "plain", Valid: true}}
+			var want AgenticData
+			if tt.snapshot != nil {
+				want = *tt.snapshot
+				var err error
+				msg.AgenticData, err = json.Marshal(want)
+				require.NoError(t, err)
+			}
+			hub := NewStreamHub()
+			if tt.live {
+				stream := hub.CreateStream(messageID)
+				index := int32(0)
+				part := MessagePart{Type: PartTypeText, ID: "p0", Agent: "teacher"}
+				for _, event := range []AgentEvent{
+					{Type: AgentEventCast, Characters: characters},
+					{Type: AgentEventAgentStart, Agent: "teacher"},
+					{Type: AgentEventPartStart, Index: &index, Part: &part},
+					{Type: AgentEventDelta, Index: &index, Delta: "光合"},
+				} {
+					require.NoError(t, stream.Apply(agentChunk(event)))
+				}
+				_, _, want, _, _ = stream.Get()
+			}
+			querier := &fakeChatQuerier{chat: Chat{ID: chatID}, messages: []Message{msg}}
+			service := NewService(nil, querier, hub, zap.NewNop())
+			_, messages, err := service.GetChat(t.Context(), uuid.New(), chatID)
+			require.NoError(t, err)
+			require.Len(t, messages, 1)
+			require.Equal(t, tt.content, messages[0].Content)
+			require.Equal(t, want.Cast, messages[0].Characters)
+			require.Equal(t, want.AgentRuns, messages[0].AgentRuns)
+			require.Equal(t, want.Parts, messages[0].Parts)
+			encoded, err := json.Marshal(messages[0])
+			require.NoError(t, err)
+			if tt.snapshot != nil || tt.live {
+				require.Contains(t, string(encoded), `"characters"`)
+			} else {
+				require.NotContains(t, string(encoded), `"characters"`)
+				require.NotContains(t, string(encoded), `"agentRuns"`)
+			}
+		})
+	}
 }
 
 func TestCompletedAgenticStreamReconstructsSnapshotWithoutDeltas(t *testing.T) {
@@ -128,10 +213,20 @@ func TestCompletedAgenticStreamReconstructsSnapshotWithoutDeltas(t *testing.T) {
 
 type fakeChatQuerier struct {
 	*Queries
+	chat               Chat
+	messages           []Message
 	deleteParams       DeleteChatParams
 	deleteRowsAffected int64
 	deleteErr          error
 	updateParams       UpdateMessageParams
+}
+
+func (q *fakeChatQuerier) GetChatByUser(context.Context, GetChatByUserParams) (Chat, error) {
+	return q.chat, nil
+}
+
+func (q *fakeChatQuerier) GetMessages(context.Context, uuid.UUID) ([]Message, error) {
+	return q.messages, nil
 }
 
 func (q *fakeChatQuerier) UpdateMessage(_ context.Context, params UpdateMessageParams) (Message, error) {

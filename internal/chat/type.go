@@ -38,10 +38,18 @@ type Character struct {
 	Role        string `json:"role"`
 }
 
+type AgentRun struct {
+	ID          string `json:"id"`
+	Agent       string `json:"agent"`
+	ParentRunID string `json:"parentRunID,omitempty"`
+	SummonedBy  string `json:"summonedBy,omitempty"`
+}
+
 type MessagePart struct {
 	Type       PartType        `json:"type"`
 	ID         string          `json:"id"`
 	Agent      string          `json:"agent"`
+	AgentRunID string          `json:"agentRunID,omitempty"`
 	Internal   bool            `json:"internal,omitempty"`
 	Text       string          `json:"text,omitempty"`
 	ToolCallID string          `json:"tool_call_id,omitempty"`
@@ -89,10 +97,18 @@ func (c StreamChunk) Terminal() bool {
 	return c.Legacy != nil && c.Legacy.IsFinished
 }
 
+type SnapshotEvent struct {
+	Type       AgentEventType `json:"type"`
+	AgentRunID string         `json:"agentRunID,omitempty"`
+	PartID     string         `json:"partID,omitempty"`
+}
+
 type AgenticData struct {
-	Cast         []Character   `json:"cast,omitempty"`
-	Parts        []MessagePart `json:"parts"`
-	FinishReason string        `json:"finishReason,omitempty"`
+	Cast         []Character     `json:"cast,omitempty"`
+	AgentRuns    []AgentRun      `json:"agentRuns,omitempty"`
+	Parts        []MessagePart   `json:"parts"`
+	ReplayEvents []SnapshotEvent `json:"replayEvents,omitempty"`
+	FinishReason string          `json:"finishReason,omitempty"`
 }
 
 type MessageRole string

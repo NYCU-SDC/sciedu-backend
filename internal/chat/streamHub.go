@@ -27,6 +27,7 @@ type StreamEvent struct {
 	fullContent string
 	agentic     bool
 	agenticData AgenticData
+	activeRuns  []int
 	parts       map[int32]MessagePart
 	partDeltas  map[int32]string
 	history     []StreamChunk
@@ -104,15 +105,16 @@ func (s *StreamEvent) Apply(chunk StreamChunk) error {
 	}
 
 	s.lock.Lock()
-	s.history = append(s.history, chunk)
 	if chunk.Agentic != nil {
-		s.applyAgentEventLocked(*chunk.Agentic)
+		event := s.applyAgentEventLocked(*chunk.Agentic)
+		chunk.Agentic = &event
 	} else {
 		s.fullContent += chunk.Legacy.Delta
 		if chunk.Legacy.IsFinished {
 			s.status = MessageStatusDone
 		}
 	}
+	s.history = append(s.history, chunk)
 	subs := make([]*streamSubscriber, 0, len(s.subscribers))
 	for sub := range s.subscribers {
 		subs = append(subs, sub)
@@ -130,14 +132,43 @@ func (s *StreamEvent) Apply(chunk StreamChunk) error {
 	return nil
 }
 
-func (s *StreamEvent) applyAgentEventLocked(event AgentEvent) {
+func (s *StreamEvent) applyAgentEventLocked(event AgentEvent) AgentEvent {
 	s.agentic = true
+	replayEvent := SnapshotEvent{Type: event.Type}
 	switch event.Type {
 	case AgentEventCast:
 		s.agenticData.Cast = append([]Character(nil), event.Characters...)
+	case AgentEventAgentStart:
+		run := AgentRun{
+			ID:         uuid.NewString(),
+			Agent:      event.Agent,
+			SummonedBy: event.SummonedBy,
+		}
+		if parent, ok := s.activeRunLocked(event.Parent); event.Parent != "" && ok {
+			run.ParentRunID = parent.ID
+		}
+		s.activeRuns = append(s.activeRuns, len(s.agenticData.AgentRuns))
+		s.agenticData.AgentRuns = append(s.agenticData.AgentRuns, run)
+		replayEvent.AgentRunID = run.ID
+	case AgentEventAgentEnd:
+		for i := len(s.activeRuns) - 1; i >= 0; i-- {
+			if s.agenticData.AgentRuns[s.activeRuns[i]].Agent == event.Agent {
+				replayEvent.AgentRunID = s.agenticData.AgentRuns[s.activeRuns[i]].ID
+				s.activeRuns = append(s.activeRuns[:i], s.activeRuns[i+1:]...)
+				break
+			}
+		}
 	case AgentEventPartStart:
 		if event.Index != nil && event.Part != nil {
-			s.parts[*event.Index] = *event.Part
+			part := *event.Part
+			// Run IDs are owned by the backend, not by the LLM provider.
+			part.AgentRunID = ""
+			if run, ok := s.activeRunLocked(part.Agent); ok {
+				part.AgentRunID = run.ID
+			}
+			s.parts[*event.Index] = part
+			event.Part = &part
+			replayEvent.PartID = part.ID
 		}
 	case AgentEventDelta:
 		if event.Index != nil {
@@ -145,7 +176,16 @@ func (s *StreamEvent) applyAgentEventLocked(event AgentEvent) {
 		}
 	case AgentEventPartEnd:
 		if event.Index != nil && event.Part != nil {
-			s.parts[*event.Index] = *event.Part
+			part := *event.Part
+			part.AgentRunID = ""
+			if startedPart, ok := s.parts[*event.Index]; ok {
+				part.AgentRunID = startedPart.AgentRunID
+			} else if run, ok := s.activeRunLocked(part.Agent); ok {
+				part.AgentRunID = run.ID
+			}
+			s.parts[*event.Index] = part
+			event.Part = &part
+			replayEvent.PartID = part.ID
 			delete(s.partDeltas, *event.Index)
 		}
 	case AgentEventDone:
@@ -154,8 +194,22 @@ func (s *StreamEvent) applyAgentEventLocked(event AgentEvent) {
 	case AgentEventError:
 		s.status = MessageStatusError
 	}
+	if replayEvent.AgentRunID != "" || replayEvent.PartID != "" {
+		s.agenticData.ReplayEvents = append(s.agenticData.ReplayEvents, replayEvent)
+	}
 	s.agenticData.Parts = s.partsLocked()
 	s.fullContent = visibleText(s.agenticData.Parts)
+	return event
+}
+
+func (s *StreamEvent) activeRunLocked(agent string) (AgentRun, bool) {
+	for i := len(s.activeRuns) - 1; i >= 0; i-- {
+		run := s.agenticData.AgentRuns[s.activeRuns[i]]
+		if run.Agent == agent {
+			return run, true
+		}
+	}
+	return AgentRun{}, false
 }
 
 func (s *StreamEvent) partsLocked() []MessagePart {
@@ -199,7 +253,7 @@ func visibleText(parts []MessagePart) string {
 			texts = append(texts, part.Text)
 		}
 	}
-	return strings.Join(texts, "\n")
+	return strings.Join(texts, "")
 }
 
 func (s *StreamEvent) Fail(err error) {
@@ -227,6 +281,8 @@ func (s *StreamEvent) Get() (MessageStatus, string, AgenticData, bool, error) {
 
 	data := s.agenticData
 	data.Cast = append([]Character(nil), data.Cast...)
+	data.AgentRuns = append([]AgentRun(nil), data.AgentRuns...)
+	data.ReplayEvents = append([]SnapshotEvent(nil), data.ReplayEvents...)
 	data.Parts = s.partsLocked()
 	return s.status, s.fullContent, data, s.agentic, s.err
 }
