@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -390,6 +392,58 @@ func TestHandlerSessionCookieAttrs(t *testing.T) {
 			require.Equal(t, tt.wantSecure, refreshCookie.Secure)
 			require.Equal(t, tt.wantAccessSite, accessCookie.SameSite)
 			require.Equal(t, tt.wantRefreshSite, refreshCookie.SameSite)
+		})
+	}
+}
+
+func TestProductionCookieDomainLifecycle(t *testing.T) {
+	tests := []struct {
+		name       string
+		host       string
+		domain     string
+		wantStatus int
+	}{
+		{name: "existing deployment keeps default", host: "dev.sciedu.sdc.nycu.club", wantStatus: http.StatusOK},
+		{name: "independent backend accepts configured domain", host: "sciedu-backend.sdc.nycu.club", domain: "sciedu-backend.sdc.nycu.club", wantStatus: http.StatusOK},
+		{name: "browser rejects old domain on independent backend", host: "sciedu-backend.sdc.nycu.club", wantStatus: http.StatusUnauthorized},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			now := time.Now()
+			session := Session{AccessToken: "access", RefreshToken: "refresh", AccessTokenExpiresAt: now.Add(accessTokenLifetime), RefreshTokenExpiresAt: now.Add(refreshTokenLifetime)}
+			svc := &fakeHandlerService{session: session, complete: CompleteOAuthResult{Session: session, RedirectURL: "https://sciedu-frontend.sdc.nycu.club"}}
+			handler := NewHandler(svc, CookieConfig{Environment: EnvironmentProd, Domain: tt.domain}, nil)
+			callbackURL, err := url.Parse("https://" + tt.host + "/api/auth/callback")
+			require.NoError(t, err)
+			rec := httptest.NewRecorder()
+			handler.Callback(rec, httptest.NewRequest(http.MethodGet, callbackURL.String(), nil))
+			require.Equal(t, http.StatusFound, rec.Code)
+			cookies := rec.Result().Cookies()
+			for _, cookie := range cookies {
+				require.True(t, cookie.Secure)
+				require.True(t, cookie.HttpOnly)
+			}
+			require.Equal(t, http.SameSiteLaxMode, findCookie(t, cookies, accessTokenCookieName).SameSite)
+			require.Equal(t, http.SameSiteStrictMode, findCookie(t, cookies, refreshTokenCookieName).SameSite)
+			jar, err := cookiejar.New(nil)
+			require.NoError(t, err)
+			jar.SetCookies(callbackURL, cookies)
+			sessionURL := callbackURL.ResolveReference(&url.URL{Path: "/api/auth/session"})
+			req := httptest.NewRequest(http.MethodGet, sessionURL.String(), nil)
+			for _, cookie := range jar.Cookies(sessionURL) {
+				req.AddCookie(cookie)
+			}
+			sessionRec := httptest.NewRecorder()
+			handler.Session(sessionRec, req)
+			require.Equal(t, tt.wantStatus, sessionRec.Code)
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
+			logoutRec := httptest.NewRecorder()
+			handler.Logout(logoutRec, req)
+			require.Equal(t, http.StatusOK, logoutRec.Code)
+			jar.SetCookies(sessionURL, logoutRec.Result().Cookies())
+			require.Empty(t, jar.Cookies(sessionURL))
 		})
 	}
 }

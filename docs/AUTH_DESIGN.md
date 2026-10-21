@@ -175,6 +175,16 @@ The access token is not blocklisted — it expires on its own within 15 minutes.
 
 `SameSite=Lax` (not `Strict`) on the access cookie so that top-level navigations from external links (email confirmations, OAuth redirects) carry the session.
 
+Both session cookies use `AUTH_COOKIE_DOMAIN` when configured (also available as
+`auth_cookie_domain` in YAML or the `-auth_cookie_domain` flag). Specify a DNS name
+without a scheme, port, or wildcard that matches the backend hostname or a parent
+domain. For the independent Dokploy backend, use
+`AUTH_COOKIE_DOMAIN=sciedu-backend.sdc.nycu.club`. Leaving it unset preserves the
+production default `sciedu.sdc.nycu.club` and host-only cookies in development.
+The same domain is used when issuing, refreshing, and clearing cookies; their
+`HttpOnly`, `Secure`, `SameSite`, and path settings are unchanged. Changing the
+cookie domain requires users to sign in again.
+
 **Claims:**
 
 ```json

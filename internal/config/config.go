@@ -23,6 +23,7 @@ var (
 	ErrPreviewRedirectRequiresDev   = errors.New("preview redirect domain requires dev environment")
 	ErrInvalidPreviewRedirectDomain = errors.New("preview redirect domain must be a valid DNS domain")
 	ErrInvalidBootstrapAdminEmail   = errors.New("bootstrap admin email must be a valid email address")
+	ErrInvalidAuthCookieDomain      = errors.New("auth cookie domain must be a valid DNS domain")
 )
 
 type Config struct {
@@ -42,6 +43,7 @@ type Config struct {
 	AuthRedirectAllowlist      string `yaml:"auth_redirect_allowlist"      envconfig:"AUTH_REDIRECT_ALLOWLIST"`
 	AuthRedirectPreviewDomain  string `yaml:"auth_redirect_preview_domain" envconfig:"AUTH_REDIRECT_PREVIEW_DOMAIN"`
 	AuthBootstrapAdminEmail    string `yaml:"auth_bootstrap_admin_email"   envconfig:"AUTH_BOOTSTRAP_ADMIN_EMAIL"`
+	AuthCookieDomain           string `yaml:"auth_cookie_domain"           envconfig:"AUTH_COOKIE_DOMAIN"`
 }
 
 type LogBuffer struct {
@@ -96,6 +98,7 @@ func Load() (Config, *LogBuffer) {
 		AuthRedirectAllowlist:      "",
 		AuthRedirectPreviewDomain:  "",
 		AuthBootstrapAdminEmail:    "",
+		AuthCookieDomain:           "",
 	}
 
 	var err error
@@ -167,6 +170,7 @@ func FromEnv(config *Config, logger *LogBuffer) (*Config, error) {
 		AuthRedirectAllowlist:      os.Getenv("AUTH_REDIRECT_ALLOWLIST"),
 		AuthRedirectPreviewDomain:  os.Getenv("AUTH_REDIRECT_PREVIEW_DOMAIN"),
 		AuthBootstrapAdminEmail:    os.Getenv("AUTH_BOOTSTRAP_ADMIN_EMAIL"),
+		AuthCookieDomain:           os.Getenv("AUTH_COOKIE_DOMAIN"),
 	}
 
 	merged, err := configutil.Merge[Config](config, envConfig)
@@ -197,6 +201,7 @@ func FromFlags(config *Config) (*Config, error) {
 	flag.StringVar(&flagConfig.AuthRedirectAllowlist, "auth_redirect_allowlist", "", "allowed post-login redirect URL prefixes (comma-separated)")
 	flag.StringVar(&flagConfig.AuthRedirectPreviewDomain, "auth_redirect_preview_domain", "", "DNS domain for dev PR preview redirects")
 	flag.StringVar(&flagConfig.AuthBootstrapAdminEmail, "auth_bootstrap_admin_email", "", "verified OAuth email granted ADMIN on login (remove after bootstrap)")
+	flag.StringVar(&flagConfig.AuthCookieDomain, "auth_cookie_domain", "", "session cookie DNS domain (defaults to sciedu.sdc.nycu.club outside dev)")
 
 	flag.Parse()
 
@@ -205,6 +210,9 @@ func FromFlags(config *Config) (*Config, error) {
 
 func (c Config) Validate() error {
 	environment := normalizeEnvironment(c.Environment)
+	if c.AuthCookieDomain != "" && !isValidDNSDomain(c.AuthCookieDomain) {
+		return ErrInvalidAuthCookieDomain
+	}
 	if environment != "dev" && strings.TrimSpace(c.Secret) == DefaultSecret {
 		return ErrInsecureProductionSecret
 	}
