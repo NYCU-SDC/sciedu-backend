@@ -100,6 +100,7 @@ func main() {
 	}, logger)
 	authHandler := auth.NewHandler(authService, auth.CookieConfig{
 		Environment: cfg.Environment,
+		Domain:      cfg.AuthCookieDomain,
 	}, logger)
 	authMiddleware := auth.NewMiddleware(authService, logger)
 	protectedMiddlewareSet := middlewareSet.Append(authMiddleware.HandlerFunc)

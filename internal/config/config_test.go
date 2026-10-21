@@ -29,6 +29,63 @@ func TestNormalizeEnvironment(t *testing.T) {
 	}
 }
 
+func TestLoadAuthCookieDomain(t *testing.T) {
+	tests := []struct {
+		name string
+		file string
+		env  string
+		args []string
+		want string
+	}{
+		{name: "unset preserves handler defaults"},
+		{name: "yaml", file: "auth_cookie_domain: sciedu.sdc.nycu.club\n", want: "sciedu.sdc.nycu.club"},
+		{name: "environment overrides yaml", file: "auth_cookie_domain: sciedu.sdc.nycu.club\n", env: "sciedu-backend.sdc.nycu.club", want: "sciedu-backend.sdc.nycu.club"},
+		{name: "flag overrides environment", env: "sciedu.sdc.nycu.club", args: []string{"-auth_cookie_domain=sciedu-backend.sdc.nycu.club"}, want: "sciedu-backend.sdc.nycu.club"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resetFlags(t)
+			t.Chdir(t.TempDir())
+			t.Setenv("AUTH_COOKIE_DOMAIN", tt.env)
+			oldArgs := os.Args
+			os.Args = append([]string{"backend"}, tt.args...)
+			t.Cleanup(func() { os.Args = oldArgs })
+			if tt.file != "" {
+				require.NoError(t, os.WriteFile("config.yaml", []byte(tt.file), 0o600))
+			}
+			cfg, _ := Load()
+			require.Equal(t, tt.want, cfg.AuthCookieDomain)
+		})
+	}
+}
+
+func TestValidateAuthCookieDomain(t *testing.T) {
+	tests := []struct {
+		name    string
+		domain  string
+		wantErr bool
+	}{
+		{name: "unset"},
+		{name: "backend hostname", domain: "sciedu-backend.sdc.nycu.club"},
+		{name: "parent domain", domain: "sciedu.sdc.nycu.club"},
+		{name: "URL rejected", domain: "https://sciedu-backend.sdc.nycu.club", wantErr: true},
+		{name: "port rejected", domain: "sciedu-backend.sdc.nycu.club:8080", wantErr: true},
+		{name: "wildcard rejected", domain: "*.sdc.nycu.club", wantErr: true},
+		{name: "whitespace rejected", domain: " sciedu.sdc.nycu.club ", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{Environment: "prod", Secret: "test-secret", AuthCookieDomain: tt.domain}
+			err := cfg.Validate()
+			if tt.wantErr {
+				require.ErrorIs(t, err, ErrInvalidAuthCookieDomain)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestFromEnvUsesENVAndNormalizesLocal(t *testing.T) {
 	workdir := t.TempDir()
 	oldwd, err := os.Getwd()
